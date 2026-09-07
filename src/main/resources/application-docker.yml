@@ -19,6 +19,15 @@ spring:
           max-active: 16
           max-idle: 8
           min-idle: 2
+  rabbitmq:
+    host: rabbitmq
+    port: 5672
+    username: guest
+    password: guest
+    listener:
+      simple:
+        acknowledge-mode: auto
+        prefetch: 10
 
 mybatis-plus:
   mapper-locations: classpath*:/mapper/**/*.xml

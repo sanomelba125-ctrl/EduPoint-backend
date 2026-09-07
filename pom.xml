@@ -46,6 +46,12 @@
             <artifactId>commons-pool2</artifactId>
         </dependency>
 
+        <!-- RabbitMQ 消息队列支持 (削峰填谷 / 延时关单) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+
         <!-- MyBatis-Plus & MySQL Driver -->
         <dependency>
             <groupId>com.baomidou</groupId>
