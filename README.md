@@ -27,12 +27,15 @@ backend/
 │   └── main/
 │       ├── java/com/campus/
 │       │   ├── Application.java             # Spring Boot 启动主类
-│       │   ├── common/                      # 全局通用 Result、业务异常与统一拦截器
-│       │   ├── config/                      # 跨域 CORS、Sa-Token 拦截器、MyBatis-Plus 分页插件配置
-│       │   ├── controller/                  # RESTful 接口控制器
-│       │   ├── entity/                      # 对应 12 张业务表的实体类
-│       │   ├── mapper/                      # MyBatis-Plus 数据访问接口
-│       │   └── service/                     # 业务接口与逻辑实现层
+│       │   ├── common/                      # 全局通用 Result、业务异常与统一拦截器、WebSocket Server
+│       │   ├── config/                      # 跨域、Sa-Token、MyBatis-Plus、WebSocket、七牛云等配置
+│       │   └── modules/                     # 🔥 Package-by-Feature 按业务领域划分的模块
+│       │       ├── admin/                   # 管理员领域 (SysUser)
+│       │       ├── student/                 # 学生中心领域 (Student)
+│       │       ├── activity/                # 活动核心领域 (Activity 相关)
+│       │       ├── mall/                    # 积分商城领域 (Gift, 兑换记录)
+│       │       ├── certificate/             # 电子证书领域 (Certificate)
+│       │       └── system/                  # 系统通用领域 (通知, 文件上传, Q&A)
 │       └── resources/
 │           ├── application.yml              # 全局通用配置 (Sa-Token, 端口, 路径)
 │           ├── application-dev.yml          # 本地开发环境数据源配置
@@ -63,7 +66,7 @@ backend/
 - **Markdown 接口规范文档**：[API.md](./API.md)（所有前后端接口契约以此为准）
 - **数据库建表脚本**：[sql/init.sql](./sql/init.sql)（12 张业务数据表）
 - **服务端口与上下文**：`http://localhost:8080/api`
-- **服务健康探针**：`http://localhost:8080/api/health`
+- **实时通信 WebSocket**：`ws://localhost:8080/api/ws/{userType}/{userId}`
 
 ---
 

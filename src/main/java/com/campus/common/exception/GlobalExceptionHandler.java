@@ -20,8 +20,7 @@ public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     /**
-     * 捕获自定义业务异常
-     */
+     * 捕获自定义业务异�?     */
     @ExceptionHandler(BusinessException.class)
     public Result<?> handleBusinessException(BusinessException e) {
         log.warn("业务异常拦截: code={}, message={}", e.getCode(), e.getMessage());
@@ -50,8 +49,7 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 捕获 Sa-Token 未登录异常
-     */
+     * 捕获 Sa-Token 未登录异�?     */
     @ExceptionHandler(NotLoginException.class)
     public Result<?> handleNotLoginException(NotLoginException e) {
         log.warn("未登录或 Token 失效: {}", e.getMessage());
@@ -59,30 +57,29 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 捕获 Sa-Token 无权限异常
-     */
+     * 捕获 Sa-Token 无权限异�?     */
     @ExceptionHandler(NotPermissionException.class)
     public Result<?> handleNotPermissionException(NotPermissionException e) {
-        log.warn("无操作权限: {}", e.getMessage());
-        return Result.error(ResultCode.FORBIDDEN.getCode(), "无权执行该操作");
+        log.warn("无操作权�? {}", e.getMessage());
+        return Result.error(ResultCode.FORBIDDEN.getCode(), "无权执行该操�?);
     }
 
     /**
-     * 捕获 HTTP 请求动词不支持异常 (如 GET 资源发了 POST)
+     * 捕获 HTTP 请求动词不支持异�?(�?GET 资源发了 POST)
      */
     @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
     public Result<?> handleMethodNotSupported(org.springframework.web.HttpRequestMethodNotSupportedException e) {
         log.warn("不支持的 HTTP 动词: {}", e.getMethod());
-        return Result.error(ResultCode.BAD_REQUEST.getCode(), "请求的 HTTP 动词 [" + e.getMethod() + "] 不支持");
+        return Result.error(ResultCode.BAD_REQUEST.getCode(), "请求�?HTTP 动词 [" + e.getMethod() + "] 不支�?);
     }
 
     /**
-     * 捕获 RESTful 资源未找到异常 (404)
+     * 捕获 RESTful 资源未找到异�?(404)
      */
     @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
     public Result<?> handleNoResourceFound(org.springframework.web.servlet.resource.NoResourceFoundException e) {
-        log.warn("RESTful 资源不存在: {}", e.getResourcePath());
-        return Result.error(ResultCode.NOT_FOUND.getCode(), "请求的 RESTful 资源路径不存在: /" + e.getResourcePath());
+        log.warn("RESTful 资源不存�? {}", e.getResourcePath());
+        return Result.error(ResultCode.NOT_FOUND.getCode(), "请求�?RESTful 资源路径不存�? /" + e.getResourcePath());
     }
 
     /**

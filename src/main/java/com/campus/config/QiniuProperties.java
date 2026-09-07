@@ -4,7 +4,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 /**
- * 七牛云 Kodo 对象存储配置属性类
+ * 七牛�?Kodo 对象存储配置属性类
  */
 @Component
 @ConfigurationProperties(prefix = "qiniu")
@@ -63,8 +63,7 @@ public class QiniuProperties {
     }
 
     /**
-     * 判断是否已配置合法的七牛云密钥
-     */
+     * 判断是否已配置合法的七牛云密�?     */
     public boolean isConfigured() {
         return accessKey != null && !accessKey.isBlank() && !accessKey.contains("your-access-key")
                 && secretKey != null && !secretKey.isBlank() && !secretKey.contains("your-secret-key")

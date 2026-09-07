@@ -1,0 +1,9 @@
+package com.campus.modules.activity.mapper;
+
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.campus.modules.activity.entity.ActivityWaitlist;
+import org.apache.ibatis.annotations.Mapper;
+
+@Mapper
+public interface ActivityWaitlistMapper extends BaseMapper<ActivityWaitlist> {
+}
