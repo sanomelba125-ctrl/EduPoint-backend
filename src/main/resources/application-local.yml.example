@@ -1,0 +1,23 @@
+# ===================================================================
+# 本地私有敏感配置文件模板 (application-local.yml.example)
+#
+# 【安全核心】：
+# 本项目的 .gitignore 已自动忽略了 application-local.yml 文件！
+# 任何写在 application-local.yml 中的密码与密钥都绝对不会被 Git 提交或上传！
+#
+# 【使用步骤】：
+# 1. 复制本文件并在当前目录粘贴，重命名为：application-local.yml
+# 2. 将下方的 your-xxx 替换为你七牛云控制台的真实真实密钥
+# 3. 运行项目，Spring Boot 会自动读取并生效，且不会污染 Git 仓库！
+# ===================================================================
+
+qiniu:
+  access-key: your-real-access-key
+  secret-key: your-real-secret-key
+  bucket: your-real-bucket-name
+  domain-url: http://your-real-domain/
+
+# 如果你本地的 MySQL 密码不是默认的 rootpassword，也可以在这里私有覆盖：
+# spring:
+#   datasource:
+#     password: your_local_password

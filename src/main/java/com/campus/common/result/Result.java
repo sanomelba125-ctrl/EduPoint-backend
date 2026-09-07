@@ -1,6 +1,5 @@
 package com.campus.common.result;
 
-import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -9,16 +8,12 @@ public class Result<T> implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
-    @Schema(description = "业务状态码 (200 为成功)", example = "200")
     private Integer code;
 
-    @Schema(description = "响应描述信息", example = "操作成功")
     private String message;
 
-    @Schema(description = "业务数据载荷")
     private T data;
 
-    @Schema(description = "服务器响应时间戳", example = "1725700000000")
     private Long timestamp;
 
     public Result() {

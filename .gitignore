@@ -37,6 +37,10 @@ out/
 .DS_Store
 Thumbs.db
 
-# Local environment configuration overrides
+# Local environment configuration overrides (Credentials / Secrets)
 application-local.yml
 application-local.properties
+*.local.yml
+*.local.properties
+.env
+.env.*.local

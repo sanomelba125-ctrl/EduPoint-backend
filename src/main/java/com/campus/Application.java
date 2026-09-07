@@ -12,7 +12,7 @@ public class Application {
         SpringApplication.run(Application.class, args);
         System.out.println("==================================================================");
         System.out.println("学生活动打卡与积分兑换管理系统后端服务启动成功!");
-        System.out.println("API 文档地址 (Knife4j): http://localhost:8080/api/doc.html");
+        System.out.println("服务接口基地址:         http://localhost:8080/api");
         System.out.println("健康探针接口:           http://localhost:8080/api/health");
         System.out.println("==================================================================");
     }

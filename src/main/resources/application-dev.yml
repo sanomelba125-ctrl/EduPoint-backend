@@ -6,6 +6,20 @@ spring:
     password: rootpassword # 请根据本地实际数据库密码修改
     hikari:
       initialization-fail-timeout: -1
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password: redispassword
+      timeout: 3000ms
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+    listener:
+      simple:
+        auto-startup: false
 
 # MyBatis-Plus 配置
 mybatis-plus:
@@ -25,3 +39,14 @@ logging:
   level:
     com.campus: debug
     org.springframework.web: info
+
+# 七牛云 Kodo 对象存储配置
+# [安全提示] 真实 AK/SK 已保存在 application-local.yml 中，此处仅保留安全占位符以防 Git 泄露
+qiniu:
+  access-key: ${QINIU_ACCESS_KEY:your-access-key}
+  secret-key: ${QINIU_SECRET_KEY:your-secret-key}
+  bucket: ${QINIU_BUCKET:your-bucket-name}
+  domain-url: ${QINIU_DOMAIN_URL:http://your-domain/}
+
+
+

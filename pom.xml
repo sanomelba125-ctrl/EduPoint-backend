@@ -21,8 +21,8 @@
         <java.version>17</java.version>
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
         <sa-token.version>1.38.0</sa-token.version>
-        <knife4j.version>4.5.0</knife4j.version>
         <fastjson2.version>2.0.51</fastjson2.version>
+        <qiniu.version>7.15.0</qiniu.version>
     </properties>
 
     <dependencies>
@@ -71,18 +71,22 @@
             <version>${sa-token.version}</version>
         </dependency>
 
-        <!-- Knife4j / Swagger 3 接口文档 -->
-        <dependency>
-            <groupId>com.github.xiaoymin</groupId>
-            <artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId>
-            <version>${knife4j.version}</version>
-        </dependency>
-
         <!-- FastJSON2 -->
         <dependency>
             <groupId>com.alibaba.fastjson2</groupId>
             <artifactId>fastjson2</artifactId>
             <version>${fastjson2.version}</version>
+        </dependency>
+
+        <!-- 七牛云 Kodo 对象存储 SDK -->
+        <dependency>
+            <groupId>com.qiniu</groupId>
+            <artifactId>qiniu-java-sdk</artifactId>
+            <version>${qiniu.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
         </dependency>
 
         <!-- Lombok & Devtools -->

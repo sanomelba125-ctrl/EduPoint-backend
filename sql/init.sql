@@ -27,11 +27,11 @@ CREATE TABLE `sys_user` (
     UNIQUE KEY `uk_username` (`username`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统用户与管理员表';
 
--- 初始管理员种子数据
+-- 初始管理员种子数据 (密码均为 123 的 BCrypt 加盐哈希密文)
 INSERT INTO `sys_user` (`id`, `username`, `password`, `nickname`, `avatar`, `role`, `phone`, `status`)
 VALUES 
-(1, 'admin', '123', '超级管理员', 'https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png', 'SUPER_ADMIN', '13800000001', 1),
-(2, 'counselor', '123', '李辅导员', 'https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png', 'COUNSELOR', '13800000002', 1)
+(1, 'admin', '$2a$10$Gv7lCOIQdn6JqzJ2JQ/2EOMVyp0prFXaWu9jNzXNttHsTyVfbbjiO', '超级管理员', 'https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png', 'SUPER_ADMIN', '13800000001', 1),
+(2, 'counselor', '$2a$10$Gv7lCOIQdn6JqzJ2JQ/2EOMVyp0prFXaWu9jNzXNttHsTyVfbbjiO', '李辅导员', 'https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png', 'COUNSELOR', '13800000002', 1)
 ON DUPLICATE KEY UPDATE `username` = VALUES(`username`);
 
 -- -------------------------------------------------------------------
@@ -41,7 +41,7 @@ DROP TABLE IF EXISTS `student`;
 CREATE TABLE `student` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '学生主键ID',
     `student_no` VARCHAR(30) NOT NULL COMMENT '学号(唯一业务标识)',
-    `password` VARCHAR(100) NOT NULL DEFAULT '123456' COMMENT '移动端登录密码(初始默认123456)',
+    `password` VARCHAR(100) NOT NULL DEFAULT '$2a$10$H5IhVx.AarNhFcLtYlg6hu49GQ8.0btHXfRJ9dwh37uF9UKJq6Qru' COMMENT '移动端登录密码(初始默认 123456 的 BCrypt 加盐哈希密文)',
     `name` VARCHAR(50) NOT NULL COMMENT '学生真实姓名',
     `gender` TINYINT NOT NULL DEFAULT 1 COMMENT '性别: 1-男 2-女',
     `avatar` VARCHAR(255) DEFAULT 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png' COMMENT '个人头像URL',
@@ -62,14 +62,14 @@ CREATE TABLE `student` (
     KEY `idx_phone` (`phone`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生档案与积分主账户表';
 
--- 初始模拟学生种子数据 (支持排行榜与登录调试)
+-- 初始模拟学生种子数据 (支持排行榜与登录调试，初始密码均为 123456 的 BCrypt 加盐哈希密文)
 INSERT INTO `student` (`id`, `student_no`, `password`, `name`, `gender`, `college`, `major`, `class_name`, `phone`, `total_points`, `current_points`, `status`)
 VALUES 
-(1, '20220101', '123456', '张伟', 1, '信息工程学院', '计算机科学与技术', '计科2201班', '13911110001', 320, 180, 1),
-(2, '20220102', '123456', '王芳', 2, '商学院', '电子商务', '电商2202班', '13911110002', 280, 280, 1),
-(3, '20220103', '123456', '陈明', 1, '机械工程学院', '智能制造工程', '智造2201班', '13911110003', 210, 110, 1),
-(4, '20220104', '123456', '赵丽', 2, '人文学院', '汉语言文学', '中文2203班', '13911110004', 150, 150, 1),
-(5, '20220105', '123456', '孙浩', 1, '信息工程学院', '软件工程', '软工2201班', '13911110005', 90, 40, 1)
+(1, '20220101', '$2a$10$H5IhVx.AarNhFcLtYlg6hu49GQ8.0btHXfRJ9dwh37uF9UKJq6Qru', '张伟', 1, '信息工程学院', '计算机科学与技术', '计科2201班', '13911110001', 320, 180, 1),
+(2, '20220102', '$2a$10$H5IhVx.AarNhFcLtYlg6hu49GQ8.0btHXfRJ9dwh37uF9UKJq6Qru', '王芳', 2, '商学院', '电子商务', '电商2202班', '13911110002', 280, 280, 1),
+(3, '20220103', '$2a$10$H5IhVx.AarNhFcLtYlg6hu49GQ8.0btHXfRJ9dwh37uF9UKJq6Qru', '陈明', 1, '机械工程学院', '智能制造工程', '智造2201班', '13911110003', 210, 110, 1),
+(4, '20220104', '$2a$10$H5IhVx.AarNhFcLtYlg6hu49GQ8.0btHXfRJ9dwh37uF9UKJq6Qru', '赵丽', 2, '人文学院', '汉语言文学', '中文2203班', '13911110004', 150, 150, 1),
+(5, '20220105', '$2a$10$H5IhVx.AarNhFcLtYlg6hu49GQ8.0btHXfRJ9dwh37uF9UKJq6Qru', '孙浩', 1, '信息工程学院', '软件工程', '软工2201班', '13911110005', 90, 40, 1)
 ON DUPLICATE KEY UPDATE `student_no` = VALUES(`student_no`);
 
 -- -------------------------------------------------------------------
