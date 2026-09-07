@@ -1,0 +1,35 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: campus-activity-platform
+  profiles:
+    active: dev
+
+# Knife4j OpenAPI 3 配置
+knife4j:
+  enable: true
+  openapi:
+    title: 学生活动打卡与积分兑换管理系统 API 文档
+    description: 涵盖管理后台端与学生移动端的全量接口定义
+    email: admin@campus.edu.cn
+    version: v1.0.0
+    group:
+      default:
+        group-name: 全量接口
+        api-rule: package
+        api-rule-resources:
+          - com.campus.controller
+
+# Sa-Token 配置
+sa-token:
+  token-name: satoken
+  timeout: 2592000 # 30天
+  active-timeout: -1
+  is-concurrent: true
+  is-share: true
+  token-style: uuid
+  is-log: false
