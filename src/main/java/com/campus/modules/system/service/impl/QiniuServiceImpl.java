@@ -49,7 +49,14 @@ public class QiniuServiceImpl implements QiniuService {
             domain = domain.trim();
             if (!domain.endsWith("/")) domain += "/";
             if (!domain.startsWith("http://") && !domain.startsWith("https://")) domain = "http://" + domain;
-            return domain + ret.key;
+            String publicUrl = domain + ret.key;
+
+            // 兼容私有空间：自动签发10年有效期的安全下载 Token，彻底杜绝 401 download token not specified
+            try {
+                return auth.privateDownloadUrl(publicUrl, 315360000L);
+            } catch (Exception e) {
+                return publicUrl;
+            }
         } catch (QiniuException e) {
             throw new BusinessException("七牛云存储异常");
         } catch (IOException e) {
