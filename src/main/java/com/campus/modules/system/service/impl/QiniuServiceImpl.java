@@ -40,7 +40,8 @@ public class QiniuServiceImpl implements QiniuService {
         String date = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
         String key = "images/" + date + "/" + UUID.randomUUID().toString().replace("-", "") + suffix;
         try {
-            Response response = uploadManager.put(file.getBytes(), key, qiniuAuth.uploadToken(qiniuProperties.getBucket()));
+            Auth auth = Auth.create(qiniuProperties.getAccessKey(), qiniuProperties.getSecretKey());
+            Response response = uploadManager.put(file.getBytes(), key, auth.uploadToken(qiniuProperties.getBucket()));
             if (!response.isOK()) throw new BusinessException("图片上传至七牛云失败: " + response.error);
             DefaultPutRet ret = new Gson().fromJson(response.bodyString(), DefaultPutRet.class);
             String domain = qiniuProperties.getDomainUrl();

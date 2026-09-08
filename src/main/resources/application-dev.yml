@@ -45,12 +45,14 @@ logging:
     org.springframework.web: info
 
 # 七牛云 Kodo 对象存储配置
-# [安全提示] 真实 AK/SK 已保存在 application-local.yml 中，此处仅保留安全占位符以防 Git 泄露
-qiniu:
-  access-key: ${QINIU_ACCESS_KEY:your-access-key}
-  secret-key: ${QINIU_SECRET_KEY:your-secret-key}
-  bucket: ${QINIU_BUCKET:your-bucket-name}
-  domain-url: ${QINIU_DOMAIN_URL:http://your-domain/}
+# [说明] 优先从 application-local.yml 读取（开发私有不入库），亦可配置环境变量 QINIU_ACCESS_KEY 等
+# 如需在开发环境中直接配置，可取消注释并填入：
+# qiniu:
+#   access-key: ${QINIU_ACCESS_KEY:}
+#   secret-key: ${QINIU_SECRET_KEY:}
+#   bucket: ${QINIU_BUCKET:}
+#   domain-url: ${QINIU_DOMAIN_URL:}
+
 
 
 

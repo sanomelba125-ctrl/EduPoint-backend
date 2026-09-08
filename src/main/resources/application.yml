@@ -7,7 +7,7 @@ spring:
   application:
     name: campus-activity-platform
   profiles:
-    active: dev
+    active: dev,local
   config:
     import:
       - optional:classpath:application-local.yml
