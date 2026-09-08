@@ -68,14 +68,15 @@ public class RabbitMqConfig {
     }
 
     /**
-     * 延时队列：消息在此停留，到期后自动转发至死信交换�?     */
+     * 延时队列：消息在此停留，到期后自动转发至死信交换?     */
     @Bean
     public Queue giftOrderDelayQueue() {
         Map<String, Object> args = new HashMap<>();
-        // 绑定死信交换�?        args.put("x-dead-letter-exchange", GIFT_DLX_EXCHANGE);
+        // 绑定死信交换机
+        args.put("x-dead-letter-exchange", GIFT_DLX_EXCHANGE);
         // 绑定死信 Routing Key
         args.put("x-dead-letter-routing-key", GIFT_EXPIRE_ROUTING_KEY);
-        // 默认延时：演示测试可设为 10 分钟或按需覆盖 (�?7*24*3600*1000)
+        // 默认延时：演示测试可设为 10 分钟或按需覆盖 (?7*24*3600*1000)
         args.put("x-message-ttl", 600000); 
         return new Queue(GIFT_ORDER_DELAY_QUEUE, true, false, false, args);
     }
