@@ -1,0 +1,109 @@
+services:
+  # -------------------------------------------------------------------
+  # 1. MySQL 8.0 关系型数据库 (挂载 V1.0.0__init.sql 自动初始化库表与密码数据)
+  # -------------------------------------------------------------------
+  mysql:
+    image: mysql:8.0
+    container_name: campus-mysql
+    restart: unless-stopped
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: campus_activity
+      TZ: Asia/Shanghai
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+      - --lower_case_table_names=1
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./src/main/resources/db/migration/V1.0.0__init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - campus-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # -------------------------------------------------------------------
+  # 2. Redis 7.0 内存数据库 (Sa-Token 分布式会话 / 排行榜 ZSET / 防超卖预扣)
+  # -------------------------------------------------------------------
+  redis:
+    image: redis:7.0-alpine
+    container_name: campus-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass redispassword --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - campus-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redispassword", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # -------------------------------------------------------------------
+  # 3. RabbitMQ 3.13 消息队列 (打卡签到高并发削峰填谷 / 延时死信超时关单)
+  # -------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: campus-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"      # AMQP 消息通信端口
+      - "15672:15672"    # Web 交互式管理后台 (账号 guest, 密码 guest)
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+      TZ: Asia/Shanghai
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - campus-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # -------------------------------------------------------------------
+  # 4. 后端服务 (Spring Boot 3.3.2 容器化一键部署)
+  # 默认在本地 IDE 开发时直接运行主类；需要全容器化运行时可指定 --profile app
+  # -------------------------------------------------------------------
+  backend:
+    profiles: ["app", "all"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: campus-activity-backend:latest
+    container_name: campus-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      TZ: Asia/Shanghai
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - campus-network
+
+networks:
+  campus-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:
+  rabbitmq_data:

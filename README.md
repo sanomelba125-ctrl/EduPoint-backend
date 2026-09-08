@@ -20,9 +20,8 @@
 ```text
 backend/
 ├── pom.xml                                  # Maven 核心构建配置
+├── docker-compose.yml                       # Docker 一键启动基础设施 (MySQL 8.0, Redis 7.0, RabbitMQ 3.13)
 ├── API.md                                   # 团队前后端 RESTful API 契约文档
-├── sql/
-│   └── init.sql                             # 12 张核心业务表与种子数据 DDL
 ├── src/
 │   └── main/
 │       ├── java/com/campus/
@@ -37,6 +36,8 @@ backend/
 │       │       ├── certificate/             # 电子证书领域 (Certificate)
 │       │       └── system/                  # 系统通用领域 (通知, 文件上传, Q&A)
 │       └── resources/
+│           ├── db/migration/
+│           │   └── V1.0.0__init.sql         # Flyway 数据库迁移初始化脚本 (包含表结构及密码哈希数据)
 │           ├── application.yml              # 全局通用配置 (Sa-Token, 端口, 路径)
 │           ├── application-dev.yml          # 本地开发环境数据源配置
 │           └── application-local.yml        # 本地私密凭证 (AK/SK，已被 Git 忽略)
@@ -46,14 +47,18 @@ backend/
 
 ## 🚀 快速启动指南
 
-### 1. 启动中间件
-在项目根目录双击运行 [`start-dev.bat`](../start-dev.bat) 启动 Docker 中的 MySQL、Redis 与 RabbitMQ。
+### 1. 启动中间件基础设施 (Docker Compose)
+在 `backend` 目录下执行如下命令，即可一键启动 MySQL 8.0、Redis 7.0 与 RabbitMQ 3.13（会自动导入 `V1.0.0__init.sql` 建表并初始化测试账号）：
+```bash
+docker compose up -d
+```
+> 如需进入 RabbitMQ 网页端管理后台：访问 `http://localhost:15672`（账号：`guest`，密码：`guest`）。
 
-### 2. 数据库初始化
-将 [`sql/init.sql`](./sql/init.sql) 导入本地 MySQL `campus_activity` 数据库中。已内置管理员及测试学生账号（密码均已 BCrypt 加盐加密）。
+### 2. 数据库说明 (Flyway 自动版本演进)
+系统已引入 Flyway 数据库协同迁移管理，位于 `src/main/resources/db/migration/V1.0.0__init.sql`。项目启动时会自动检测并比对数据库版本，无需手动执行 SQL。已内置管理员及测试学生账号（密码均已 BCrypt 加盐加密）。
 
 ### 3. 本地运行
-- **IDE 运行**：使用 IntelliJ IDEA 打开项目，找到 `com.campus.Application` 直接右键 Run。
+- **IDE 运行**：使用 IntelliJ IDEA 打开 `backend` 项目，找到 `com.campus.Application` 直接右键 Run。
 - **命令行运行**：
   ```bash
   mvn spring-boot:run
