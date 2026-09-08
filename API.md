@@ -214,6 +214,77 @@
 - **请求路径**：`/student/list`
 - **Query 参数**：`page`, `size`, `studentNo`, `name`, `college`, `className`, `status`
 
+#### 1.9 管理端新增学生档案
+- **请求方式**：`POST`
+- **请求路径**：`/student/create`
+- **权限要求**：管理员
+- **请求参数 (JSON Body)**：
+  ```json
+  {
+    "studentNo": "2023010408",
+    "name": "李四",
+    "gender": 1,
+    "college": "信息工程学院",
+    "major": "软件工程",
+    "className": "软工2301班",
+    "phone": "13911110008",
+    "initialPassword": "password123"
+  }
+  ```
+
+#### 1.10 管理端修改学生档案
+- **请求方式**：`PUT`
+- **请求路径**：`/student/update`
+- **权限要求**：管理员
+- **请求参数 (JSON Body)**：包含 `id`, `name`, `college`, `major`, `className`, `phone`
+
+#### 1.11 管理端启用/停用学生账号
+- **请求方式**：`PUT`
+- **请求路径**：`/student/{id}/status`
+- **请求参数 (Query/Body)**：`status` (1-正常启用, 0-冻结停用)
+
+#### 1.12 管理端重置学生密码
+- **请求方式**：`PUT`
+- **请求路径**：`/student/{id}/reset-password`
+- **请求参数 (JSON Body)**：
+  ```json
+  {
+    "newPassword": "password123"
+  }
+  ```
+
+---
+
+#### 1.13 管理端分页查询管理员列表
+- **请求方式**：`GET`
+- **请求路径**：`/user/list`
+- **Query 参数**：`page`, `size`, `username`, `nickname`, `role`, `status`
+
+#### 1.14 管理端新增后台管理员
+- **请求方式**：`POST`
+- **请求路径**：`/user/create`
+- **权限要求**：超级管理员 (SUPER_ADMIN)
+- **请求参数 (JSON Body)**：
+  ```json
+  {
+    "username": "counselor_wang",
+    "password": "password123",
+    "nickname": "王辅导员",
+    "role": "COUNSELOR",
+    "phone": "13800000009"
+  }
+  ```
+
+#### 1.15 管理端修改管理员信息
+- **请求方式**：`PUT`
+- **请求路径**：`/user/update`
+- **请求参数 (JSON Body)**：包含 `id`, `nickname`, `phone`, `role`
+
+#### 1.16 管理端启用/停用/删除后台用户
+- **请求方式**：`PUT`
+- **请求路径**：`/user/{id}/status`
+- **删除路径**：`DELETE /user/{id}` (禁止删除超级管理员)
+
 ---
 
 ### 2. 校园活动管理与查询模块 (/activity)
@@ -595,6 +666,41 @@
   ```
 - **说明**：状态变更为 `3`（已取消），若 `refundPoints=true` 则同一事务内自动全额退还扣除的积分并补记流水。
 
+#### 5.8 查询单个礼品详情
+- **请求方式**：`GET`
+- **请求路径**：`/gift/{id}`
+- **权限要求**：公开/需登录
+
+#### 5.9 管理端修改礼品信息 (含库存/积分)
+- **请求方式**：`PUT`
+- **请求路径**：`/gift/update`
+- **权限要求**：管理员
+- **请求参数 (JSON Body)**：
+  ```json
+  {
+    "id": 1,
+    "name": "校园定制双肩包",
+    "description": "轻便防泼水",
+    "image": "https://your-oss-url/bag.jpg",
+    "pointsRequired": 50,
+    "totalStock": 100,
+    "stock": 95,
+    "status": 1
+  }
+  ```
+
+#### 5.10 管理端上架/下架切换礼品货架状态
+- **请求方式**：`PUT`
+- **请求路径**：`/gift/{id}/status`
+- **Query / Path 参数**：`status` (1-上架, 0-下架)
+- **权限要求**：管理员
+
+#### 5.11 管理端删除礼品
+- **请求方式**：`DELETE`
+- **请求路径**：`/gift/{id}`
+- **权限要求**：管理员
+- **安全防线**：若该礼品已有学生兑换订单记录，系统严格禁止物理删除，提示“该礼品存在兑换记录，不可直接删除，请改为下架停用”。
+
 ---
 
 ### 6. 管理后台数据看板模块 (/dashboard)
@@ -690,11 +796,29 @@
 - **权限要求**：**完全公开 (无需登录)**
 - **数据脱敏保护**：不返回学生学号、密码、手机号等隐私，仅公开学生姓名脱敏（如 `张*`）、证书名称、活动名称、签发单位与有效状态。
 
+#### 8.3 管理端分页查询电子荣誉证书台账
+- **请求方式**：`GET`
+- **请求路径**：`/certificate/list`
+- **权限要求**：管理员
+- **Query 参数**：`page`, `size`, `certificateNo`, `studentName`, `studentNo`, `activityTitle`, `status` (1-有效, 2-已撤销, 3-已过期)
+
+#### 8.4 管理端撤销电子荣誉证书 (Revoke)
+- **请求方式**：`PUT`
+- **请求路径**：`/certificate/{id}/revoke`
+- **权限要求**：管理员
+- **请求参数 (JSON Body)**：
+  ```json
+  {
+    "revokeReason": "学生因违反竞赛作弊纪律，经学术委员会核定撤销证书"
+  }
+  ```
+- **说明**：状态更新为 `2`（已撤销），公开验真时将显示“已作废撤销”及原因，证书文件不可再下载。
+
 ---
 
 ### 9. AI 客服与智能问答模块 (/ai)
 
-#### 9.1 获取欢迎语与常见问题快捷入口
+#### 9.1 获取欢迎语与常见问题快捷入口 (学生端)
 - **请求方式**：`GET`
 - **请求路径**：`/ai/faq/list`
 - **权限要求**：公开
@@ -714,6 +838,38 @@
   - 基于 SSE (Server-Sent Events) 流式推送回答文本片段；
   - 服务端在组装 AI 上下文前自动提取学生当前积分与订单状态，**严禁将学生密码、手机号明文输入大模型**；
   - 当模型网络不可用时，自动返回知识库预置权威兜底回答。
+
+#### 9.3 管理端分页查询 AI 语料与 FAQ 知识库
+- **请求方式**：`GET`
+- **请求路径**：`/ai/faq/page`
+- **权限要求**：管理员
+- **Query 参数**：`page`, `size`, `keyword`, `category`, `enabled`
+
+#### 9.4 管理端新增 AI 语料与问答条目
+- **请求方式**：`POST`
+- **请求路径**：`/ai/faq/create`
+- **权限要求**：管理员
+- **请求参数 (JSON Body)**：
+  ```json
+  {
+    "question": "积分如何获取？",
+    "answer": "通过参与校园活动并在活动现场扫动态防伪二维码打卡即可获得对应学分。",
+    "category": "POINTS_RULE",
+    "sortOrder": 1,
+    "enabled": 1
+  }
+  ```
+
+#### 9.5 管理端修改 AI 语料条目
+- **请求方式**：`PUT`
+- **请求路径**：`/ai/faq/update`
+- **权限要求**：管理员
+- **请求参数 (JSON Body)**：包含 `id`, `question`, `answer`, `category`, `sortOrder`, `enabled`
+
+#### 9.6 管理端删除 AI 语料条目
+- **请求方式**：`DELETE`
+- **请求路径**：`/ai/faq/{id}`
+- **权限要求**：管理员
 
 ---
 
