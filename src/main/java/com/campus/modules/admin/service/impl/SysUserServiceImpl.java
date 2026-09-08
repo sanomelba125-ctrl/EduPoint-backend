@@ -1,4 +1,4 @@
-﻿package com.campus.modules.admin.service.impl;
+package com.campus.modules.admin.service.impl;
 
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.campus.modules.admin.entity.SysUser;

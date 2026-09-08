@@ -7,7 +7,7 @@ import com.qiniu.util.Auth;
 import org.springframework.context.annotation.Bean;
 
 /**
- * 七牛�?SDK 客户端配置类
+ * 七牛�?SDK 客户端配置类
  */
 @org.springframework.context.annotation.Configuration
 public class QiniuConfig {
@@ -29,7 +29,7 @@ public class QiniuConfig {
     }
 
     /**
-     * 构建七牛云认证凭�?Auth
+     * 构建七牛云认证凭�?Auth
      */
     @Bean
     public Auth qiniuAuth() {

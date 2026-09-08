@@ -9,8 +9,8 @@ import org.springframework.stereotype.Component;
 import java.util.Map;
 
 /**
- * 校园平台 MQ 异步消息消费�? * 1. 异步消费活动打卡事件 (高并发削峰填�?
- * 2. 延时死信消费超时未提货礼品单 (自动取消与返还积�?
+ * 校园平台 MQ 异步消息消费�? * 1. 异步消费活动打卡事件 (高并发削峰填�?
+ * 2. 延时死信消费超时未提货礼品单 (自动取消与返还积�?
  */
 @Component
 public class CampusMessageConsumer {
@@ -22,7 +22,7 @@ public class CampusMessageConsumer {
      */
     @RabbitListener(queues = RabbitMqConfig.ACTIVITY_CHECKIN_QUEUE)
     public void handleCheckinEvent(Map<String, Object> message) {
-        log.info("[MQ 削峰消费] 接收到学生活动打卡异步流�? studentId={}, activityId={}", 
+        log.info("[MQ 削峰消费] 接收到学生活动打卡异步流�? studentId={}, activityId={}", 
                 message.get("studentId"), message.get("activityId"));
     }
 

@@ -7,6 +7,8 @@ import com.campus.modules.admin.dto.PointRecordExportDTO;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -25,6 +27,8 @@ import java.util.List;
 @RequestMapping("/api/admin/export")
 @RequiredArgsConstructor
 public class ExportController {
+
+    private static final Logger log = LoggerFactory.getLogger(ExportController.class);
 
     // 实际业务中应该注入对应的 Service
     // private final ActivityService activityService;

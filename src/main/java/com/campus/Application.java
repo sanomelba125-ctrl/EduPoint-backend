@@ -1,4 +1,4 @@
-﻿package com.campus;
+package com.campus;
 
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;

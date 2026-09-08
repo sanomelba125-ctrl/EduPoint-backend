@@ -1,4 +1,4 @@
-﻿package com.campus.modules.certificate.controller;
+package com.campus.modules.certificate.controller;
 
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;

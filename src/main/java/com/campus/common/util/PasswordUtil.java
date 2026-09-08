@@ -1,4 +1,4 @@
-﻿package com.campus.common.util;
+package com.campus.common.util;
 
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 

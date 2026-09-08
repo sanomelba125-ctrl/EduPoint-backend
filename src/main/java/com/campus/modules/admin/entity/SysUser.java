@@ -1,4 +1,4 @@
-﻿package com.campus.modules.admin.entity;
+package com.campus.modules.admin.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
@@ -27,7 +27,7 @@ public class SysUser {
      */
     @TableField(select = false)
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
-    @TableField(select = false)`r`n    @JSONField(serialize = false)`r`n    private String password;
+    private String password;
 
     private String nickname;
     private String avatar;

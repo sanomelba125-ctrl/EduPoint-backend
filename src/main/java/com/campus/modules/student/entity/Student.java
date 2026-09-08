@@ -1,4 +1,4 @@
-﻿package com.campus.modules.student.entity;
+package com.campus.modules.student.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
@@ -26,7 +26,7 @@ public class Student {
      */
     @TableField(select = false)
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
-    @TableField(select = false)`r`n    @JSONField(serialize = false)`r`n    private String password;
+    private String password;
 
     private String name;
     private Integer gender;

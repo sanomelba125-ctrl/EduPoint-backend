@@ -1,4 +1,4 @@
-﻿package com.campus.modules.mall.service;
+package com.campus.modules.mall.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.campus.modules.mall.entity.Gift;

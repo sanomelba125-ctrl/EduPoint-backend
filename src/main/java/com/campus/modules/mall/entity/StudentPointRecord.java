@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 
 /**
  * 学生积分明细台账流水实体
- * 对应需�? 3.6 积分管理 / 4. 数据需�? */
+ * 对应需�? 3.6 积分管理 / 4. 数据需�? */
 @Data
 @TableName("student_point_record")
 public class StudentPointRecord {
@@ -20,25 +20,25 @@ public class StudentPointRecord {
     /** 学生ID */
     private Long studentId;
 
-    /** 变动业务类型: 1-活动打卡奖励(+) 2-商城兑换消�?-) 3-管理员手动调�?±) 4-订单取消返还(+) */
+    /** 变动业务类型: 1-活动打卡奖励(+) 2-商城兑换消�?-) 3-管理员手动调�?±) 4-订单取消返还(+) */
     private Integer type;
 
-    /** 变动积分�?正数增加，负数扣�? */
+    /** 变动积分�?正数增加，负数扣�? */
     private Integer changePoints;
 
-    /** 变动前可用积分余�?*/
+    /** 变动前可用积分余�?*/
     private Integer beforePoints;
 
-    /** 变动后可用积分余�?*/
+    /** 变动后可用积分余�?*/
     private Integer afterPoints;
 
     /** 积分变动业务明细说明 */
     private String description;
 
-    /** 关联业务ID(�?student_activity.id �?student_gift.id) */
+    /** 关联业务ID(�?student_activity.id �?student_gift.id) */
     private Long refId;
 
-    /** 操作人ID(关联 sys_user.id，系统自动触发则�?或NULL) */
+    /** 操作人ID(关联 sys_user.id，系统自动触发则�?或NULL) */
     private Long operatorId;
 
     /** 流水记账时间 */

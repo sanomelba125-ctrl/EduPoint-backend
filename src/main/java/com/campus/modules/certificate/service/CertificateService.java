@@ -1,4 +1,4 @@
-﻿package com.campus.modules.certificate.service;
+package com.campus.modules.certificate.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.campus.modules.certificate.entity.Certificate;
