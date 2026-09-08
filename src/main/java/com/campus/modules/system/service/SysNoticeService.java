@@ -1,4 +1,4 @@
-﻿package com.campus.modules.system.service;
+package com.campus.modules.system.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.campus.modules.system.entity.SysNotice;

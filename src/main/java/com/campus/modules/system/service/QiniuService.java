@@ -1,4 +1,4 @@
-﻿package com.campus.modules.system.service;
+package com.campus.modules.system.service;
 
 import org.springframework.web.multipart.MultipartFile;
 

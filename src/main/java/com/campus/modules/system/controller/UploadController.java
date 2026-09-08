@@ -1,4 +1,4 @@
-﻿package com.campus.modules.system.controller;
+package com.campus.modules.system.controller;
 
 import cn.dev33.satoken.annotation.SaCheckLogin;
 import cn.dev33.satoken.stp.StpUtil;

@@ -22,7 +22,7 @@ import java.util.List;
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/admin/export")
+@RequestMapping("/admin/export")
 @RequiredArgsConstructor
 public class ExportController {
 

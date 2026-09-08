@@ -1,4 +1,4 @@
-﻿package com.campus.modules.student.entity;
+package com.campus.modules.student.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
@@ -10,7 +10,8 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 学生档案与账户核心实�? */
+ * 学生档案与账户核心实体
+ */
 @Data
 @TableName("student")
 public class Student {
@@ -21,12 +22,13 @@ public class Student {
     private String studentNo;
 
     /**
-     * 敏感字段防护�?     * 1. @TableField(select = false)：MyBatis-Plus 查询时默认不查该字段
-     * 2. @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)：向移动�?管理端返�?JSON 时绝对剔除此字段
+     * 敏感字段防护：
+     * 1. @TableField(select = false)：MyBatis-Plus 查询时默认不查该字段
+     * 2. @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)：返回 JSON 时脱敏
      */
     @TableField(select = false)
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
-    @TableField(select = false)`r`n    @JSONField(serialize = false)`r`n    private String password;
+    private String password;
 
     private String name;
     private Integer gender;

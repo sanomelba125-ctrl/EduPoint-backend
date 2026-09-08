@@ -1,4 +1,4 @@
-﻿package com.campus.modules.mall.controller;
+package com.campus.modules.mall.controller;
 
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;

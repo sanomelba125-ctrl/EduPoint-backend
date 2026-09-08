@@ -1,4 +1,4 @@
-﻿package com.campus.modules.activity.service;
+package com.campus.modules.activity.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.campus.modules.activity.entity.Activity;

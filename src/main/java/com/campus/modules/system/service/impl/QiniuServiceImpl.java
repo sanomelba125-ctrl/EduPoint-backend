@@ -1,4 +1,4 @@
-﻿package com.campus.modules.system.service.impl;
+package com.campus.modules.system.service.impl;
 
 import com.campus.common.exception.BusinessException;
 import com.campus.config.QiniuProperties;
@@ -40,25 +40,28 @@ public class QiniuServiceImpl implements QiniuService {
     }
 
     /**
-     * 允许上传的图片扩展名白名�?     */
+     * 允许上传的图片扩展名白名单
+     */
     private static final Set<String> ALLOWED_IMAGE_EXTENSIONS = Set.of(
             ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"
     );
 
     @Override
     public String uploadImage(MultipartFile file) {
-        // 1. 空文件校�?        if (file == null || file.isEmpty()) {
-            throw new BusinessException("上传的文件不能为�?);
+        // 1. 空文件校验
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException("上传的文件不能为空");
         }
 
-        // 2. 检查七牛云密钥是否已在配置文件中填�?        if (!qiniuProperties.isConfigured()) {
-            throw new BusinessException("七牛云参数未配置！请先在 application-dev.yml 中填写你�?access-key、secret-key �?bucket 空间�?);
+        // 2. 检查七牛云密钥是否已在配置文件中填写
+        if (!qiniuProperties.isConfigured()) {
+            throw new BusinessException("七牛云参数未配置！请先在配置文件中填写 access-key、secret-key 和 bucket 空间名");
         }
 
         // 3. 文件名与格式校验
         String originalFilename = file.getOriginalFilename();
         if (originalFilename == null || !originalFilename.contains(".")) {
-            throw new BusinessException("上传的文件名不合�?);
+            throw new BusinessException("上传的文件名不合法");
         }
 
         String suffix = originalFilename.substring(originalFilename.lastIndexOf(".")).toLowerCase(Locale.ROOT);
@@ -72,7 +75,8 @@ public class QiniuServiceImpl implements QiniuService {
         String key = "images/" + datePath + "/" + uniqueFileName;
 
         try {
-            // 5. 生成七牛云上传凭�?            String upToken = qiniuAuth.uploadToken(qiniuProperties.getBucket());
+            // 5. 生成七牛云上传凭证
+            String upToken = qiniuAuth.uploadToken(qiniuProperties.getBucket());
 
             // 6. 执行流式上传
             Response response = uploadManager.put(file.getBytes(), key, upToken);
@@ -82,7 +86,8 @@ public class QiniuServiceImpl implements QiniuService {
                 throw new BusinessException("图片上传至七牛云失败: " + response.error);
             }
 
-            // 7. 解析七牛云返回结�?            DefaultPutRet putRet = new Gson().fromJson(response.bodyString(), DefaultPutRet.class);
+            // 7. 解析七牛云返回结果
+            DefaultPutRet putRet = new Gson().fromJson(response.bodyString(), DefaultPutRet.class);
             String uploadedKey = putRet.key;
 
             // 8. 拼接并返回完整的外链访问 URL
@@ -105,10 +110,10 @@ public class QiniuServiceImpl implements QiniuService {
 
         } catch (QiniuException ex) {
             Response r = ex.response;
-            log.error("七牛�?SDK 上传异常: {}", r != null ? r.toString() : ex.getMessage(), ex);
-            throw new BusinessException("七牛云存储异�? " + (r != null ? r.error : ex.getMessage()));
+            log.error("七牛云 SDK 上传异常: {}", r != null ? r.toString() : ex.getMessage(), ex);
+            throw new BusinessException("七牛云存储异常: " + (r != null ? r.error : ex.getMessage()));
         } catch (IOException e) {
-            log.error("读取上传图片字节流失�?, e);
+            log.error("读取上传图片字节流失败", e);
             throw new BusinessException("读取上传文件内容失败: " + e.getMessage());
         }
     }

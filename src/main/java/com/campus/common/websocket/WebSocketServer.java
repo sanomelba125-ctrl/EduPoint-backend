@@ -12,7 +12,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * WebSocket 服务�? * 路径格式�?ws/{userType}/{userId}
+ * WebSocket 服务端
+ * 路径格式：/ws/{userType}/{userId}
  * userType: admin / student
  */
 @ServerEndpoint("/ws/{userType}/{userId}")
@@ -20,20 +21,24 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Slf4j
 public class WebSocketServer {
 
-    // 静态变量，用来记录当前在线连接数。应该把它设计成线程安全的�?    private static AtomicInteger onlineCount = new AtomicInteger(0);
+    // 静态变量，用来记录当前在线连接数
+    private static AtomicInteger onlineCount = new AtomicInteger(0);
 
-    // concurrent包的线程安全Map，用来存放每个客户端对应的MyWebSocket对象�?    private static ConcurrentHashMap<String, WebSocketServer> webSocketMap = new ConcurrentHashMap<>();
+    // 线程安全 Map，用来存放每个客户端对应的 WebSocketServer 对象
+    private static ConcurrentHashMap<String, WebSocketServer> webSocketMap = new ConcurrentHashMap<>();
 
-    // 与某个客户端的连接会话，需要通过它来给客户端发送数�?    private Session session;
+    // 与某个客户端的连接会话
+    private Session session;
 
-    // 接收userId
+    // 接收 userId
     private String userId;
     
-    // 接收userType
+    // 接收 userType
     private String userType;
 
     /**
-     * 连接建立成功调用的方�?     */
+     * 连接建立成功调用的方法
+     */
     @OnOpen
     public void onOpen(Session session, @PathParam("userType") String userType, @PathParam("userId") String userId) {
         this.session = session;
@@ -50,17 +55,18 @@ public class WebSocketServer {
             addOnlineCount();
         }
         
-        log.info("用户连接:" + key + ",当前在线人数�?" + getOnlineCount());
+        log.info("用户连接: {}, 当前在线人数: {}", key, getOnlineCount());
         
         try {
             sendMessage("连接成功");
         } catch (IOException e) {
-            log.error("用户:" + key + ",网络异常!!!!!!");
+            log.error("用户: {} 网络异常", key);
         }
     }
 
     /**
-     * 连接关闭调用的方�?     */
+     * 连接关闭调用的方法
+     */
     @OnClose
     public void onClose() {
         String key = buildKey(userType, userId);
@@ -68,30 +74,28 @@ public class WebSocketServer {
             webSocketMap.remove(key);
             subOnlineCount();
         }
-        log.info("用户退�?" + key + ",当前在线人数�?" + getOnlineCount());
+        log.info("用户退出: {}, 当前在线人数: {}", key, getOnlineCount());
     }
 
     /**
-     * 收到客户端消息后调用的方�?     *
-     * @param message 客户端发送过来的消息
+     * 收到客户端消息后调用的方法
      */
     @OnMessage
     public void onMessage(String message, Session session) {
-        log.info("收到用户消息:" + userId + ",报文:" + message);
-        // 可以群发消息，这里暂不需�?    }
-
-    /**
-     * @param session
-     * @param error
-     */
-    @OnError
-    public void onError(Session session, Throwable error) {
-        log.error("用户错误:" + this.userId + ",原因:" + error.getMessage());
-        error.printStackTrace();
+        log.info("收到用户消息: {}, 报文: {}", userId, message);
     }
 
     /**
-     * 实现服务器主动推�?     */
+     * 发生错误时调用
+     */
+    @OnError
+    public void onError(Session session, Throwable error) {
+        log.error("用户错误: {}, 原因: {}", this.userId, error.getMessage(), error);
+    }
+
+    /**
+     * 实现服务器主动推送文本
+     */
     public void sendMessage(String message) throws IOException {
         this.session.getBasicRemote().sendText(message);
     }
@@ -104,27 +108,28 @@ public class WebSocketServer {
     }
 
     /**
-     * 向指定用户发送消�?     * 
+     * 向指定用户发送消息
+     * 
      * @param userType 用户类型 (admin/student)
      * @param userId   用户ID
      * @param message  消息内容
      */
     public static void sendInfo(String userType, String userId, String message) {
         String key = buildKey(userType, userId);
-        log.info("发送消息到:" + key + "，报�?" + message);
+        log.info("发送消息到: {}, 报文: {}", key, message);
         if (webSocketMap.containsKey(key)) {
             try {
                 webSocketMap.get(key).sendMessage(message);
             } catch (IOException e) {
-                log.error("发送消息失败，用户:" + key + ", 异常:" + e.getMessage());
+                log.error("发送消息失败，用户: {}, 异常: {}", key, e.getMessage());
             }
         } else {
-            log.warn("发送失败，用户:" + key + " 不在线！");
+            log.warn("发送失败，用户: {} 不在线！", key);
         }
     }
     
     /**
-     * 构建存储的Key
+     * 构建存储的 Key
      */
     private static String buildKey(String userType, String userId) {
         return userType + "_" + userId;
