@@ -1,6 +1,7 @@
 package com.campus.modules.mall.dto;
 
 import lombok.Data;
+import org.springframework.util.StringUtils;
 
 /**
  * 礼品分页检索入参
@@ -14,5 +15,17 @@ public class GiftQueryDTO {
 
     private String keyword;
 
+    private String name;
+
     private Integer status;
+
+    public String getKeyword() {
+        if (StringUtils.hasText(keyword)) {
+            return keyword.trim();
+        }
+        if (StringUtils.hasText(name)) {
+            return name.trim();
+        }
+        return null;
+    }
 }

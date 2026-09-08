@@ -29,4 +29,14 @@ public class GiftUpdateDTO {
     private Integer stock;
 
     private Integer status;
+
+    public void setPointsCost(Integer pointsCost) {
+        if (this.pointsRequired == null) {
+            this.pointsRequired = pointsCost;
+        }
+    }
+
+    public Integer getPointsCost() {
+        return this.pointsRequired;
+    }
 }

@@ -80,13 +80,21 @@ public class GiftController {
 
     /**
      * 管理端切换上架状态
-     * 对应 PUT /gift/{id}/status/{status}
+     * 对应 PUT /gift/{id}/status/{status} 或 PUT /gift/{id}/status?status=0
      */
-    @PutMapping("/{id}/status/{status}")
-    public Result<Void> toggleStatus(@PathVariable("id") Long id, @PathVariable("status") Integer status) {
+    @RequestMapping(value = {"/{id}/status/{status}", "/{id}/status"}, method = {RequestMethod.PUT, RequestMethod.POST})
+    public Result<Void> toggleStatus(
+            @PathVariable("id") Long id,
+            @PathVariable(value = "status", required = false) Integer pathStatus,
+            @RequestParam(value = "status", required = false) Integer paramStatus) {
         getAdminId();
+        Integer status = pathStatus != null ? pathStatus : paramStatus;
+        if (status == null) {
+            throw new BusinessException("目标货架状态不能为空");
+        }
         giftService.toggleStatus(id, status);
-        return Result.success("状态更新成功", null);
+        String action = status == 1 ? "上架" : "下架";
+        return Result.success("礼品已成功" + action, null);
     }
 
     private Long getAdminId() {

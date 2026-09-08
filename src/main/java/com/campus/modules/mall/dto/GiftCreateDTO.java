@@ -27,4 +27,24 @@ public class GiftCreateDTO {
     private Integer totalStock;
 
     private Integer status = 1;
+
+    public void setPointsCost(Integer pointsCost) {
+        if (this.pointsRequired == null) {
+            this.pointsRequired = pointsCost;
+        }
+    }
+
+    public Integer getPointsCost() {
+        return this.pointsRequired;
+    }
+
+    public void setStock(Integer stock) {
+        if (this.totalStock == null) {
+            this.totalStock = stock;
+        }
+    }
+
+    public Integer getStock() {
+        return this.totalStock;
+    }
 }

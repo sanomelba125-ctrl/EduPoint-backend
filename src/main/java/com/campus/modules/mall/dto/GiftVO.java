@@ -29,4 +29,11 @@ public class GiftVO {
     private Integer status;
 
     private LocalDateTime createTime;
+
+    /**
+     * 兼容前端 pointsCost 命名
+     */
+    public Integer getPointsCost() {
+        return pointsRequired;
+    }
 }
