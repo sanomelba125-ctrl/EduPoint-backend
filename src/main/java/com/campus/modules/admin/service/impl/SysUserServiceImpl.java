@@ -23,6 +23,8 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
 
     private static final Logger log = LoggerFactory.getLogger(SysUserServiceImpl.class);
 
+    private static final String ADMIN_LOGIN_PREFIX = "admin:";
+
     @Override
     public AdminLoginVO login(AdminLoginDTO loginDTO) {
         // 1. 显式查询包含密码列的记录(@TableField(select = false)默认排除了密码)
@@ -30,7 +32,7 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
                 .select(SysUser::getId, SysUser::getUsername, SysUser::getPassword,
                         SysUser::getNickname, SysUser::getAvatar, SysUser::getRole,
                         SysUser::getPhone, SysUser::getStatus)
-                .eq(SysUser::getUsername, loginDTO.getUsername())
+                .eq(SysUser::getUsername, loginDTO.getUsername().trim())
                 .one();
 
         // 2. 账号存在性校验(遵循安全模糊提示原则，避免用户名枚举探测)
@@ -52,8 +54,11 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
         }
 
         // 5. Sa-Token 执行登录并写入会话
-        StpUtil.login(user.getId());
+        String loginId = ADMIN_LOGIN_PREFIX + user.getId();
+        StpUtil.login(loginId);
         String token = StpUtil.getTokenValue();
+        StpUtil.getSession().set("userType", "ADMIN");
+        StpUtil.getSession().set("userId", user.getId());
         StpUtil.getSession().set("role", user.getRole());
         log.info("管理员 [{}] (ID: {}) 登录成功, 获得 Token: {}", user.getUsername(), user.getId(), token);
 
@@ -86,8 +91,14 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
     @Override
     public SysUserVO getCurrentUserInfo() {
         StpUtil.checkLogin();
-        long userId = StpUtil.getLoginIdAsLong();
+        String loginId = StpUtil.getLoginIdAsString();
 
+        // 严格校验用户类型，防止学生端 Token 越权调用管理端接口
+        if (!loginId.startsWith(ADMIN_LOGIN_PREFIX)) {
+            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "无权访问管理端接口");
+        }
+
+        long userId = Long.parseLong(loginId.substring(ADMIN_LOGIN_PREFIX.length()));
         SysUser user = getById(userId);
         if (user == null || (user.getStatus() != null && user.getStatus() == 0)) {
             throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "账号不存在或已被禁用");
