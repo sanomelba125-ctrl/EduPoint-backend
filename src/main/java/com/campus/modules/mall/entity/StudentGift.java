@@ -1,4 +1,4 @@
-package com.campus.modules.mall.entity;
+﻿package com.campus.modules.mall.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
@@ -8,7 +8,9 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 学生礼品兑换订单与发放流转实�? * 对应需�? 3.9 礼物兑换 / 3.10 兑换订单管理 / 4. 数据需�? */
+ * 学生礼品兑换订单与发放流转实体
+ * 对应需求: 3.9 礼物兑换 / 3.10 兑换订单管理 / 4. 数据需求
+ */
 @Data
 @TableName("student_gift")
 public class StudentGift {
@@ -16,7 +18,7 @@ public class StudentGift {
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    /** 业务订单编号(全局唯一防重�? */
+    /** 业务订单编号(全局唯一防重复) */
     private String orderNo;
 
     /** 兑换学生ID */
@@ -25,25 +27,28 @@ public class StudentGift {
     /** 兑换礼品ID */
     private Long giftId;
 
+    /** 兑换礼品数量 */
+    private Integer quantity;
+
     /** 实际扣减积分 */
     private Integer pointsCost;
 
-    /** 收件人真实姓�?*/
+    /** 收件人真实姓名 */
     private String receiverName;
 
-    /** 收件人联系电�?*/
+    /** 收件人联系电话 */
     private String receiverPhone;
 
-    /** 收货地址或学生宿舍信�?*/
+    /** 收货地址或学生宿舍信息 */
     private String receiverAddress;
 
-    /** 核销提货�?唯一凭据) */
+    /** 核销提货码(唯一凭据) */
     private String pickupCode;
 
-    /** 订单状�? 1-待发�?2-已送达/已核销 3-已取�?*/
+    /** 订单状态: 1-待发放 2-已送达/已核销 3-已取消 */
     private Integer status;
 
-    /** 订单取消时积分退还状�? 0-未退/不退 1-已全额退�?*/
+    /** 订单取消时积分退还状态: 0-未退/不退 1-已全额退还 */
     private Integer refundPointsStatus;
 
     /** 实际送达/核销发放时间 */
@@ -55,7 +60,7 @@ public class StudentGift {
     /** 取消原因说明 */
     private String cancelReason;
 
-    /** 经办管理员ID(追溯责任�? */
+    /** 经办管理员ID(追溯责任人) */
     private Long operatorId;
 
     /** 发放备注/签收记录 */

@@ -1,4 +1,4 @@
-﻿-- ===================================================================
+-- ===================================================================
 -- 校园活动积分平台 (EduPoint) - 生产级数据库初始化脚本
 -- 严格依据《校园活动积分平台需求说明.md》设计
 -- 适用数据库: MySQL 8.0+
@@ -86,6 +86,7 @@ DROP TABLE IF EXISTS `activity`;
 CREATE TABLE `activity` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '活动主键ID',
     `title` VARCHAR(100) NOT NULL COMMENT '活动标题(必填)',
+    `category` VARCHAR(50) NOT NULL DEFAULT 'OTHER' COMMENT '活动分类: ACADEMIC-学术讲座, VOLUNTEER-志愿服务, SPORTS-文体竞技, PRACTICE-社会实践, OTHER-其他',
     `description` TEXT DEFAULT NULL COMMENT '活动详情说明/富文本',
     `rule_description` TEXT DEFAULT NULL COMMENT '积分与打卡规则说明',
     `cover_image` VARCHAR(255) DEFAULT NULL COMMENT '活动宣传封面图URL',
@@ -111,16 +112,17 @@ CREATE TABLE `activity` (
     `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除标记: 0-正常 1-已删除',
     PRIMARY KEY (`id`),
-    KEY `idx_status_time` (`status`, `start_time`, `end_time`)
+    KEY `idx_status_time` (`status`, `start_time`, `end_time`),
+    KEY `idx_category` (`category`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='校园活动信息表';
 
 -- 初始活动种子数据
-INSERT INTO `activity` (`id`, `title`, `description`, `rule_description`, `cover_image`, `points`, `start_time`, `end_time`, `registration_limit`, `participant_count`, `waitlist_enabled`, `location_name`, `location_address`, `longitude`, `latitude`, `location_radius`, `location_check_enabled`, `certificate_enabled`, `certificate_title`, `certificate_issuer`, `status`, `created_by`)
+INSERT INTO `activity` (`id`, `title`, `category`, `description`, `rule_description`, `cover_image`, `points`, `start_time`, `end_time`, `registration_limit`, `participant_count`, `waitlist_enabled`, `location_name`, `location_address`, `longitude`, `latitude`, `location_radius`, `location_check_enabled`, `certificate_enabled`, `certificate_title`, `certificate_issuer`, `status`, `created_by`)
 VALUES 
-(1, '2026春季校园晨跑健康打卡', '坚持早起锻炼，强健体魄！在西区田径场完成晨跑签到即可累计积分。', '每天早上 06:30 - 08:30 之间到达田径场，出示动态二维码并提交定位即可打卡。', 'https://images.unsplash.com/photo-1461896836934-ffe607ba8211?w=500', 15, DATE_SUB(NOW(), INTERVAL 1 DAY), DATE_ADD(NOW(), INTERVAL 14 DAY), 100, 24, 1, '西区田径操场', '湖北省武汉市洪山区大学园路1号西区体育场', 114.362145, 30.523412, 500, 1, 0, NULL, NULL, 1, 1),
-(2, '“青年AI与新质生产力”前沿学术讲座', '邀请行业知名技术专家进校分享大模型与前沿技术实战，拓宽学术视野。', '讲座入场时扫描会场动态二维码完成打卡，全程参与可获得电子学术结业证书。', 'https://images.unsplash.com/photo-1515187029135-18ee286d815b?w=500', 30, DATE_SUB(NOW(), INTERVAL 2 HOUR), DATE_ADD(NOW(), INTERVAL 6 HOUR), 50, 48, 1, '图书馆一楼大报告厅', '图书馆主楼A区一层东侧报告厅', 114.364200, 30.524100, 200, 1, 1, 'AI前沿学术讲座参与证书', '校科技创新与创业协会', 1, 1),
-(3, '雷锋月：校园公共绿地清洁志愿服务', '践行雷锋精神，共同建设美丽校园，开展草坪修整与卫生清洁。', '在学生活动中心集合签到，统一发放清洁工具，活动结束后颁发志愿服务证书。', 'https://images.unsplash.com/photo-1559027615-cd4628902d4a?w=500', 25, DATE_ADD(NOW(), INTERVAL 2 DAY), DATE_ADD(NOW(), INTERVAL 5 DAY), 30, 0, 1, '学生活动中心门前广场', '学生活动中心南门广场旗杆下', 114.361500, 30.522800, 300, 0, 1, '校园环保志愿服务荣誉证书', '校青年志愿者协会', 0, 1),
-(4, '读书月：经典品读与思辨沙龙 (往期归档)', '阅读经典名著，分享读书感悟与体会。', '现场签到并参与讨论。', 'https://images.unsplash.com/photo-1521587760476-6c12a4b040da?w=500', 10, DATE_SUB(NOW(), INTERVAL 10 DAY), DATE_SUB(NOW(), INTERVAL 2 DAY), 40, 40, 0, '博学楼201教室', '博学楼二楼西侧多媒体教室', 114.363000, 30.523000, 300, 0, 0, NULL, NULL, 2, 1)
+(1, '2026春季校园晨跑健康打卡', 'SPORTS', '坚持早起锻炼，强健体魄！在西区田径场完成晨跑签到即可累计积分。', '每天早上 06:30 - 08:30 之间到达田径场，出示动态二维码并提交定位即可打卡。', 'https://images.unsplash.com/photo-1461896836934-ffe607ba8211?w=500', 15, DATE_SUB(NOW(), INTERVAL 1 DAY), DATE_ADD(NOW(), INTERVAL 14 DAY), 100, 24, 1, '西区田径操场', '湖北省武汉市洪山区大学园路1号西区体育场', 114.362145, 30.523412, 500, 1, 0, NULL, NULL, 1, 1),
+(2, '“青年AI与新质生产力”前沿学术讲座', 'ACADEMIC', '邀请行业知名技术专家进校分享大模型与前沿技术实战，拓宽学术视野。', '讲座入场时扫描会场动态二维码完成打卡，全程参与可获得电子学术结业证书。', 'https://images.unsplash.com/photo-1515187029135-18ee286d815b?w=500', 30, DATE_SUB(NOW(), INTERVAL 2 HOUR), DATE_ADD(NOW(), INTERVAL 6 HOUR), 50, 48, 1, '图书馆一楼大报告厅', '图书馆主楼A区一层东侧报告厅', 114.364200, 30.524100, 200, 1, 1, 'AI前沿学术讲座参与证书', '校科技创新与创业协会', 1, 1),
+(3, '雷锋月：校园公共绿地清洁志愿服务', 'VOLUNTEER', '践行雷锋精神，共同建设美丽校园，开展草坪修整与卫生清洁。', '在学生活动中心集合签到，统一发放清洁工具，活动结束后颁发志愿服务证书。', 'https://images.unsplash.com/photo-1559027615-cd4628902d4a?w=500', 25, DATE_ADD(NOW(), INTERVAL 2 DAY), DATE_ADD(NOW(), INTERVAL 5 DAY), 30, 0, 1, '学生活动中心门前广场', '学生活动中心南门广场旗杆下', 114.361500, 30.522800, 300, 0, 1, '校园环保志愿服务荣誉证书', '校青年志愿者协会', 0, 1),
+(4, '读书月：经典品读与思辨沙龙 (往期归档)', 'PRACTICE', '阅读经典名著，分享读书感悟与体会。', '现场签到并参与讨论。', 'https://images.unsplash.com/photo-1521587760476-6c12a4b040da?w=500', 10, DATE_SUB(NOW(), INTERVAL 10 DAY), DATE_SUB(NOW(), INTERVAL 2 DAY), 40, 40, 0, '博学楼201教室', '博学楼二楼西侧多媒体教室', 114.363000, 30.523000, 300, 0, 0, NULL, NULL, 2, 1)
 ON DUPLICATE KEY UPDATE `title` = VALUES(`title`);
 
 -- -------------------------------------------------------------------
@@ -177,6 +179,7 @@ CREATE TABLE `activity_waitlist` (
     `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除标记',
     PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_act_stu_wait` (`activity_id`, `student_id`) COMMENT '一学生一活动唯一候补排队约束',
     KEY `idx_act_queue` (`activity_id`, `status`, `queue_number`),
     KEY `idx_student_id` (`student_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='活动报名候补排队记录表';
@@ -291,6 +294,7 @@ CREATE TABLE `student_gift` (
     `order_no` VARCHAR(64) NOT NULL COMMENT '业务订单编号(全局唯一防重复)',
     `student_id` BIGINT NOT NULL COMMENT '兑换学生ID(关联 student.id)',
     `gift_id` BIGINT NOT NULL COMMENT '兑换礼品ID(关联 gift.id)',
+    `quantity` INT NOT NULL DEFAULT 1 COMMENT '兑换礼品数量(件数)',
     `points_cost` INT NOT NULL COMMENT '实际扣减积分',
     `receiver_name` VARCHAR(50) NOT NULL COMMENT '收件人真实姓名',
     `receiver_phone` VARCHAR(20) NOT NULL COMMENT '收件人联系电话',
@@ -314,10 +318,10 @@ CREATE TABLE `student_gift` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='学生礼品兑换订单与发放流转表';
 
 -- 初始兑换订单模拟数据
-INSERT INTO `student_gift` (`id`, `order_no`, `student_id`, `gift_id`, `points_cost`, `receiver_name`, `receiver_phone`, `receiver_address`, `pickup_code`, `status`, `refund_points_status`, `delivery_time`, `operator_id`, `remark`)
+INSERT INTO `student_gift` (`id`, `order_no`, `student_id`, `gift_id`, `quantity`, `points_cost`, `receiver_name`, `receiver_phone`, `receiver_address`, `pickup_code`, `status`, `refund_points_status`, `delivery_time`, `operator_id`, `remark`)
 VALUES 
-(1, 'ORD202603010001', 1, 1, 50, '张伟', '13911110001', '南区学生公寓12栋302室', 'PU20260301001', 2, 0, NOW(), 1, '已于一站式学生事务中心窗口核销领取'),
-(2, 'ORD202603010002', 2, 2, 120, '王芳', '13911110002', '东区研究生宿舍5栋101室', 'PU20260301002', 1, 0, NULL, NULL, '待宿管站统一配送')
+(1, 'ORD202603010001', 1, 1, 1, 50, '张伟', '13911110001', '南区学生公寓12栋302室', 'PU20260301001', 2, 0, NOW(), 1, '已于一站式学生事务中心窗口核销领取'),
+(2, 'ORD202603010002', 2, 2, 1, 120, '王芳', '13911110002', '东区研究生宿舍5栋101室', 'PU20260301002', 1, 0, NULL, NULL, '待宿管站统一配送')
 ON DUPLICATE KEY UPDATE `order_no` = VALUES(`order_no`);
 
 -- -------------------------------------------------------------------
