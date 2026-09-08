@@ -12,7 +12,7 @@ public class ActivityPageQuery {
 
     private long page = 1;
     private long size = 10;
-    private String title;
+    private String keyword;
     private String category;
     private Integer status;
 }

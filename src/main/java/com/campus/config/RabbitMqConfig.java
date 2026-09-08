@@ -11,7 +11,7 @@ import java.util.Map;
 
 /**
  * RabbitMQ 消息队列核心拓扑配置
- * 1. 校园活动打卡高并发削峰填谷队�?(Direct)
+ * 1. 校园活动打卡高并发削峰填谷队列（Direct）
  * 2. 礼品兑换超时未提货自动关单与积分回退延时死信队列 (TTL + DLX)
  */
 @Configuration
@@ -22,12 +22,12 @@ public class RabbitMqConfig {
     public static final String ACTIVITY_CHECKIN_QUEUE = "campus.activity.checkin.queue";
     public static final String ACTIVITY_CHECKIN_ROUTING_KEY = "activity.checkin";
 
-    // ================== 2. 礼品兑换 7 天延时超时关单队�?(DLX 架构) ==================
+    // ================== 2. 礼品兑换 7 天延时超时关单队列（DLX 架构） ==================
     public static final String GIFT_ORDER_EXCHANGE = "campus.gift.order.exchange";
     public static final String GIFT_ORDER_DELAY_QUEUE = "campus.gift.order.delay.queue";
     public static final String GIFT_ORDER_DELAY_ROUTING_KEY = "gift.order.delay";
 
-    // 死信交换机与死信队列 (接收超时未领取的兑换单并执行退单返还积�?
+    // 死信交换机与死信队列（接收超时未领取的兑换单并执行退单返还积分）
     public static final String GIFT_DLX_EXCHANGE = "campus.gift.dlx.exchange";
     public static final String GIFT_EXPIRE_QUEUE = "campus.gift.expire.queue";
     public static final String GIFT_EXPIRE_ROUTING_KEY = "gift.expire";
@@ -68,14 +68,16 @@ public class RabbitMqConfig {
     }
 
     /**
-     * 延时队列：消息在此停留，到期后自动转发至死信交换�?     */
+     * 延时队列：消息在此停留，到期后自动转发至死信交换机。
+     */
     @Bean
     public Queue giftOrderDelayQueue() {
         Map<String, Object> args = new HashMap<>();
-        // 绑定死信交换�?        args.put("x-dead-letter-exchange", GIFT_DLX_EXCHANGE);
+        // 绑定死信交换机和路由键。
+        args.put("x-dead-letter-exchange", GIFT_DLX_EXCHANGE);
         // 绑定死信 Routing Key
         args.put("x-dead-letter-routing-key", GIFT_EXPIRE_ROUTING_KEY);
-        // 默认延时：演示测试可设为 10 分钟或按需覆盖 (�?7*24*3600*1000)
+        // 默认延时 10 分钟。
         args.put("x-message-ttl", 600000); 
         return new Queue(GIFT_ORDER_DELAY_QUEUE, true, false, false, args);
     }
@@ -86,7 +88,8 @@ public class RabbitMqConfig {
     }
 
     /**
-     * 死信消费队列：监听超时订�?     */
+     * 死信消费队列：监听超时订单。
+     */
     @Bean
     public Queue giftExpireQueue() {
         return QueueBuilder.durable(GIFT_EXPIRE_QUEUE).build();

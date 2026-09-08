@@ -8,6 +8,10 @@ spring:
       initialization-fail-timeout: 30000
       minimum-idle: 5
       maximum-pool-size: 20
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 1.0.0
   data:
     redis:
       host: redis

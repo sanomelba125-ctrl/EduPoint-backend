@@ -6,15 +6,27 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import cn.dev33.satoken.stp.StpUtil;
 import com.campus.common.exception.BusinessException;
 import com.campus.common.result.ResultCode;
+import com.campus.config.ActivityQrCodeProperties;
 import com.campus.modules.activity.dto.ActivityPageQuery;
 import com.campus.modules.activity.dto.ActivitySaveDTO;
+import com.campus.modules.activity.dto.QrCodeVO;
 import com.campus.modules.activity.entity.Activity;
+import com.campus.modules.activity.entity.ActivityCheckinCode;
 import com.campus.modules.activity.mapper.ActivityMapper;
+import com.campus.modules.activity.service.ActivityCheckinCodeService;
 import com.campus.modules.activity.service.ActivityService;
+import jakarta.annotation.Resource;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Base64;
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * Activity 服务实现类
@@ -22,6 +34,14 @@ import java.util.Objects;
  */
 @Service
 public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> implements ActivityService {
+
+    private static final DateTimeFormatter DATETIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    @Resource
+    private ActivityCheckinCodeService checkinCodeService;
+
+    @Resource
+    private ActivityQrCodeProperties qrCodeProperties;
 
     @Override
     public Activity create(ActivitySaveDTO dto) {
@@ -84,11 +104,81 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
         long current = Math.max(query.getPage(), 1);
         long size = Math.min(Math.max(query.getSize(), 1), 100);
         return lambdaQuery()
-                .like(query.getTitle() != null && !query.getTitle().isBlank(), Activity::getTitle, query.getTitle())
+                .like(query.getKeyword() != null && !query.getKeyword().isBlank(), Activity::getTitle, query.getKeyword().trim())
                 .eq(query.getCategory() != null && !query.getCategory().isBlank(), Activity::getCategory, query.getCategory())
                 .eq(query.getStatus() != null, Activity::getStatus, query.getStatus())
                 .orderByDesc(Activity::getStartTime)
                 .page(new Page<>(current, size));
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public QrCodeVO generateQrCode(Long activityId) {
+        // 1. 鉴权：必须是已登录的管理员
+        requireAdminId();
+
+        // 2. 校验活动是否存在
+        Activity activity = getById(activityId);
+        if (activity == null || Objects.equals(activity.getDeleted(), 1)) {
+            throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "活动不存在");
+        }
+        if (Objects.equals(activity.getStatus(), 3)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "已归档的活动不能生成签到码");
+        }
+
+        // 3. 失效该活动的所有当前有效码（status=0 → 2）
+        checkinCodeService.invalidateActiveCodes(activityId);
+
+        // 4. 生成新的 nonce（UUID去横线，大写）
+        String nonce = "NONCE_" + UUID.randomUUID().toString().replace("-", "").substring(0, 14).toUpperCase();
+
+        // 5. 生成 HMAC-SHA256 签名：sign = HmacSHA256(activityId + ":" + nonce, SIGN_SECRET)
+        String sign = hmacSha256(activityId + ":" + nonce, qrCodeProperties.getSignSecret());
+        String signToken = "SIGN_" + sign.substring(0, 18).toUpperCase();
+
+        // 6. 计算过期时间
+        int validSeconds = qrCodeProperties.getValidSeconds();
+        LocalDateTime expireTime = LocalDateTime.now().plusSeconds(validSeconds);
+
+        // 7. 持久化到 activity_checkin_code 表
+        ActivityCheckinCode code = new ActivityCheckinCode();
+        code.setActivityId(activityId);
+        code.setNonce(nonce);
+        code.setSign(signToken);
+        code.setExpireTime(expireTime);
+        code.setStatus(0);
+        checkinCodeService.save(code);
+
+        // 8. 拼装扫码跳转 URL
+        String qrContent = qrCodeProperties.getCheckinBaseUrl()
+                + "?actId=" + activityId
+                + "&nonce=" + nonce
+                + "&sign=" + signToken;
+
+        return QrCodeVO.builder()
+                .activityId(activityId)
+                .nonce(nonce)
+                .sign(signToken)
+                .expireTime(expireTime.format(DATETIME_FMT))
+                .validSeconds(validSeconds)
+                .qrContent(qrContent)
+                .build();
+    }
+
+    // ────────── 内部工具方法 ──────────
+
+    /**
+     * HMAC-SHA256 签名并返回 Base64-URL 编码（去除 = 填充）
+     */
+    private String hmacSha256(String data, String secret) {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            byte[] raw = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
+        } catch (Exception e) {
+            throw new BusinessException(ResultCode.ERROR.getCode(), "签名生成失败：" + e.getMessage());
+        }
     }
 
     private Long requireAdminId() {

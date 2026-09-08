@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.campus.common.result.Result;
 import com.campus.modules.activity.dto.ActivityPageQuery;
 import com.campus.modules.activity.dto.ActivitySaveDTO;
+import com.campus.modules.activity.dto.QrCodeVO;
 import com.campus.modules.activity.entity.Activity;
 import com.campus.modules.activity.service.ActivityService;
 import jakarta.annotation.Resource;
@@ -52,5 +53,15 @@ public class ActivityController {
     @GetMapping("/page")
     public Result<IPage<Activity>> page(ActivityPageQuery query) {
         return Result.success(activityService.page(query));
+    }
+
+    /**
+     * 2.6 管理端生成/刷新活动动态签到二维码
+     * GET /activity/{id}/qrcode
+     * 权限：管理员登录
+     */
+    @GetMapping("/{id}/qrcode")
+    public Result<QrCodeVO> getQrCode(@PathVariable Long id) {
+        return Result.success("二维码生成成功", activityService.generateQrCode(id));
     }
 }
