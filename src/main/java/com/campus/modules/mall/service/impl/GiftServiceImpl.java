@@ -103,9 +103,29 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
         if (updateDTO.getStatus() != null) {
             gift.setStatus(updateDTO.getStatus());
         }
+        if (gift.getVersion() == null) {
+            gift.setVersion(0);
+        }
         gift.setUpdatedBy(adminId);
 
-        this.updateById(gift);
+        boolean updated = this.updateById(gift);
+        if (!updated) {
+            // 乐观锁重试兜底
+            Gift fresh = this.getById(updateDTO.getId());
+            if (fresh != null) {
+                if (StringUtils.hasText(updateDTO.getName())) fresh.setName(updateDTO.getName());
+                if (updateDTO.getDescription() != null) fresh.setDescription(updateDTO.getDescription());
+                if (StringUtils.hasText(updateDTO.getImage())) fresh.setImage(updateDTO.getImage());
+                if (updateDTO.getPointsRequired() != null) fresh.setPointsRequired(updateDTO.getPointsRequired());
+                if (updateDTO.getTotalStock() != null) fresh.setTotalStock(updateDTO.getTotalStock());
+                if (updateDTO.getStock() != null) fresh.setStock(updateDTO.getStock());
+                if (updateDTO.getStatus() != null) fresh.setStatus(updateDTO.getStatus());
+                if (fresh.getVersion() == null) fresh.setVersion(0);
+                fresh.setUpdatedBy(adminId);
+                this.updateById(fresh);
+                return convertToVO(fresh);
+            }
+        }
         return convertToVO(gift);
     }
 
@@ -140,7 +160,16 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
             throw new BusinessException("礼品不存在");
         }
         gift.setStatus(status);
-        this.updateById(gift);
+        if (gift.getVersion() == null) {
+            gift.setVersion(0);
+        }
+        boolean updated = this.updateById(gift);
+        if (!updated) {
+            // 兜底强制更新货架状态
+            this.update(new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Gift>()
+                    .set(Gift::getStatus, status)
+                    .eq(Gift::getId, id));
+        }
     }
 
     private GiftVO convertToVO(Gift gift) {
