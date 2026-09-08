@@ -28,8 +28,6 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ExportController {
 
-    private static final Logger log = LoggerFactory.getLogger(ExportController.class);
-
     // 实际业务中应该注入对应的 Service
     // private final ActivityService activityService;
     // private final StudentPointRecordService pointRecordService;

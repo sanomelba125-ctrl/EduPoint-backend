@@ -129,6 +129,21 @@ public class WebSocketServer {
     }
     
     /**
+     * 向指定用户类型的所有在线客户端广播消息
+     */
+    public static void broadcastToUserType(String userType, String message) {
+        webSocketMap.forEach((key, server) -> {
+            if (key.startsWith(userType + "_")) {
+                try {
+                    server.sendMessage(message);
+                } catch (IOException e) {
+                    log.error("广播消息失败，key: {}, error: {}", key, e.getMessage());
+                }
+            }
+        });
+    }
+
+    /**
      * 构建存储的 Key
      */
     private static String buildKey(String userType, String userId) {
