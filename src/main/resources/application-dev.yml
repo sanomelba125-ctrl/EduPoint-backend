@@ -6,6 +6,10 @@ spring:
     password: rootpassword # 请根据本地实际数据库密码修改
     hikari:
       initialization-fail-timeout: -1
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 1.0.0
   data:
     redis:
       host: localhost

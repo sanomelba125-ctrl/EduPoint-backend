@@ -25,11 +25,13 @@ public class UploadController {
 
     /**
      * 图片上传至七牛云 (返回外链 URL)
-     * 【安全加固】：增加 @SaCheckLogin，只有登录成功的管理员或学生才允许上传，防止接口被公网脚本刷�?     */
+     * 【安全加固】：增加 @SaCheckLogin，只有登录成功的管理员或学生才允许上传，防止接口被公网脚本刷库
+     */
     @SaCheckLogin
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Result<String> uploadImage(@RequestParam("file") MultipartFile file) {
-        // 双重校验当前会话登录�?        StpUtil.checkLogin();
+        // 双重校验当前会话登录态
+        StpUtil.checkLogin();
 
         String imageUrl = qiniuService.uploadImage(file);
         return Result.success("图片上传成功", imageUrl);

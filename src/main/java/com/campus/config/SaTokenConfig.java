@@ -6,12 +6,15 @@ import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
- * Sa-Token 注解拦截器配�? */
+ * Sa-Token 注解拦截器配置
+ */
 @Configuration
 public class SaTokenConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        // 注册 Sa-Token 拦截器，�?@SaCheckLogin, @SaCheckRole, @SaCheckPermission 等注解生�?        registry.addInterceptor(new SaInterceptor()).addPathPatterns("/**");
+        // 注册 Sa-Token 路由拦截器，激活注解鉴权功能 (@SaCheckLogin, @SaCheckRole, @SaCheckPermission 等)
+        registry.addInterceptor(new SaInterceptor())
+                .addPathPatterns("/**");
     }
 }
