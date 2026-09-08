@@ -55,7 +55,10 @@ docker compose up -d
 > 如需进入 RabbitMQ 网页端管理后台：访问 `http://localhost:15672`（账号：`guest`，密码：`guest`）。
 
 ### 2. 数据库说明 (Flyway 自动版本演进)
-系统已引入 Flyway 数据库协同迁移管理，位于 `src/main/resources/db/migration/V1.0.0__init.sql`。项目启动时会自动检测并比对数据库版本，无需手动执行 SQL。已内置管理员及测试学生账号（密码均已 BCrypt 加盐加密）。
+系统已引入 Flyway 数据库协同迁移管理，位于 `src/main/resources/db/migration/`：
+- `V1.0.0__init.sql`：12 张生产级数据表定义与系统用户初始种子；
+- `V1.0.1__add_demo_student.sql`：补齐核心演示账号（张晓明 `2023010401`）与双积分台账流水。
+项目启动时会自动检测并比对数据库版本，无需手动执行 SQL。所有账号密码均已 BCrypt 加盐加密。
 
 ### 3. 本地运行
 - **IDE 运行**：使用 IntelliJ IDEA 打开 `backend` 项目，找到 `com.campus.Application` 直接右键 Run。
