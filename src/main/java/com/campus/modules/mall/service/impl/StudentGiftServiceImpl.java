@@ -96,15 +96,23 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
                 + String.format("%02d", (int) (Math.random() * 100));
 
         // 7. 保存兑换订单
+        String rName = org.springframework.util.StringUtils.hasText(dto.getReceiverName())
+                ? dto.getReceiverName().trim() : student.getName();
+        String rPhone = org.springframework.util.StringUtils.hasText(dto.getReceiverPhone())
+                ? dto.getReceiverPhone().trim()
+                : (org.springframework.util.StringUtils.hasText(student.getPhone()) ? student.getPhone() : "13911110006");
+        String rAddress = org.springframework.util.StringUtils.hasText(dto.getReceiverAddress())
+                ? dto.getReceiverAddress().trim() : "大学生活动中心一楼 102 创客服务台";
+
         StudentGift order = new StudentGift();
         order.setOrderNo(orderNo);
         order.setStudentId(studentId);
         order.setGiftId(gift.getId());
         order.setQuantity(quantity);
         order.setPointsCost(totalPointsCost);
-        order.setReceiverName(dto.getReceiverName());
-        order.setReceiverPhone(dto.getReceiverPhone());
-        order.setReceiverAddress(dto.getReceiverAddress());
+        order.setReceiverName(rName);
+        order.setReceiverPhone(rPhone);
+        order.setReceiverAddress(rAddress);
         order.setPickupCode(pickupCode);
         order.setStatus(1); // 1-待发放/待提货
         order.setRefundPointsStatus(0);
