@@ -34,9 +34,9 @@
 
 | 负责角色 | 核心模块职责 | 研发进度 | 状态概括 |
 | :--- | :--- | :---: | :--- |
-| **👨‍💻 开发者 A** | **活动打卡与履历链路**（业务流转、防作弊与位置核验） | **~60%** | 后端活动 CRUD 与动态二维码已完成，管理端活动页面已实装；**名额候补递补、GPS 动态打卡及移动端页面待开发** |
+| **👨‍💻 开发者 A** | **活动打卡与履历链路**（业务流转、防作弊与位置核验） | **~95%** | **全链路基本完成**：活动报名、候补排队、Redisson 防超发打卡、动态二维码核验、移动端大厅/详情/打卡页均已联调通过；仅剩管理端打卡明细页待绑接口 |
 | **👨‍💻 开发者 B** | **积分商城与交易链路**（高并发防超卖与事务安全） | **100%** | **全链路已完成**：积分台账、排行榜、礼品维护、Redis+MQ+乐观锁防超卖兑换、核销与撤销退分、双端页面已全部联调通过 |
-| **👨‍💻 开发者 C** | **基础架构、数据看板与高级扩展**（全局基建、大屏与难点攻坚） | **~45%** | 鉴权基建、七牛云 OSS、WebSocket 服务端已就绪；**数据大屏、管理员/学生档案管理、证书验真与 AI 客服待开发** |
+| **👨‍💻 开发者 C** | **基础架构、数据看板与高级扩展**（全局基建、大屏与难点攻坚） | **~65%** | **核心基建已全闭环**：鉴权基建、管理员/学生档案管理CRUD、七牛云OSS、EasyExcel报表导出、WS推送已实装；**全力冲刺：数据大屏、AI客服与证书验真** |
 
 ---
 
@@ -86,30 +86,31 @@
 
 #### (2) 报名机制与候补排队 (Waitlist)
 
-- [ ] **[开发者 A] 后端学生报名活动接口**：`POST /student/activity/signup`
+- [X] **[开发者 A] 后端学生报名活动接口**：`POST /student/activity/signup`
   - 校验活动时间，限本人报名且同一活动限报一次；
   - 判断是否达到名额上限 `registration_limit`：未满员写入 `REGISTERED`，满员自动进入候补排队并写入 `WAITING`（分配排队序号 `queue_number`）。
-- [ ] **[开发者 A] 后端学生取消报名与自动递补**：`POST /student/activity/cancel-signup`
+- [X] **[开发者 A] 后端学生取消报名与自动递补**：`POST /student/activity/cancel-signup`
   - 取消已报名记录，系统自动按顺序检索该活动候补队伍中排第 1 名的学生递补转正，并触发通知。
 
 #### (3) 动态打卡与防作弊核验 (Checkin)
 
 - [X] **[开发者 A] 后端生成/刷新动态防伪签到二维码**：`GET /activity/{id}/qrcode`
   - 服务端生成含活动ID、随机 `nonce`、有效时间戳和 HMAC-SHA256 防伪签名的动态 Token，时效刷新自动作废旧码（防止截图代打卡）。
-- [ ] **[开发者 A] 后端扫码打卡签到核心核验**：`POST /student/activity/checkin`
+- [X] **[开发者 A] 后端扫码打卡签到核心核验**：`POST /student/activity/checkin`
   - 校验当前是否处于有效打卡时段；
   - 单次核销：校验动态二维码 `nonce` 未被使用；
   - 位置校验：开启定位核验时，计算打卡 GPS 与活动目标点的球面距离（Haversine），判断 $\le$ `location_radius`；
   - 强事务写入：打卡记录标记已完成、增加学生对应奖励积分并记录流水，同一事务内执行。
-- [ ] **[开发者 A] 后端学生查询我的活动参与记录**：`GET /student/activity/my-list`
-- [ ] **[开发者 A] 后端管理端全量查询学生活动打卡明细**：`GET /activity/record/list`
+- [X] **[开发者 A] 后端学生查询我的活动参与记录**：`GET /student/activity/my-list`
+- [X] **[开发者 A] 后端管理端全量查询学生活动打卡明细**：`GET /activity/record/list`
 - [ ] **[开发者 A] 管理端学生活动记录与审核界面实装**：`admin-web/src/views/student-activity/index.vue`（待替换静态假数据）
 
 #### (4) 移动端活动相关页面实装
 
-- [ ] **[开发者 A] 移动端活动大厅实装**：`mobile-app/src/pages/activity/index.vue`（实现分类 Tab、活动列表滚动加载、状态展示）
-- [ ] **[开发者 A] 移动端活动详情页**：支持报名、候补状态提示、导航路线指引
-- [ ] **[开发者 A] 移动端扫码打卡页**：唤起相机扫码、获取当前 GPS 经纬度并提交打卡
+- [X] **[开发者 A] 移动端活动大厅实装**：`mobile-app/src/pages/activity/index.vue`（实现分类 Tab、活动列表滚动加载、状态展示）
+- [X] **[开发者 A] 移动端活动详情页**：`mobile-app/src/pages/activity/detail.vue`（支持报名、候补状态提示、导航路线指引）
+- [X] **[开发者 A] 移动端扫码打卡页**：`mobile-app/src/pages/activity/checkin.vue`（唤起相机扫码、获取当前 GPS 经纬度并提交打卡）
+- [X] **[开发者 A] 移动端参与活动记录页**：`mobile-app/src/pages/activity/records.vue`（展示学生全部历史打卡记录）
 
 ---
 
@@ -166,8 +167,8 @@
 
 - [ ] **[开发者 C] 后端数据看板核心指标统计**：`GET /dashboard/overview`（学生总人数、签到人次、平均签到率、流通积分总量）
 - [ ] **[开发者 C] 后端数据看板排行榜与最新打卡流水**：`GET /dashboard/top-students`（Top5 积分榜与近期实时打卡列表）
-- [ ] **[开发者 C] 后端基于 EasyExcel 导出活动参与明细报表**：`GET /admin/export/activities`（接入数据库真实数据导出）
-- [ ] **[开发者 C] 后端基于 EasyExcel 导出学生积分明细报表**：`GET /admin/export/points`（接入数据库真实流水导出）
+- [X] **[开发者 C] 后端基于 EasyExcel 导出活动参与明细报表**：`GET /admin/export/activities`（接入数据库真实数据导出）
+- [X] **[开发者 C] 后端基于 EasyExcel 导出学生积分明细报表**：`GET /admin/export/points`（接入数据库真实流水导出）
 - [ ] **[开发者 C] 管理端数据大屏实装与 API 对接**：`admin-web/src/views/dashboard/index.vue`（替换当前静态 Mock 数据，联调真实指标卡与趋势图表）
 
 ---
