@@ -20,4 +20,7 @@ public class SysUserVO {
     private String avatar;
     private String role;
     private String phone;
+    private Integer status;
+    private java.time.LocalDateTime createTime;
+    private java.time.LocalDateTime updateTime;
 }

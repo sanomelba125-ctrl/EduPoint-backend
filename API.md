@@ -150,6 +150,102 @@
 - **请求路径**：`/user/info`
 - **权限要求**：需登录
 
+#### 1.4 管理员列表分页多条件查询
+- **请求方式**：`GET`
+- **请求路径**：`/user/list`
+- **权限要求**：需登录
+- **请求 Query 参数**：
+  - `page`: 当前页码（默认 1）
+  - `size`: 每页大小（默认 10）
+  - `keyword`: 模糊检索关键字（用户名或姓名昵称）
+  - `role`: 角色过滤 (`SUPER_ADMIN` / `ADMIN` / `COUNSELOR`)
+  - `status`: 状态过滤 (`1`-正常启用, `0`-已被禁用)
+- **成功响应**：
+  ```json
+  {
+    "code": 200,
+    "message": "操作成功",
+    "data": {
+      "records": [
+        {
+          "id": 1,
+          "username": "admin",
+          "nickname": "超级管理员",
+          "avatar": "https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png",
+          "role": "SUPER_ADMIN",
+          "phone": "13800000001",
+          "status": 1,
+          "createTime": "2024-09-01 10:00:00",
+          "updateTime": "2024-09-01 10:00:00"
+        }
+      ],
+      "total": 1,
+      "size": 10,
+      "current": 1,
+      "pages": 1
+    }
+  }
+  ```
+
+#### 1.5 新增管理员账号
+- **请求方式**：`POST`
+- **请求路径**：`/user/create`
+- **权限要求**：需登录
+- **请求参数 (JSON Body)**：
+  ```json
+  {
+    "username": "teacher_wang",
+    "password": "123",
+    "nickname": "学工处王老师",
+    "role": "ADMIN",
+    "phone": "13812345678",
+    "avatar": ""
+  }
+  ```
+- **成功响应**：`{ "code": 200, "message": "管理员账号创建成功", "data": { ... } }`
+
+#### 1.6 修改管理员信息
+- **请求方式**：`PUT`
+- **请求路径**：`/user/update`
+- **权限要求**：需登录
+- **请求参数 (JSON Body)**：
+  ```json
+  {
+    "id": 2,
+    "nickname": "学工处王主任",
+    "role": "ADMIN",
+    "phone": "13812345679",
+    "status": 1,
+    "password": ""
+  }
+  ```
+- **成功响应**：`{ "code": 200, "message": "管理员信息更新成功", "data": { ... } }`
+
+#### 1.7 启用/停用管理员账号
+- **请求方式**：`PUT`
+- **请求路径**：`/user/{id}/status`
+- **权限要求**：需登录
+- **请求参数**：URL Path 参数 `id`；Query 或 Body 参数 `status` (`1`-启用, `0`-停用)
+- **成功响应**：`{ "code": 200, "message": "账号已启用", "data": null }`
+
+#### 1.8 删除/注销管理员账号 (逻辑删除)
+- **请求方式**：`DELETE`
+- **请求路径**：`/user/{id}`
+- **权限要求**：需登录（保护限制：禁止删除初始超管或当前登录者自身）
+- **成功响应**：`{ "code": 200, "message": "管理员账号注销成功", "data": null }`
+
+#### 1.9 重置管理员密码
+- **请求方式**：`PUT`
+- **请求路径**：`/user/{id}/reset-password`
+- **权限要求**：需登录
+- **请求参数 (JSON Body)**：
+  ```json
+  {
+    "newPassword": "123"
+  }
+  ```
+- **成功响应**：`{ "code": 200, "message": "管理员密码重置成功", "data": null }`
+
 ---
 
 #### 1.4 学生端登录

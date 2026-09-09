@@ -1,19 +1,21 @@
 package com.campus.modules.admin.service.impl;
 
 import cn.dev33.satoken.stp.StpUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.campus.common.exception.BusinessException;
 import com.campus.common.result.ResultCode;
 import com.campus.common.util.PasswordUtil;
-import com.campus.modules.admin.dto.AdminLoginDTO;
-import com.campus.modules.admin.dto.AdminLoginVO;
-import com.campus.modules.admin.dto.SysUserVO;
+import com.campus.modules.admin.dto.*;
 import com.campus.modules.admin.entity.SysUser;
 import com.campus.modules.admin.mapper.SysUserMapper;
 import com.campus.modules.admin.service.SysUserService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 /**
  * 系统用户与管理员服务实现类
@@ -31,7 +33,7 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
         SysUser user = lambdaQuery()
                 .select(SysUser::getId, SysUser::getUsername, SysUser::getPassword,
                         SysUser::getNickname, SysUser::getAvatar, SysUser::getRole,
-                        SysUser::getPhone, SysUser::getStatus)
+                        SysUser::getPhone, SysUser::getStatus, SysUser::getCreateTime, SysUser::getUpdateTime)
                 .eq(SysUser::getUsername, loginDTO.getUsername().trim())
                 .one();
 
@@ -63,14 +65,7 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
         log.info("管理员 [{}] (ID: {}) 登录成功, 获得 Token: {}", user.getUsername(), user.getId(), token);
 
         // 6. 组装脱敏后的返回视图对象
-        SysUserVO userVO = SysUserVO.builder()
-                .id(user.getId())
-                .username(user.getUsername())
-                .nickname(user.getNickname())
-                .avatar(user.getAvatar())
-                .role(user.getRole())
-                .phone(user.getPhone())
-                .build();
+        SysUserVO userVO = convertToVO(user);
 
         return AdminLoginVO.builder()
                 .token(token)
@@ -104,6 +99,189 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
             throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "账号不存在或已被禁用");
         }
 
+        return convertToVO(user);
+    }
+
+    @Override
+    public IPage<SysUserVO> getUserPage(SysUserQueryDTO queryDTO) {
+        Page<SysUser> page = new Page<>(
+                queryDTO.getPage() != null ? queryDTO.getPage() : 1,
+                queryDTO.getSize() != null ? queryDTO.getSize() : 10
+        );
+
+        LambdaQueryWrapper<SysUser> wrapper = new LambdaQueryWrapper<>();
+
+        // 关键字多字段模糊检索
+        if (StringUtils.hasText(queryDTO.getKeyword())) {
+            String kw = queryDTO.getKeyword().trim();
+            wrapper.and(w -> w.like(SysUser::getUsername, kw).or().like(SysUser::getNickname, kw));
+        }
+
+        // 精确/模糊条件过滤
+        if (StringUtils.hasText(queryDTO.getUsername())) {
+            wrapper.like(SysUser::getUsername, queryDTO.getUsername().trim());
+        }
+        if (StringUtils.hasText(queryDTO.getNickname())) {
+            wrapper.like(SysUser::getNickname, queryDTO.getNickname().trim());
+        }
+        if (StringUtils.hasText(queryDTO.getRole())) {
+            wrapper.eq(SysUser::getRole, queryDTO.getRole().trim());
+        }
+        if (queryDTO.getStatus() != null) {
+            wrapper.eq(SysUser::getStatus, queryDTO.getStatus());
+        }
+
+        wrapper.orderByDesc(SysUser::getCreateTime);
+
+        Page<SysUser> userPage = page(page, wrapper);
+        return userPage.convert(this::convertToVO);
+    }
+
+    @Override
+    public SysUserVO createUser(SysUserCreateDTO createDTO) {
+        String username = createDTO.getUsername().trim();
+
+        // 1. 账号唯一性检查
+        boolean exists = lambdaQuery().eq(SysUser::getUsername, username).exists();
+        if (exists) {
+            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "该管理员登录账号已存在: " + username);
+        }
+
+        // 2. 密码加密处理（默认初始密码 123）
+        String rawPassword = StringUtils.hasText(createDTO.getPassword()) ? createDTO.getPassword().trim() : "123";
+        String encodedPassword = PasswordUtil.encode(rawPassword);
+
+        // 3. 构建并保存实体
+        SysUser user = new SysUser();
+        user.setUsername(username);
+        user.setPassword(encodedPassword);
+        user.setNickname(createDTO.getNickname().trim());
+        user.setRole(createDTO.getRole().trim());
+        user.setPhone(StringUtils.hasText(createDTO.getPhone()) ? createDTO.getPhone().trim() : null);
+        user.setAvatar(StringUtils.hasText(createDTO.getAvatar()) ? createDTO.getAvatar().trim() : null);
+        user.setStatus(1); // 默认启用
+        user.setDeleted(0);
+
+        save(user);
+        log.info("新增管理员成功: [{}] (ID: {}, Role: {})", user.getUsername(), user.getId(), user.getRole());
+
+        // 重新获取完整信息并返回脱敏对象
+        return convertToVO(getById(user.getId()));
+    }
+
+    @Override
+    public SysUserVO updateUser(SysUserUpdateDTO updateDTO) {
+        SysUser user = getById(updateDTO.getId());
+        if (user == null) {
+            throw new BusinessException(ResultCode.USER_NOT_EXIST.getCode(), "目标管理员不存在");
+        }
+
+        if (StringUtils.hasText(updateDTO.getNickname())) {
+            user.setNickname(updateDTO.getNickname().trim());
+        }
+
+        // 角色修改限制：不能剥夺超级管理员的 SUPER_ADMIN 权限
+        if (StringUtils.hasText(updateDTO.getRole())) {
+            String targetRole = updateDTO.getRole().trim();
+            if (isSuperAdmin(user) && !"SUPER_ADMIN".equalsIgnoreCase(targetRole)) {
+                throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "系统核心超级管理员角色不可被降权修改");
+            }
+            user.setRole(targetRole);
+        }
+
+        if (updateDTO.getPhone() != null) {
+            user.setPhone(StringUtils.hasText(updateDTO.getPhone()) ? updateDTO.getPhone().trim() : null);
+        }
+
+        if (updateDTO.getAvatar() != null) {
+            user.setAvatar(StringUtils.hasText(updateDTO.getAvatar()) ? updateDTO.getAvatar().trim() : null);
+        }
+
+        // 状态修改限制：禁止禁用超级管理员
+        if (updateDTO.getStatus() != null) {
+            if (isSuperAdmin(user) && updateDTO.getStatus() == 0) {
+                throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "禁止禁用系统超级管理员账号");
+            }
+            user.setStatus(updateDTO.getStatus());
+        }
+
+        // 若传入了新密码，则进行加密更新
+        if (StringUtils.hasText(updateDTO.getPassword())) {
+            user.setPassword(PasswordUtil.encode(updateDTO.getPassword().trim()));
+        }
+
+        updateById(user);
+        log.info("管理员信息更新成功: (ID: {}, Username: {})", user.getId(), user.getUsername());
+
+        return convertToVO(getById(user.getId()));
+    }
+
+    @Override
+    public void updateUserStatus(Long id, Integer status) {
+        SysUser user = getById(id);
+        if (user == null) {
+            throw new BusinessException(ResultCode.USER_NOT_EXIST.getCode(), "目标管理员不存在");
+        }
+
+        if (isSuperAdmin(user) && status != null && status == 0) {
+            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "禁止禁用系统超级管理员账号");
+        }
+
+        user.setStatus(status);
+        updateById(user);
+        log.info("管理员账号状态更新: (ID: {}, Username: {}, Status: {})", user.getId(), user.getUsername(), status);
+    }
+
+    @Override
+    public void deleteUser(Long id, Long currentUserId) {
+        SysUser user = getById(id);
+        if (user == null) {
+            throw new BusinessException(ResultCode.USER_NOT_EXIST.getCode(), "目标管理员不存在");
+        }
+
+        if (isSuperAdmin(user)) {
+            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "禁止注销/删除系统超级管理员账号");
+        }
+
+        if (currentUserId != null && currentUserId.equals(id)) {
+            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "禁止删除当前登录的操作员自身账号");
+        }
+
+        removeById(id);
+        log.info("管理员账号注销成功: (ID: {}, Username: {})", user.getId(), user.getUsername());
+    }
+
+    @Override
+    public void resetPassword(Long id, String newPassword) {
+        SysUser user = getById(id);
+        if (user == null) {
+            throw new BusinessException(ResultCode.USER_NOT_EXIST.getCode(), "目标管理员不存在");
+        }
+
+        String rawPassword = StringUtils.hasText(newPassword) ? newPassword.trim() : "123";
+        String encodedPassword = PasswordUtil.encode(rawPassword);
+
+        lambdaUpdate()
+                .eq(SysUser::getId, id)
+                .set(SysUser::getPassword, encodedPassword)
+                .update();
+
+        log.info("管理员密码重置成功: (ID: {}, Username: {})", user.getId(), user.getUsername());
+    }
+
+    /**
+     * 判断是否为系统内建超级管理员账号
+     */
+    private boolean isSuperAdmin(SysUser user) {
+        if (user == null) return false;
+        return Long.valueOf(1L).equals(user.getId()) || "admin".equalsIgnoreCase(user.getUsername());
+    }
+
+    /**
+     * 实体转脱敏安全视图对象
+     */
+    private SysUserVO convertToVO(SysUser user) {
+        if (user == null) return null;
         return SysUserVO.builder()
                 .id(user.getId())
                 .username(user.getUsername())
@@ -111,6 +289,9 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
                 .avatar(user.getAvatar())
                 .role(user.getRole())
                 .phone(user.getPhone())
+                .status(user.getStatus())
+                .createTime(user.getCreateTime())
+                .updateTime(user.getUpdateTime())
                 .build();
     }
 }
