@@ -21,6 +21,8 @@ public class RabbitMqConfig {
     public static final String ACTIVITY_EXCHANGE = "campus.activity.exchange";
     public static final String ACTIVITY_CHECKIN_QUEUE = "campus.activity.checkin.queue";
     public static final String ACTIVITY_CHECKIN_ROUTING_KEY = "activity.checkin";
+    public static final String ACTIVITY_CACHE_REFRESH_QUEUE = "campus.activity.cache.refresh.queue";
+    public static final String ACTIVITY_CACHE_REFRESH_ROUTING_KEY = "activity.cache.refresh";
 
     // ================== 2. 礼品兑换 7 天延时超时关单队列（DLX 架构） ==================
     public static final String GIFT_ORDER_EXCHANGE = "campus.gift.order.exchange";
@@ -54,6 +56,16 @@ public class RabbitMqConfig {
     @Bean
     public Binding activityCheckinBinding(Queue activityCheckinQueue, DirectExchange activityExchange) {
         return BindingBuilder.bind(activityCheckinQueue).to(activityExchange).with(ACTIVITY_CHECKIN_ROUTING_KEY);
+    }
+
+    @Bean
+    public Queue activityCacheRefreshQueue() {
+        return QueueBuilder.durable(ACTIVITY_CACHE_REFRESH_QUEUE).build();
+    }
+
+    @Bean
+    public Binding activityCacheRefreshBinding(Queue activityCacheRefreshQueue, DirectExchange activityExchange) {
+        return BindingBuilder.bind(activityCacheRefreshQueue).to(activityExchange).with(ACTIVITY_CACHE_REFRESH_ROUTING_KEY);
     }
 
     // ----------------- 礼品超时关单延时死信队列绑定 -----------------

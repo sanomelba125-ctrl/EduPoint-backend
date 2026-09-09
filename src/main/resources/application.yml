@@ -15,6 +15,11 @@ spring:
     multipart:
       max-file-size: 10MB
       max-request-size: 20MB
+  rabbitmq:
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
 
 
 # Sa-Token 配置

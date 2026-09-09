@@ -14,6 +14,7 @@ import com.campus.modules.activity.entity.Activity;
 import com.campus.modules.activity.entity.ActivityCheckinCode;
 import com.campus.modules.activity.mapper.ActivityMapper;
 import com.campus.modules.activity.service.ActivityCheckinCodeService;
+import com.campus.modules.activity.service.ActivityCacheService;
 import com.campus.modules.activity.service.ActivityService;
 import jakarta.annotation.Resource;
 import org.springframework.stereotype.Service;
@@ -43,6 +44,9 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
     @Resource
     private ActivityQrCodeProperties qrCodeProperties;
 
+    @Resource
+    private ActivityCacheService activityCacheService;
+
     @Override
     public Activity create(ActivitySaveDTO dto) {
         Long adminId = requireAdminId();
@@ -55,6 +59,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
         activity.setUpdatedBy(adminId);
         activity.setDeleted(0);
         save(activity);
+        activityCacheService.evict(activity.getId());
         return activity;
     }
 
@@ -75,6 +80,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
         }
         activity.setUpdatedBy(adminId);
         updateById(activity);
+        activityCacheService.evict(activity.getId());
         return activity;
     }
 
@@ -88,11 +94,12 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
         activity.setStatus(3);
         activity.setUpdatedBy(adminId);
         updateById(activity);
+        activityCacheService.evict(activity.getId());
     }
 
     @Override
     public Activity detail(Long id) {
-        Activity activity = getById(id);
+        Activity activity = activityCacheService.getDetail(id);
         if (activity == null || Objects.equals(activity.getDeleted(), 1)) {
             throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "活动不存在");
         }
@@ -103,8 +110,10 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
     public IPage<Activity> page(ActivityPageQuery query) {
         long current = Math.max(query.getPage(), 1);
         long size = Math.min(Math.max(query.getSize(), 1), 100);
+        String keyword = query.getKeyword();
+        boolean hasKeyword = keyword != null && !keyword.isBlank();
         return lambdaQuery()
-                .like(query.getKeyword() != null && !query.getKeyword().isBlank(), Activity::getTitle, query.getKeyword().trim())
+                .like(hasKeyword, Activity::getTitle, hasKeyword ? keyword.trim() : null)
                 .eq(query.getCategory() != null && !query.getCategory().isBlank(), Activity::getCategory, query.getCategory())
                 .eq(query.getStatus() != null, Activity::getStatus, query.getStatus())
                 .orderByDesc(Activity::getStartTime)
@@ -122,8 +131,8 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
         if (activity == null || Objects.equals(activity.getDeleted(), 1)) {
             throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "活动不存在");
         }
-        if (Objects.equals(activity.getStatus(), 3)) {
-            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "已归档的活动不能生成签到码");
+        if (Objects.equals(activity.getStatus(), 2) || Objects.equals(activity.getStatus(), 3)) {
+            throw new BusinessException(ResultCode.ACTIVITY_EXPIRED.getCode(), "已结束或已归档的活动不能生成签到码");
         }
 
         // 3. 失效该活动的所有当前有效码（status=0 → 2）

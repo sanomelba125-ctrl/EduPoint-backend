@@ -3,6 +3,7 @@ package com.campus.modules.activity.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
+import com.baomidou.mybatisplus.annotation.Version;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
@@ -49,6 +50,10 @@ public class Activity {
 
     /** 已成功报名人数 */
     private Integer participantCount;
+
+    /** 报名名额更新的乐观锁版本。 */
+    @Version
+    private Integer version;
 
     /** 是否启用候补队列: 0-否 1-是 */
     private Integer waitlistEnabled;
