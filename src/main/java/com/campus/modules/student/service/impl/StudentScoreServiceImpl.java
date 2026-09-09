@@ -276,9 +276,64 @@ public class StudentScoreServiceImpl implements StudentScoreService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void rewardActivityCheckin(Long studentId, Long studentActivityId, String activityTitle, Integer pointsAwarded) {
+        if (studentId == null) {
+            throw new BusinessException("打卡学生 ID 不能为空");
+        }
+        if (pointsAwarded == null || pointsAwarded <= 0) {
+            log.warn("活动打卡积分奖励小于等于 0，跳过入账: studentId={}, points={}", studentId, pointsAwarded);
+            return;
+        }
+
+        Student student = studentMapper.selectById(studentId);
+        if (student == null || (student.getDeleted() != null && student.getDeleted() == 1)) {
+            throw new BusinessException("目标学生学籍档案不存在或已注销");
+        }
+
+        int beforeCurrent = student.getCurrentPoints() != null ? student.getCurrentPoints() : 0;
+
+        // 1. 原子增加可用积分与历史累计积分
+        studentMapper.addCurrentPoints(studentId, pointsAwarded);
+        studentMapper.addTotalPoints(studentId, pointsAwarded);
+
+        int afterCurrent = beforeCurrent + pointsAwarded;
+
+        // 2. 写入财务级对账流水
+        StudentPointRecord record = new StudentPointRecord();
+        record.setStudentId(studentId);
+        record.setType(1); // 1-活动打卡奖励(+)
+        record.setChangePoints(pointsAwarded);
+        record.setBeforePoints(beforeCurrent);
+        record.setAfterPoints(afterCurrent);
+        String actTitle = StringUtils.hasText(activityTitle) ? activityTitle.trim() : "校园活动";
+        record.setDescription(String.format("参与活动打卡奖励【%s】", actTitle));
+        record.setRefId(studentActivityId);
+        record.setOperatorId(0L); // 0 为系统打卡自动触发
+        pointRecordMapper.insert(record);
+
+        // 3. WebSocket 实时推送打卡入账通知给对应学生
+        try {
+            JSONObject msg = new JSONObject();
+            msg.put("type", "activity_checkin_reward");
+            msg.put("title", "活动打卡奖励到账");
+            msg.put("activityTitle", actTitle);
+            msg.put("pointsAwarded", pointsAwarded);
+            msg.put("currentPoints", afterCurrent);
+            WebSocketServer.sendInfo("student", studentId.toString(), msg.toJSONString());
+        } catch (Exception e) {
+            log.warn("向学生推送打卡奖励通知失败: {}", e.getMessage());
+        }
+    }
+
+    @Override
     public LedgerMetricsVO getLedgerMetrics() {
-        // 统计全库流水
-        List<StudentPointRecord> all = pointRecordMapper.selectList(null);
+        // 统计全库流水 (仅拉取必要字段，避免大对象常驻内存)
+        List<StudentPointRecord> all = pointRecordMapper.selectList(
+                new LambdaQueryWrapper<StudentPointRecord>()
+                        .select(StudentPointRecord::getType, StudentPointRecord::getChangePoints)
+                        .eq(StudentPointRecord::getDeleted, 0)
+        );
 
         int earned = 0;
         int spent = 0;
@@ -345,7 +400,19 @@ public class StudentScoreServiceImpl implements StudentScoreService {
 
             String dateStr = r.getCreateTime() != null ? r.getCreateTime().format(dtf) : "20260908";
             String recordNo = "PT-" + dateStr + "-" + String.format("%04d", r.getId());
-            String businessId = r.getRefId() != null ? String.valueOf(r.getRefId()) : "OA-" + r.getId();
+
+            String businessId;
+            if (r.getRefId() != null) {
+                if (r.getType() != null && r.getType() == 1) {
+                    businessId = "ACT-" + String.format("%04d", r.getRefId());
+                } else if (r.getType() != null && (r.getType() == 2 || r.getType() == 4)) {
+                    businessId = "ORD-" + String.format("%04d", r.getRefId());
+                } else {
+                    businessId = "SYS-" + String.format("%04d", r.getRefId());
+                }
+            } else {
+                businessId = "OA-" + String.format("%04d", r.getId());
+            }
 
             String operatorName = r.getOperatorId() != null && r.getOperatorId() > 0 ? "管理员#" + r.getOperatorId() : "系统自动触发";
 

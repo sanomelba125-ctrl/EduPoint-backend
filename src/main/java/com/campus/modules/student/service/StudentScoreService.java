@@ -37,4 +37,15 @@ public interface StudentScoreService {
      * 管理端对账流水大盘指标统计
      */
     LedgerMetricsVO getLedgerMetrics();
+
+    /**
+     * 活动打卡成功入账与流水记账（供活动打卡业务核心调用）
+     * 事务安全执行：原子同步增加可用积分与累计学分，写入财务流水台账，并触发 WebSocket 实时通知
+     *
+     * @param studentId         打卡学生 ID
+     * @param studentActivityId 参与打卡记录 ID (student_activity.id)
+     * @param activityTitle     活动名称标题
+     * @param pointsAwarded     打卡获得积分值 (需 > 0)
+     */
+    void rewardActivityCheckin(Long studentId, Long studentActivityId, String activityTitle, Integer pointsAwarded);
 }

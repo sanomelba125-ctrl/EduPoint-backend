@@ -2,13 +2,21 @@ package com.campus.modules.admin.controller;
 
 import cn.dev33.satoken.annotation.SaCheckLogin;
 import com.alibaba.excel.EasyExcel;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.campus.modules.activity.entity.Activity;
+import com.campus.modules.activity.entity.StudentActivity;
+import com.campus.modules.activity.mapper.StudentActivityMapper;
+import com.campus.modules.activity.service.ActivityService;
 import com.campus.modules.admin.dto.ActivityExportDTO;
 import com.campus.modules.admin.dto.PointRecordExportDTO;
+import com.campus.modules.mall.entity.StudentPointRecord;
+import com.campus.modules.mall.mapper.StudentPointRecordMapper;
+import com.campus.modules.student.entity.Student;
+import com.campus.modules.student.mapper.StudentMapper;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -16,21 +24,23 @@ import org.springframework.web.bind.annotation.RestController;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * 后台数据看板 - 报表导出控制器
+ * 支持 /admin/export 与 /dashboard/export 双路径访问，契合 API.md 规范
  */
 @Slf4j
 @RestController
-@RequestMapping("/admin/export")
+@RequestMapping({"/admin/export", "/dashboard/export"})
 @RequiredArgsConstructor
 public class ExportController {
 
-    // 实际业务中应该注入对应的 Service
-    // private final ActivityService activityService;
-    // private final StudentPointRecordService pointRecordService;
+    private final ActivityService activityService;
+    private final StudentActivityMapper studentActivityMapper;
+    private final StudentPointRecordMapper pointRecordMapper;
+    private final StudentMapper studentMapper;
 
     /**
      * 导出活动明细
@@ -40,20 +50,49 @@ public class ExportController {
     public void exportActivities(HttpServletResponse response) throws IOException {
         try {
             setExcelResponseProp(response, "活动明细报表");
-            
-            // TODO: 替换为真实的从 Service 查询的数据
+
+            List<Activity> activities = activityService.lambdaQuery()
+                    .eq(Activity::getDeleted, 0)
+                    .orderByDesc(Activity::getStartTime)
+                    .list();
+
             List<ActivityExportDTO> list = new ArrayList<>();
-            // list = activityService.getExportData();
-            
+            for (Activity act : activities) {
+                ActivityExportDTO dto = new ActivityExportDTO();
+                dto.setId(act.getId());
+                dto.setTitle(act.getTitle());
+                String loc = StringUtils.hasText(act.getLocationName()) ? act.getLocationName()
+                        : (StringUtils.hasText(act.getLocationAddress()) ? act.getLocationAddress() : "校内指定区域");
+                dto.setLocation(loc);
+                dto.setRewardPoints(act.getPoints() != null ? act.getPoints() : 0);
+
+                // 统计报名人数与实际打卡完成人数
+                Long enrolled = studentActivityMapper.selectCount(new LambdaQueryWrapper<StudentActivity>()
+                        .eq(StudentActivity::getActivityId, act.getId())
+                        .eq(StudentActivity::getDeleted, 0)
+                        .in(StudentActivity::getStatus, 1, 2));
+                Long checkedIn = studentActivityMapper.selectCount(new LambdaQueryWrapper<StudentActivity>()
+                        .eq(StudentActivity::getActivityId, act.getId())
+                        .eq(StudentActivity::getDeleted, 0)
+                        .eq(StudentActivity::getStatus, 2));
+
+                dto.setEnrolledCount(enrolled != null ? enrolled.intValue() : 0);
+                dto.setCheckinCount(checkedIn != null ? checkedIn.intValue() : 0);
+                dto.setStartTime(act.getStartTime());
+                dto.setEndTime(act.getEndTime());
+                dto.setStatus(act.getStatus());
+                list.add(dto);
+            }
+
             EasyExcel.write(response.getOutputStream(), ActivityExportDTO.class)
-                    .sheet("活动列表")
+                    .sheet("活动明细列表")
                     .doWrite(list);
         } catch (Exception e) {
             log.error("导出活动明细失败", e);
             response.reset();
             response.setContentType("application/json");
             response.setCharacterEncoding("utf-8");
-            response.getWriter().println("{\"code\":500, \"message\":\"导出失败\"}");
+            response.getWriter().println("{\"code\":500, \"message\":\"导出活动明细失败\"}");
         }
     }
 
@@ -66,19 +105,54 @@ public class ExportController {
         try {
             setExcelResponseProp(response, "学生积分明细报表");
 
-            // TODO: 替换为真实的从 Service 查询的数据
+            List<StudentPointRecord> records = pointRecordMapper.selectList(
+                    new LambdaQueryWrapper<StudentPointRecord>()
+                            .eq(StudentPointRecord::getDeleted, 0)
+                            .orderByDesc(StudentPointRecord::getCreateTime)
+            );
+
+            Set<Long> studentIds = records.stream()
+                    .map(StudentPointRecord::getStudentId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+
+            Map<Long, Student> studentMap = studentIds.isEmpty() ? Collections.emptyMap()
+                    : studentMapper.selectBatchIds(studentIds).stream()
+                    .collect(Collectors.toMap(Student::getId, s -> s));
+
             List<PointRecordExportDTO> list = new ArrayList<>();
-            // list = pointRecordService.getExportData();
+            for (StudentPointRecord r : records) {
+                Student s = studentMap.get(r.getStudentId());
+                PointRecordExportDTO dto = new PointRecordExportDTO();
+                dto.setId(r.getId());
+                dto.setStudentNo(s != null ? s.getStudentNo() : "-");
+                dto.setStudentName(s != null ? s.getName() : "学生");
+                dto.setBeforePoints(r.getBeforePoints());
+                dto.setChangePoints(r.getChangePoints());
+                dto.setAfterPoints(r.getAfterPoints());
+
+                String bizType = switch (r.getType() != null ? r.getType() : 0) {
+                    case 1 -> "活动打卡奖励";
+                    case 2 -> "商城兑换消费";
+                    case 3 -> "系统人工调账";
+                    case 4 -> "订单取消返还";
+                    default -> "其他流水变动";
+                };
+                dto.setBizType(bizType);
+                dto.setBizRef(StringUtils.hasText(r.getDescription()) ? r.getDescription() : "-");
+                dto.setCreateTime(r.getCreateTime());
+                list.add(dto);
+            }
 
             EasyExcel.write(response.getOutputStream(), PointRecordExportDTO.class)
-                    .sheet("积分流水")
+                    .sheet("学生积分台账流水")
                     .doWrite(list);
         } catch (Exception e) {
             log.error("导出积分明细失败", e);
             response.reset();
             response.setContentType("application/json");
             response.setCharacterEncoding("utf-8");
-            response.getWriter().println("{\"code\":500, \"message\":\"导出失败\"}");
+            response.getWriter().println("{\"code\":500, \"message\":\"导出积分明细失败\"}");
         }
     }
 
