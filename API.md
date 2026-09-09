@@ -1028,6 +1028,98 @@
 
 ---
 
+### 11. 数据看板与监控大屏模块 (/dashboard & /admin/dashboard)
+
+#### 11.1 获取仪表盘核心指标概览
+- **请求方式**：`GET`
+- **请求路径**：`/dashboard/overview` 或 `/admin/dashboard/overview`
+- **权限要求**：管理员登录 (`@SaCheckLogin`)
+- **成功响应**：
+  ```json
+  {
+    "code": 200,
+    "message": "success",
+    "data": {
+      "totalStudents": 5,
+      "totalCheckins": 4,
+      "checkinRate": 80.0,
+      "circulatingPoints": 760,
+      "totalPoints": 1050,
+      "totalActivities": 6,
+      "categoryDistribution": [
+        { "category": "文体活动", "count": 2, "percentage": 33.3 },
+        { "category": "志愿服务", "count": 2, "percentage": 33.3 },
+        { "category": "学术讲座", "count": 1, "percentage": 16.7 },
+        { "category": "社会实践", "count": 1, "percentage": 16.7 }
+      ],
+      "weeklyCheckinTrend": [
+        { "date": "2026-09-03", "count": 0 },
+        { "date": "2026-09-04", "count": 1 },
+        { "date": "2026-09-05", "count": 0 },
+        { "date": "2026-09-06", "count": 0 },
+        { "date": "2026-09-07", "count": 2 },
+        { "date": "2026-09-08", "count": 1 },
+        { "date": "2026-09-09", "count": 0 }
+      ]
+    }
+  }
+  ```
+
+#### 11.2 获取学生积分排行榜 (Top 5) 与实时签到动态流水
+- **请求方式**：`GET`
+- **请求路径**：`/dashboard/top-students` 或 `/admin/dashboard/top-students`
+- **权限要求**：管理员登录 (`@SaCheckLogin`)
+- **成功响应**：
+  ```json
+  {
+    "code": 200,
+    "message": "success",
+    "data": {
+      "topStudents": [
+        {
+          "studentId": 1,
+          "studentNo": "20220101",
+          "name": "张伟",
+          "college": "信息工程学院",
+          "major": "软件工程",
+          "className": "软件2201",
+          "avatar": "",
+          "totalPoints": 320,
+          "currentPoints": 180,
+          "rank": 1
+        },
+        {
+          "studentId": 2,
+          "studentNo": "20220102",
+          "name": "王芳",
+          "college": "信息工程学院",
+          "major": "计算机科学与技术",
+          "className": "计科2201",
+          "avatar": "",
+          "totalPoints": 280,
+          "currentPoints": 280,
+          "rank": 2
+        }
+      ],
+      "recentCheckins": [
+        {
+          "recordId": 101,
+          "studentId": 1,
+          "studentName": "张伟",
+          "studentNo": "20220101",
+          "avatar": "",
+          "activityId": 1,
+          "activityTitle": "2026春季校园马拉松",
+          "points": 50,
+          "checkinTime": "2026-09-08 15:30:22"
+        }
+      ]
+    }
+  }
+  ```
+
+---
+
 ## 三、测试种子数据与账号
 
 系统数据库在初始化时已注入以下开箱即用的测试账号与数据（密码均经 BCrypt 加盐加密）：

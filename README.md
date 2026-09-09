@@ -163,13 +163,13 @@
 - [ ] **[开发者 C] 后端标记系统通知为已读**：`PUT /notice/{id}/read`
 - [ ] **[开发者 C] 双端全局消息监听与红点弹窗提示**：前端建立 WS 心跳并在接收到推送时弹出 Element Plus / Uni-app 通知气泡
 
-#### (2) 数据看板与海量数据导出 (🔥 当前分支开发重点)
+#### (2) 数据看板与海量数据导出 (✅ 开发者 C 全链路 100% 已完成)
 
-- [ ] **[开发者 C] 后端数据看板核心指标统计**：`GET /dashboard/overview`（学生总人数、签到人次、平均签到率、流通积分总量）
-- [ ] **[开发者 C] 后端数据看板排行榜与最新打卡流水**：`GET /dashboard/top-students`（Top5 积分榜与近期实时打卡列表）
+- [X] **[开发者 C] 后端数据看板核心指标统计**：`GET /dashboard/overview`（学生总人数、签到人次、平均签到率、流通积分总量）
+- [X] **[开发者 C] 后端数据看板排行榜与最新打卡流水**：`GET /dashboard/top-students`（Top5 积分榜与近期实时打卡列表）
 - [X] **[开发者 C] 后端基于 EasyExcel 导出活动参与明细报表**：`GET /admin/export/activities`（接入数据库真实数据导出）
 - [X] **[开发者 C] 后端基于 EasyExcel 导出学生积分明细报表**：`GET /admin/export/points`（接入数据库真实流水导出）
-- [ ] **[开发者 C] 管理端数据大屏实装与 API 对接**：`admin-web/src/views/dashboard/index.vue`（替换当前静态 Mock 数据，联调真实指标卡与趋势图表）
+- [X] **[开发者 C] 管理端数据大屏实装与 API 对接**：`admin-web/src/views/dashboard/index.vue`（替换当前静态 Mock 数据，联调真实指标卡与趋势图表）
 
 ---
 
