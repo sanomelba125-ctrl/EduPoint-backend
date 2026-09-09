@@ -10,9 +10,13 @@ import com.campus.config.ActivityQrCodeProperties;
 import com.campus.modules.activity.dto.ActivityPageQuery;
 import com.campus.modules.activity.dto.ActivitySaveDTO;
 import com.campus.modules.activity.dto.QrCodeVO;
+import com.campus.modules.activity.entity.ActivityWaitlist;
 import com.campus.modules.activity.entity.Activity;
 import com.campus.modules.activity.entity.ActivityCheckinCode;
 import com.campus.modules.activity.mapper.ActivityMapper;
+import com.campus.modules.activity.mapper.ActivityWaitlistMapper;
+import com.campus.modules.activity.mapper.StudentActivityMapper;
+import com.campus.modules.activity.entity.StudentActivity;
 import com.campus.modules.activity.service.ActivityCheckinCodeService;
 import com.campus.modules.activity.service.ActivityCacheService;
 import com.campus.modules.activity.service.ActivityService;
@@ -46,6 +50,12 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
 
     @Resource
     private ActivityCacheService activityCacheService;
+
+    @Resource
+    private StudentActivityMapper studentActivityMapper;
+
+    @Resource
+    private ActivityWaitlistMapper activityWaitlistMapper;
 
     @Override
     public Activity create(ActivitySaveDTO dto) {
@@ -103,6 +113,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
         if (activity == null || Objects.equals(activity.getDeleted(), 1)) {
             throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "活动不存在");
         }
+        applyStudentStatus(activity);
         return activity;
     }
 
@@ -112,13 +123,60 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
         long size = Math.min(Math.max(query.getSize(), 1), 100);
         String keyword = query.getKeyword();
         boolean hasKeyword = keyword != null && !keyword.isBlank();
-        return lambdaQuery()
+        IPage<Activity> result = lambdaQuery()
                 .like(hasKeyword, Activity::getTitle, hasKeyword ? keyword.trim() : null)
                 .eq(query.getCategory() != null && !query.getCategory().isBlank(), Activity::getCategory, query.getCategory())
                 .eq(query.getStatus() != null, Activity::getStatus, query.getStatus())
                 .ne(Boolean.TRUE.equals(query.getExcludeArchived()), Activity::getStatus, 3)
                 .orderByDesc(Activity::getStartTime)
                 .page(new Page<>(current, size));
+        result.getRecords().forEach(this::applyStudentStatus);
+        return result;
+    }
+
+    /** 将当前学生的正式报名/完成/候补状态注入现有活动响应，不新增接口。 */
+    private void applyStudentStatus(Activity activity) {
+        activity.setMyEnrollmentStatus("NONE");
+        activity.setMyQueueNumber(null);
+        if (!isStudentLogin() || activity == null || activity.getId() == null) return;
+
+        Long studentId = currentStudentId();
+        StudentActivity record = studentActivityMapper.selectOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<StudentActivity>()
+                .eq(StudentActivity::getStudentId, studentId)
+                .eq(StudentActivity::getActivityId, activity.getId())
+                .in(StudentActivity::getStatus, java.util.Arrays.asList(1, 2))
+                .orderByDesc(StudentActivity::getStatus)
+                .last("LIMIT 1"));
+        if (record != null) {
+            activity.setMyEnrollmentStatus(record.getStatus() != null && record.getStatus() == 2 ? "COMPLETED" : "ENROLLED");
+            return;
+        }
+        ActivityWaitlist waitlist = activityWaitlistMapper.selectOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ActivityWaitlist>()
+                .eq(ActivityWaitlist::getStudentId, studentId)
+                .eq(ActivityWaitlist::getActivityId, activity.getId())
+                .eq(ActivityWaitlist::getStatus, 1)
+                .eq(ActivityWaitlist::getDeleted, 0)
+                .orderByAsc(ActivityWaitlist::getQueueNumber)
+                .last("LIMIT 1"));
+        if (waitlist != null) {
+            activity.setMyEnrollmentStatus("WAITLIST");
+            activity.setMyQueueNumber(waitlist.getQueueNumber());
+        }
+    }
+
+    private boolean isStudentLogin() {
+        if (!StpUtil.isLogin()) return false;
+        String loginId = StpUtil.getLoginIdAsString();
+        return loginId != null && loginId.startsWith("student:");
+    }
+
+    private Long currentStudentId() {
+        String loginId = StpUtil.getLoginIdAsString();
+        try {
+            return Long.valueOf(loginId.substring("student:".length()));
+        } catch (Exception e) {
+            throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "登录状态无效");
+        }
     }
 
     @Override

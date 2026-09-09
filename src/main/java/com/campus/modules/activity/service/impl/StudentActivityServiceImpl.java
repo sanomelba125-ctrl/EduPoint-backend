@@ -85,8 +85,33 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
     }
 
     @Override
-    public void cancelSignup(Long activityId) {
-        Long sid = currentStudentId(); withLock("activity:signup:"+activityId, () -> transactionTemplate.execute(status -> { StudentActivity rec = getOne(new LambdaQueryWrapper<StudentActivity>().eq(StudentActivity::getStudentId,sid).eq(StudentActivity::getActivityId,activityId).eq(StudentActivity::getStatus,1)); if (rec != null) { rec.setStatus(3); updateById(rec); activityMapper.decrementParticipant(activityId); promote(activityId); refreshActivityCacheAfterCommit(activityId); return null; } ActivityWaitlist w=waitlistMapper.selectOne(new LambdaQueryWrapper<ActivityWaitlist>().eq(ActivityWaitlist::getStudentId,sid).eq(ActivityWaitlist::getActivityId,activityId).eq(ActivityWaitlist::getStatus,1)); if(w!=null){w.setStatus(3); waitlistMapper.updateById(w); return null;} throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "未找到有效报名记录"); }));
+    public String cancelSignup(Long activityId) {
+        Long sid = currentStudentId();
+        return withLock("activity:signup:" + activityId, () -> transactionTemplate.execute(status -> {
+            StudentActivity rec = getOne(new LambdaQueryWrapper<StudentActivity>()
+                    .eq(StudentActivity::getStudentId, sid)
+                    .eq(StudentActivity::getActivityId, activityId)
+                    .eq(StudentActivity::getStatus, 1));
+            if (rec != null) {
+                rec.setStatus(3);
+                updateById(rec);
+                activityMapper.decrementParticipant(activityId);
+                promote(activityId);
+                refreshActivityCacheAfterCommit(activityId);
+                return "已取消报名";
+            }
+            ActivityWaitlist w = waitlistMapper.selectOne(new LambdaQueryWrapper<ActivityWaitlist>()
+                    .eq(ActivityWaitlist::getStudentId, sid)
+                    .eq(ActivityWaitlist::getActivityId, activityId)
+                    .eq(ActivityWaitlist::getStatus, 1)
+                    .eq(ActivityWaitlist::getDeleted, 0));
+            if (w != null) {
+                w.setStatus(3);
+                waitlistMapper.updateById(w);
+                return "已退出候补队列";
+            }
+            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "未找到有效报名记录");
+        }));
     }
 
     private void promote(Long aid) {
@@ -119,7 +144,102 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
         })));
     }
 
-    @Override public IPage<StudentActivity> myList(Integer page,Integer size,Integer status){ return page(new Page<>(page==null?1:page,size==null?10:size),new LambdaQueryWrapper<StudentActivity>().eq(StudentActivity::getStudentId,currentStudentId()).eq(status!=null,StudentActivity::getStatus,status).orderByDesc(StudentActivity::getSignupTime)); }
+    @Override
+    public IPage<MyActivityVO> myList(Integer page, Integer size, Integer status) {
+        Long studentId = currentStudentId();
+        long current = Math.max(page == null ? 1 : page, 1);
+        long pageSize = Math.min(Math.max(size == null ? 10 : size, 1), 100);
+        List<MyActivityVO> records = new ArrayList<>();
+
+        if (status == null || status != 4) {
+            List<StudentActivity> ownRecords = list(new LambdaQueryWrapper<StudentActivity>()
+                    .eq(StudentActivity::getStudentId, studentId)
+                    .eq(status != null, StudentActivity::getStatus, status)
+                    .orderByDesc(StudentActivity::getSignupTime));
+            ownRecords.forEach(record -> records.add(toMyActivityVO(record, null)));
+        }
+        if (status == null || status == 4) {
+            List<ActivityWaitlist> waitlists = waitlistMapper.selectList(new LambdaQueryWrapper<ActivityWaitlist>()
+                    .eq(ActivityWaitlist::getStudentId, studentId)
+                    .eq(ActivityWaitlist::getStatus, 1)
+                    .eq(ActivityWaitlist::getDeleted, 0)
+                    .orderByDesc(ActivityWaitlist::getWaitTime));
+            waitlists.forEach(waitlist -> {
+                Activity activity = activityMapper.selectById(waitlist.getActivityId());
+                if (activity != null && !Objects.equals(activity.getDeleted(), 1)) {
+                    records.add(toMyActivityVO(null, waitlist, activity));
+                }
+            });
+        }
+
+        records.sort(Comparator.comparing(this::activityRecordTime, Comparator.nullsLast(Comparator.reverseOrder())));
+        long total = records.size();
+        int from = (int) Math.min((current - 1) * pageSize, total);
+        int to = (int) Math.min((long) from + pageSize, total);
+        Page<MyActivityVO> result = new Page<>(current, pageSize, total);
+        result.setRecords(records.subList(from, to));
+        return result;
+    }
+
+    private LocalDateTime activityRecordTime(MyActivityVO record) {
+        return record.getSignupTime() != null ? record.getSignupTime() : record.getCreateTime();
+    }
+
+    private MyActivityVO toMyActivityVO(StudentActivity record, ActivityWaitlist waitlist) {
+        Long activityId = record != null ? record.getActivityId() : waitlist.getActivityId();
+        Activity activity = activityMapper.selectById(activityId);
+        return toMyActivityVO(record, waitlist, activity);
+    }
+
+    private MyActivityVO toMyActivityVO(StudentActivity record, ActivityWaitlist waitlist, Activity activity) {
+        Long activityId = record != null ? record.getActivityId() : waitlist.getActivityId();
+        MyActivityVO vo = new MyActivityVO();
+        if (record != null) {
+            vo.setId(record.getId());
+            vo.setStudentId(record.getStudentId());
+            vo.setActivityId(record.getActivityId());
+            vo.setSignupTime(record.getSignupTime());
+            vo.setCheckinTime(record.getCheckinTime());
+            vo.setCheckinLatitude(record.getCheckinLatitude());
+            vo.setCheckinLongitude(record.getCheckinLongitude());
+            vo.setCheckinDistance(record.getCheckinDistance());
+            vo.setQrNonceUsed(record.getQrNonceUsed());
+            vo.setPointsAwarded(record.getPointsAwarded());
+            vo.setStatus(record.getStatus());
+            vo.setRemark(record.getRemark());
+            vo.setCreateTime(record.getCreateTime());
+            vo.setUpdateTime(record.getUpdateTime());
+            vo.setDeleted(record.getDeleted());
+        } else {
+            vo.setId(waitlist.getId());
+            vo.setStudentId(waitlist.getStudentId());
+            vo.setActivityId(waitlist.getActivityId());
+            vo.setSignupTime(waitlist.getWaitTime());
+            vo.setCreateTime(waitlist.getCreateTime() != null ? waitlist.getCreateTime() : waitlist.getWaitTime());
+            vo.setUpdateTime(waitlist.getUpdateTime());
+            vo.setStatus(4);
+            vo.setPointsAwarded(0);
+            vo.setDeleted(waitlist.getDeleted());
+            vo.setQueueNumber(waitlist.getQueueNumber());
+        }
+        if (activity != null) {
+            vo.setTitle(activity.getTitle());
+            vo.setCategory(activity.getCategory());
+            vo.setCoverImage(activity.getCoverImage());
+            vo.setPoints(activity.getPoints());
+            vo.setStartTime(activity.getStartTime());
+            vo.setEndTime(activity.getEndTime());
+            vo.setLocationName(activity.getLocationName());
+            vo.setLocationAddress(activity.getLocationAddress());
+            vo.setLongitude(activity.getLongitude());
+            vo.setLatitude(activity.getLatitude());
+            vo.setLocationRadius(activity.getLocationRadius());
+            vo.setLocationCheckEnabled(activity.getLocationCheckEnabled());
+            vo.setCertificateEnabled(activity.getCertificateEnabled());
+            vo.setCertificateTitle(activity.getCertificateTitle());
+        }
+        return vo;
+    }
     @Override public IPage<ActivityRecordVO> adminList(Integer page, Integer size, String studentName, String studentNo, String activityTitle, Integer status) {
         requireAdmin();
         long current = Math.max(page == null ? 1 : page, 1);

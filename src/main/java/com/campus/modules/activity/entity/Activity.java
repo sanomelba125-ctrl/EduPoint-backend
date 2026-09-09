@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.Version;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.TableField;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -103,4 +104,12 @@ public class Activity {
     /** 逻辑删除标记: 0-正常 1-已删除 */
     @TableLogic
     private Integer deleted;
+
+    /** 当前登录学生对该活动的动态参与状态，不落库。 */
+    @TableField(exist = false)
+    private String myEnrollmentStatus;
+
+    /** 当前登录学生的候补序号，不落库。 */
+    @TableField(exist = false)
+    private Integer myQueueNumber;
 }

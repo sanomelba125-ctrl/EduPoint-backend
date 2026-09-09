@@ -6,8 +6,8 @@ import com.campus.modules.activity.entity.StudentActivity;
 
 public interface StudentActivityService {
     ActivitySignupVO signup(ActivitySignupDTO dto);
-    void cancelSignup(Long activityId);
+    String cancelSignup(Long activityId);
     ActivityCheckinVO checkin(ActivityCheckinDTO dto);
-    IPage<StudentActivity> myList(Integer page, Integer size, Integer status);
+    IPage<MyActivityVO> myList(Integer page, Integer size, Integer status);
     IPage<ActivityRecordVO> adminList(Integer page, Integer size, String studentName, String studentNo, String activityTitle, Integer status);
 }
