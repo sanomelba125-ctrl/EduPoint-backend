@@ -39,7 +39,7 @@ services:
       - "6379:6379"
     command: redis-server --requirepass redispassword --appendonly yes
     volumes:
-      - redis_data:/data
+      - redis_data_v70:/data
     networks:
       - campus-network
     healthcheck:
@@ -99,6 +99,24 @@ services:
     networks:
       - campus-network
 
+  # -------------------------------------------------------------------
+  # 5. 管理端 Web（Nginx 静态托管并反向代理 /api 到 backend）
+  # -------------------------------------------------------------------
+  admin-web:
+    profiles: ["app", "all"]
+    build:
+      context: ../admin-web
+      dockerfile: Dockerfile
+    image: campus-admin-web:latest
+    container_name: campus-admin-web
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - campus-network
+
 networks:
   campus-network:
     driver: bridge
@@ -106,4 +124,5 @@ networks:
 volumes:
   mysql_data:
   redis_data:
+  redis_data_v70:
   rabbitmq_data:

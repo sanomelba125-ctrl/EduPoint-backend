@@ -7,9 +7,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/**
- * 活动动态打卡二维码核销防伪实体
- * 对应需�? 3.4 活动打卡(防作弊动态二维码) / 4. 数据需�? */
+/** 活动动态打卡二维码核销防伪实体。 */
 @Data
 @TableName("activity_checkin_code")
 public class ActivityCheckinCode {
@@ -20,16 +18,16 @@ public class ActivityCheckinCode {
     /** 活动ID */
     private Long activityId;
 
-    /** 防伪随机�?全局唯一不可重放) */
+    /** 防伪随机串（全局唯一且不可重放）。 */
     private String nonce;
 
-    /** 服务端签名参�?*/
+    /** 服务端签名参数。 */
     private String sign;
 
-    /** 二维码有效截止时�?*/
+    /** 二维码有效截止时间。 */
     private LocalDateTime expireTime;
 
-    /** 使用状�? 0-有效待核销 1-已被使用打卡 2-已失�?*/
+    /** 使用状态：0-有效待核销，1-已使用，2-已失效。 */
     private Integer status;
 
     /** 使用扫码打卡的学生ID */
