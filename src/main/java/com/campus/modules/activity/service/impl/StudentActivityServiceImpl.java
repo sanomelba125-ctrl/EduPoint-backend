@@ -21,19 +21,18 @@ import com.campus.modules.certificate.entity.Certificate;
 import com.campus.modules.certificate.service.CertificateService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.*;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j @Service @RequiredArgsConstructor
 public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMapper, StudentActivity> implements StudentActivityService {
@@ -42,20 +41,12 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
     private final ActivityCheckinCodeMapper codeMapper;
     private final StudentMapper studentMapper;
     private final StudentPointRecordMapper pointRecordMapper;
-    private final StringRedisTemplate redis;
+    private final RedissonClient redissonClient;
     private final RabbitTemplate rabbitTemplate;
     private final CertificateService certificateService;
     private final ActivityCacheService activityCacheService;
     private final TransactionTemplate transactionTemplate;
-    private final Map<String,Object> localLocks = new ConcurrentHashMap<>();
-    private static final DefaultRedisScript<Long> RELEASE = new DefaultRedisScript<>("if redis.call('get',KEYS[1])==ARGV[1] then return redis.call('del',KEYS[1]) else return 0 end", Long.class);
-    private static final DefaultRedisScript<Long> RENEW = new DefaultRedisScript<>("if redis.call('get',KEYS[1])==ARGV[1] then return redis.call('pexpire',KEYS[1],ARGV[2]) else return 0 end", Long.class);
-    private static final long LOCK_LEASE_MILLIS = 15_000L;
-    private static final ScheduledExecutorService LOCK_WATCHDOG = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread thread = new Thread(r, "activity-redis-lock-watchdog");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private static final long LOCK_WAIT_SECONDS = 5L;
 
     @PostConstruct
     void configurePublisherCallbacks() {
@@ -171,36 +162,28 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
     }
     private int distance(BigDecimal lat1,BigDecimal lon1,BigDecimal lat2,BigDecimal lon2){ if(lat1==null||lon1==null)return Integer.MAX_VALUE; double r=6371000, p=Math.PI/180, dLat=lat2.subtract(lat1).doubleValue()*p,dLon=lon2.subtract(lon1).doubleValue()*p; double x=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(lat1.doubleValue()*p)*Math.cos(lat2.doubleValue()*p)*Math.sin(dLon/2)*Math.sin(dLon/2); return (int)Math.round(2*r*Math.asin(Math.sqrt(x))); }
     private <T> T withLock(String key, java.util.function.Supplier<T> action) {
-        String token = UUID.randomUUID().toString();
-        boolean redisUnavailable = false;
-        boolean acquired = false;
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (System.nanoTime() < deadline && !acquired) {
-            try {
-                acquired = Boolean.TRUE.equals(redis.opsForValue().setIfAbsent(key, token, Duration.ofMillis(LOCK_LEASE_MILLIS)));
-            } catch (Exception e) {
-                redisUnavailable = true;
-                log.warn("Redis lock unavailable; falling back to this JVM only: {}", e.getMessage());
-                break;
-            }
-            if (!acquired) {
-                try { Thread.sleep(50); } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new BusinessException(ResultCode.ERROR.getCode(), "操作被中断");
-                }
-            }
+        RLock lock = redissonClient.getLock(key);
+        boolean acquired;
+        try {
+            // Omitting leaseTime enables Redisson's watchdog auto-renewal.
+            acquired = lock.tryLock(LOCK_WAIT_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException(ResultCode.ERROR.getCode(), "操作被中断");
+        } catch (Exception e) {
+            log.error("Redisson lock acquisition failed for key {}", key, e);
+            throw new BusinessException(ResultCode.ERROR.getCode(), "系统繁忙，请稍后重试");
         }
-        if (redisUnavailable) {
-            synchronized (localLocks.computeIfAbsent(key, ignored -> new Object())) { return action.get(); }
+        if (!acquired) {
+            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "操作处理中，请勿重复提交");
         }
-        if (!acquired) throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "操作处理中，请勿重复提交");
-        ScheduledFuture<?> renewal = LOCK_WATCHDOG.scheduleAtFixedRate(
-                () -> redis.execute(RENEW, List.of(key), token, String.valueOf(LOCK_LEASE_MILLIS)),
-                LOCK_LEASE_MILLIS / 3, LOCK_LEASE_MILLIS / 3, TimeUnit.MILLISECONDS);
-        try { return action.get(); }
+        try {
+            return action.get();
+        }
         finally {
-            renewal.cancel(false);
-            try { redis.execute(RELEASE, List.of(key), token); } catch (Exception e) { log.warn("Redis lock release failed", e); }
+            if (lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
         }
     }
 }
