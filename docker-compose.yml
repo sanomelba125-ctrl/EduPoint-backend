@@ -117,6 +117,24 @@ services:
     networks:
       - campus-network
 
+  # -------------------------------------------------------------------
+  # 6. 学生移动端 H5（Uni-app 构建产物，由 Nginx 托管）
+  # -------------------------------------------------------------------
+  mobile-app:
+    profiles: ["app", "all"]
+    build:
+      context: ../mobile-app
+      dockerfile: Dockerfile
+    image: campus-mobile-app:latest
+    container_name: campus-mobile-app
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    networks:
+      - campus-network
+
 networks:
   campus-network:
     driver: bridge
