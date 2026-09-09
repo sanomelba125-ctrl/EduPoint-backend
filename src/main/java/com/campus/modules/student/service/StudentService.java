@@ -39,4 +39,59 @@ public interface StudentService extends IService<Student> {
      * @return 修改后的学生脱敏档案
      */
     StudentVO updateProfile(StudentUpdateProfileDTO updateDTO);
+
+    /**
+     * 管理端分页多条件查询学生档案列表
+     *
+     * @param queryDTO 查询入参
+     * @return 分页学生列表
+     */
+    com.baomidou.mybatisplus.core.metadata.IPage<StudentVO> getStudentPage(com.campus.modules.student.dto.StudentQueryDTO queryDTO);
+
+    /**
+     * 管理端录入新学生档案
+     *
+     * @param createDTO 新增入参
+     * @return 新建的学生脱敏档案
+     */
+    StudentVO createStudent(com.campus.modules.student.dto.StudentCreateDTO createDTO);
+
+    /**
+     * 管理端修改学生基本档案
+     *
+     * @param updateDTO 修改入参
+     * @return 更新后的学生脱敏档案
+     */
+    StudentVO updateStudentByAdmin(com.campus.modules.student.dto.StudentAdminUpdateDTO updateDTO);
+
+    /**
+     * 管理端冻结/解冻学生账号
+     *
+     * @param id     学生ID
+     * @param status 目标状态 (0-冻结/禁用, 1-正常启用)
+     */
+    void updateStudentStatus(Long id, Integer status);
+
+    /**
+     * 管理端重置学生登录密码
+     *
+     * @param id          学生ID
+     * @param newPassword 新密码
+     */
+    void resetStudentPassword(Long id, String newPassword);
+
+    /**
+     * 管理端删除/注销学生档案(逻辑删除)
+     *
+     * @param id 学生ID
+     */
+    void deleteStudent(Long id);
+
+    /**
+     * 获取系统中所有不重复的有效班级名称列表
+     *
+     * @return 班级名称列表
+     */
+    java.util.List<String> getDistinctClasses();
 }
+

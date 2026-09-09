@@ -308,46 +308,85 @@
 #### 1.8 管理端分页查询学生档案列表
 - **请求方式**：`GET`
 - **请求路径**：`/student/list`
-- **Query 参数**：`page`, `size`, `studentNo`, `name`, `college`, `className`, `status`
+- **权限要求**：需管理员登录
+- **Query 参数**：
+  - `page`: 当前页码（默认 1）
+  - `size`: 每页条数（默认 10）
+  - `keyword`: 模糊检索关键字（学号或姓名）
+  - `className`: 班级名称筛选
+  - `college`: 学院模糊过滤
+  - `major`: 专业模糊过滤
+  - `status`: 账号状态（1-正常, 0-冻结）
+- **成功响应**：返回 `records` 学生列表（含 `currentPoints`, `totalPoints` 等）及分页信息。
 
-#### 1.9 管理端新增学生档案
+#### 1.9 管理端录入新学生档案
 - **请求方式**：`POST`
 - **请求路径**：`/student/create`
-- **权限要求**：管理员
+- **权限要求**：需管理员登录
 - **请求参数 (JSON Body)**：
   ```json
   {
-    "studentNo": "2023010408",
-    "name": "李四",
-    "gender": 1,
-    "college": "信息工程学院",
+    "studentNo": "20240105",
+    "name": "赵敏",
+    "gender": 0,
+    "className": "软件2201",
+    "college": "计算机科学学院",
     "major": "软件工程",
-    "className": "软工2301班",
-    "phone": "13911110008",
-    "initialPassword": "password123"
+    "phone": "13912345678",
+    "password": "123456"
   }
   ```
+- **成功响应**：`{ "code": 200, "message": "学生档案录入成功", "data": { ... } }`
 
 #### 1.10 管理端修改学生档案
 - **请求方式**：`PUT`
 - **请求路径**：`/student/update`
-- **权限要求**：管理员
-- **请求参数 (JSON Body)**：包含 `id`, `name`, `college`, `major`, `className`, `phone`
+- **权限要求**：需管理员登录
+- **请求参数 (JSON Body)**：
+  ```json
+  {
+    "id": 5,
+    "name": "赵敏",
+    "gender": 0,
+    "className": "软件2201",
+    "college": "计算机科学学院",
+    "major": "软件工程",
+    "phone": "13912345679",
+    "status": 1
+  }
+  ```
+- **成功响应**：`{ "code": 200, "message": "学生档案修改成功", "data": { ... } }`
 
-#### 1.11 管理端启用/停用学生账号
+#### 1.11 管理端冻结/解冻学生账号
 - **请求方式**：`PUT`
 - **请求路径**：`/student/{id}/status`
-- **请求参数 (Query/Body)**：`status` (1-正常启用, 0-冻结停用)
+- **权限要求**：需管理员登录
+- **请求参数**：URL Path `id`；Query 或 Body 参数 `status` (1-正常, 0-冻结；冻结时强制踢掉对应在线会话)
+- **成功响应**：`{ "code": 200, "message": "学生账号已恢复正常", "data": null }`
 
 #### 1.12 管理端重置学生密码
 - **请求方式**：`PUT`
 - **请求路径**：`/student/{id}/reset-password`
+- **权限要求**：需管理员登录
 - **请求参数 (JSON Body)**：
   ```json
   {
-    "newPassword": "password123"
+    "newPassword": "123456"
   }
   ```
+- **成功响应**：`{ "code": 200, "message": "学生密码已成功重置", "data": null }`
+
+#### 1.13 管理端删除/注销学生档案
+- **请求方式**：`DELETE`
+- **请求路径**：`/student/{id}`
+- **权限要求**：需管理员登录（逻辑删除，同时销毁学生在线会话）
+- **成功响应**：`{ "code": 200, "message": "学生档案注销成功", "data": null }`
+
+#### 1.14 获取系统中所有有效班级列表
+- **请求方式**：`GET`
+- **请求路径**：`/student/classes`
+- **权限要求**：需管理员登录
+- **成功响应**：`{ "code": 200, "message": "操作成功", "data": ["软件2201", "软件2202", "信管2202"] }`
 
 ---
 

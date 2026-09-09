@@ -5,10 +5,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.campus.common.exception.BusinessException;
 import com.campus.common.result.ResultCode;
 import com.campus.common.util.PasswordUtil;
-import com.campus.modules.student.dto.StudentLoginDTO;
-import com.campus.modules.student.dto.StudentLoginVO;
-import com.campus.modules.student.dto.StudentUpdateProfileDTO;
-import com.campus.modules.student.dto.StudentVO;
+import com.campus.modules.student.dto.*;
 import com.campus.modules.student.entity.Student;
 import com.campus.modules.student.mapper.StudentMapper;
 import com.campus.modules.student.service.StudentService;
@@ -143,6 +140,196 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
         }
 
         return convertToVO(student);
+    }
+
+    @Override
+    public com.baomidou.mybatisplus.core.metadata.IPage<StudentVO> getStudentPage(StudentQueryDTO queryDTO) {
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<Student> page =
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(
+                        queryDTO.getPage() != null ? queryDTO.getPage() : 1,
+                        queryDTO.getSize() != null ? queryDTO.getSize() : 10
+                );
+
+        com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Student> wrapper =
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<>();
+
+        // 综合模糊匹配：学号或姓名
+        if (org.springframework.util.StringUtils.hasText(queryDTO.getKeyword())) {
+            String kw = queryDTO.getKeyword().trim();
+            wrapper.and(w -> w.like(Student::getStudentNo, kw).or().like(Student::getName, kw));
+        }
+
+        // 精确/模糊条件过滤
+        if (org.springframework.util.StringUtils.hasText(queryDTO.getClassName())) {
+            wrapper.eq(Student::getClassName, queryDTO.getClassName().trim());
+        }
+        if (org.springframework.util.StringUtils.hasText(queryDTO.getCollege())) {
+            wrapper.like(Student::getCollege, queryDTO.getCollege().trim());
+        }
+        if (org.springframework.util.StringUtils.hasText(queryDTO.getMajor())) {
+            wrapper.like(Student::getMajor, queryDTO.getMajor().trim());
+        }
+        if (queryDTO.getStatus() != null) {
+            wrapper.eq(Student::getStatus, queryDTO.getStatus());
+        }
+
+        wrapper.orderByDesc(Student::getCreateTime);
+
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<Student> studentPage = page(page, wrapper);
+        return studentPage.convert(this::convertToVO);
+    }
+
+    @Override
+    public StudentVO createStudent(StudentCreateDTO createDTO) {
+        String studentNo = createDTO.getStudentNo().trim();
+
+        // 1. 学号唯一性校验
+        boolean exists = lambdaQuery().eq(Student::getStudentNo, studentNo).exists();
+        if (exists) {
+            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "该学号学生档案已存在: " + studentNo);
+        }
+
+        // 2. 初始密码处理（默认 123456，BCrypt 密文哈希）
+        String rawPassword = org.springframework.util.StringUtils.hasText(createDTO.getPassword())
+                ? createDTO.getPassword().trim()
+                : "123456";
+        String encodedPassword = PasswordUtil.encode(rawPassword);
+
+        // 3. 构建实体并持久化
+        Student student = new Student();
+        student.setStudentNo(studentNo);
+        student.setName(createDTO.getName().trim());
+        student.setPassword(encodedPassword);
+        student.setGender(createDTO.getGender() != null ? createDTO.getGender() : 1);
+        student.setClassName(createDTO.getClassName().trim());
+        student.setCollege(org.springframework.util.StringUtils.hasText(createDTO.getCollege()) ? createDTO.getCollege().trim() : null);
+        student.setMajor(org.springframework.util.StringUtils.hasText(createDTO.getMajor()) ? createDTO.getMajor().trim() : null);
+        student.setPhone(org.springframework.util.StringUtils.hasText(createDTO.getPhone()) ? createDTO.getPhone().trim() : null);
+        student.setAvatar(org.springframework.util.StringUtils.hasText(createDTO.getAvatar()) ? createDTO.getAvatar().trim() : null);
+        student.setTotalPoints(0);
+        student.setCurrentPoints(0);
+        student.setStatus(1); // 默认正常启用
+        student.setDeleted(0);
+
+        save(student);
+        log.info("管理端录入新学生档案成功: [{} - {}] (ID: {})", student.getStudentNo(), student.getName(), student.getId());
+
+        return convertToVO(getById(student.getId()));
+    }
+
+    @Override
+    public StudentVO updateStudentByAdmin(StudentAdminUpdateDTO updateDTO) {
+        Student student = getById(updateDTO.getId());
+        if (student == null) {
+            throw new BusinessException(ResultCode.USER_NOT_EXIST.getCode(), "目标学生档案不存在");
+        }
+
+        if (org.springframework.util.StringUtils.hasText(updateDTO.getName())) {
+            student.setName(updateDTO.getName().trim());
+        }
+        if (updateDTO.getGender() != null) {
+            student.setGender(updateDTO.getGender());
+        }
+        if (org.springframework.util.StringUtils.hasText(updateDTO.getClassName())) {
+            student.setClassName(updateDTO.getClassName().trim());
+        }
+        if (updateDTO.getCollege() != null) {
+            student.setCollege(org.springframework.util.StringUtils.hasText(updateDTO.getCollege()) ? updateDTO.getCollege().trim() : null);
+        }
+        if (updateDTO.getMajor() != null) {
+            student.setMajor(org.springframework.util.StringUtils.hasText(updateDTO.getMajor()) ? updateDTO.getMajor().trim() : null);
+        }
+        if (updateDTO.getPhone() != null) {
+            student.setPhone(org.springframework.util.StringUtils.hasText(updateDTO.getPhone()) ? updateDTO.getPhone().trim() : null);
+        }
+        if (updateDTO.getAvatar() != null) {
+            student.setAvatar(org.springframework.util.StringUtils.hasText(updateDTO.getAvatar()) ? updateDTO.getAvatar().trim() : null);
+        }
+
+        if (updateDTO.getStatus() != null) {
+            student.setStatus(updateDTO.getStatus());
+            // 若被管理员冻结，强踢学生下线
+            if (updateDTO.getStatus() == 0) {
+                StpUtil.kickout(STUDENT_LOGIN_PREFIX + student.getId());
+            }
+        }
+
+        // 若传入新密码，则加密并更新，同时下线旧会话
+        if (org.springframework.util.StringUtils.hasText(updateDTO.getPassword())) {
+            student.setPassword(PasswordUtil.encode(updateDTO.getPassword().trim()));
+            StpUtil.kickout(STUDENT_LOGIN_PREFIX + student.getId());
+        }
+
+        updateById(student);
+        log.info("管理端修改学生档案成功: [{} - {}] (ID: {})", student.getStudentNo(), student.getName(), student.getId());
+
+        return convertToVO(getById(student.getId()));
+    }
+
+    @Override
+    public void updateStudentStatus(Long id, Integer status) {
+        Student student = getById(id);
+        if (student == null) {
+            throw new BusinessException(ResultCode.USER_NOT_EXIST.getCode(), "目标学生档案不存在");
+        }
+
+        student.setStatus(status);
+        updateById(student);
+
+        // 冻结账号时立即踢掉对应在线会话
+        if (status != null && status == 0) {
+            StpUtil.kickout(STUDENT_LOGIN_PREFIX + id);
+            log.info("学生账号已冻结并强制踢下线: (ID: {}, StudentNo: {})", id, student.getStudentNo());
+        } else {
+            log.info("学生账号已解冻恢复正常: (ID: {}, StudentNo: {})", id, student.getStudentNo());
+        }
+    }
+
+    @Override
+    public void resetStudentPassword(Long id, String newPassword) {
+        Student student = getById(id);
+        if (student == null) {
+            throw new BusinessException(ResultCode.USER_NOT_EXIST.getCode(), "目标学生档案不存在");
+        }
+
+        String rawPassword = org.springframework.util.StringUtils.hasText(newPassword) ? newPassword.trim() : "123456";
+        String encodedPassword = PasswordUtil.encode(rawPassword);
+
+        lambdaUpdate()
+                .eq(Student::getId, id)
+                .set(Student::getPassword, encodedPassword)
+                .update();
+
+        // 重置密码后踢下线，确保以新密码重新认证
+        StpUtil.kickout(STUDENT_LOGIN_PREFIX + id);
+        log.info("学生密码重置成功并强制下线: (ID: {}, StudentNo: {})", id, student.getStudentNo());
+    }
+
+    @Override
+    public void deleteStudent(Long id) {
+        Student student = getById(id);
+        if (student == null) {
+            throw new BusinessException(ResultCode.USER_NOT_EXIST.getCode(), "目标学生档案不存在");
+        }
+
+        removeById(id);
+        StpUtil.kickout(STUDENT_LOGIN_PREFIX + id);
+        log.info("管理端注销/删除学生档案成功: (ID: {}, StudentNo: {})", id, student.getStudentNo());
+    }
+
+    @Override
+    public java.util.List<String> getDistinctClasses() {
+        return lambdaQuery()
+                .select(Student::getClassName)
+                .isNotNull(Student::getClassName)
+                .ne(Student::getClassName, "")
+                .list()
+                .stream()
+                .map(Student::getClassName)
+                .filter(org.springframework.util.StringUtils::hasText)
+                .distinct()
+                .sorted()
+                .collect(java.util.stream.Collectors.toList());
     }
 
     /**
