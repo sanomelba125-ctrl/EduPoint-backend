@@ -1,6 +1,8 @@
 package com.campus.mq;
 
 import com.campus.config.RabbitMqConfig;
+import com.campus.modules.activity.service.ActivityCacheService;
+import jakarta.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -16,6 +18,16 @@ import java.util.Map;
 public class CampusMessageConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(CampusMessageConsumer.class);
+
+    @Resource
+    private ActivityCacheService activityCacheService;
+
+    @RabbitListener(queues = RabbitMqConfig.ACTIVITY_CACHE_REFRESH_QUEUE, autoStartup = "true")
+    public void refreshActivityCache(Map<String, Object> message) {
+        Object value = message.get("activityId");
+        if (value instanceof Number number) activityCacheService.refresh(number.longValue());
+        else if (value != null) activityCacheService.refresh(Long.parseLong(value.toString()));
+    }
 
     /**
      * 1. 异步消费打卡签到事件

@@ -26,6 +26,7 @@
         <sa-token.version>1.38.0</sa-token.version>
         <fastjson2.version>2.0.51</fastjson2.version>
         <qiniu.version>7.15.0</qiniu.version>
+        <redisson.version>3.32.0</redisson.version>
     </properties>
 
     <dependencies>
@@ -47,6 +48,11 @@
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-pool2</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson-spring-boot-starter</artifactId>
+            <version>${redisson.version}</version>
         </dependency>
 
         <!-- RabbitMQ 消息队列支持 (削峰填谷 / 延时关单) -->
