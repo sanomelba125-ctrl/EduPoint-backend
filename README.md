@@ -91,6 +91,12 @@
   - 判断是否达到名额上限 `registration_limit`：未满员写入 `REGISTERED`，满员自动进入候补排队并写入 `WAITING`（分配排队序号 `queue_number`）。
 - [X] **[开发者 A] 后端学生取消报名与自动递补**：`POST /student/activity/cancel-signup`
   - 取消已报名记录，系统自动按顺序检索该活动候补队伍中排第 1 名的学生递补转正，并触发通知。
+- [ ] **[开发者 A] 候补排队联调与接口缺陷修复 (Waitlist Bug Fixes)**：
+  - 修复 `GET /student/activity/my-list` 增加候补排队记录支持（`status=4` 时查询 `activity_waitlist` 并返回活动摘要）；
+  - 修复 `GET /activity/{id}` 与 `GET /activity/page` 增加当前学生参与状态（`myEnrollmentStatus`, `myQueueNumber`）；
+  - 确认 `POST /student/activity/cancel-signup` 退出候补排队逻辑与并发防超卖；
+  - 详细修复提示词参见：[《候补功能后端修复提示词.md》](./候补功能后端修复提示词.md) 与 [《API.md 四、候补功能后端 Bug 修复与联调规范》](./API.md#四候补功能后端-bug-修复与联调规范-waitlist-bug-fix-protocol)。
+
 
 #### (3) 动态打卡与防作弊核验 (Checkin)
 

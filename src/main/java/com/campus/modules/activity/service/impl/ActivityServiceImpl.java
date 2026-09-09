@@ -116,6 +116,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
                 .like(hasKeyword, Activity::getTitle, hasKeyword ? keyword.trim() : null)
                 .eq(query.getCategory() != null && !query.getCategory().isBlank(), Activity::getCategory, query.getCategory())
                 .eq(query.getStatus() != null, Activity::getStatus, query.getStatus())
+                .ne(Boolean.TRUE.equals(query.getExcludeArchived()), Activity::getStatus, 3)
                 .orderByDesc(Activity::getStartTime)
                 .page(new Page<>(current, size));
     }

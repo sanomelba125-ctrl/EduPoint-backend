@@ -15,4 +15,5 @@ public class ActivityPageQuery {
     private String keyword;
     private String category;
     private Integer status;
+    private Boolean excludeArchived;
 }

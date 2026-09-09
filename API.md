@@ -1135,4 +1135,32 @@
 | **学生测试账号 5** | `20220105` | `123456` | 孙浩 (可用积分: 40, 累计积分: 90) |
 
 ---
+
+## 四、候补功能后端 Bug 修复与联调规范 (Waitlist Bug Fix Protocol)
+
+> **对齐说明**：移动端（`mobile-app`）已全面支持候补队列（Waitlist）的前端交互，包含活动打卡大厅状态条、详情页「取消候补」按钮以及我的活动记录页面的「候补中」Tab（`status=4`）。后端需按本节要求完成接口对齐。详细提示词参见同目录下 [《候补功能后端修复提示词.md》](./候补功能后端修复提示词.md)。
+
+### 4.1 接口缺陷与对齐清单
+
+#### 1. `GET /student/activity/my-list` 增加候补记录支持 (P0 致命)
+- **现状**：`myList` 仅查询 `student_activity` 表。当学生只在 `activity_waitlist` 表中有排队记录时，传入 `status=4` 或查询全部时查不到候补记录。
+- **对齐要求**：
+  - 当前端请求 `GET /student/activity/my-list?status=4` 时，后端查询 `activity_waitlist` 中 `status=1`（候补中）的记录，并 JOIN `activity` 表返回活动摘要（`title`, `coverImage`, `startTime`, `endTime`, `locationName`, `points` 等），VO 的 `status` 字段固定为 `4`，`queueNumber` 返回当前排队序号。
+  - 当前端请求 `status` 为空（全部记录）时，合并返回正式报名、出勤与正在候补中的记录。
+
+#### 2. `GET /activity/{id}` 与 `GET /activity/page` 增加当前学生参与状态 (P1 重要)
+- **现状**：活动列表与详情直接返回实体，无当前学生状态，前端需额外请求 `my-list` 逐个判断。
+- **对齐要求**：
+  - 当请求上下文携带有效的学生 Token 时，响应 VO 中动态注入：
+    - `myEnrollmentStatus`: `"NONE"`（未报名）/ `"ENROLLED"`（已报名）/ `"WAITLIST"`（候补中）/ `"COMPLETED"`（已出勤）
+    - `myQueueNumber`: 仅当 `myEnrollmentStatus == "WAITLIST"` 时返回排队序号，其余为 `null`。
+  - 未登录或管理员访问时，返回 `"NONE"` 与 `null`。
+
+#### 3. `POST /student/activity/cancel-signup` 支持取消候补 (P1 确认)
+- **现状**：后端已包含 `ActivityWaitlist w.setStatus(3)` 逻辑。
+- **对齐要求**：
+  - 请求体统一为 `{ "activityId": <id> }`。若学生为正式报名，取消报名并触发下一名候补学生自动晋升；若学生为候补中，将候补状态更新为 `3`（已取消），释放排队位置。
+
+---
 *文档维护：EduPoint 研发组*
+
