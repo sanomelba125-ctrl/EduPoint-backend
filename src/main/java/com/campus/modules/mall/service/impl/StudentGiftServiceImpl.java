@@ -16,6 +16,7 @@ import com.campus.modules.mall.mapper.StudentPointRecordMapper;
 import com.campus.modules.mall.service.StudentGiftService;
 import com.campus.modules.student.entity.Student;
 import com.campus.modules.student.mapper.StudentMapper;
+import com.campus.modules.system.service.SysNoticeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
@@ -41,6 +42,7 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
     private final GiftMapper giftMapper;
     private final StudentMapper studentMapper;
     private final StudentPointRecordMapper pointRecordMapper;
+    private final SysNoticeService sysNoticeService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -129,18 +131,23 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         record.setRefId(order.getId());
         pointRecordMapper.insert(record);
 
-        // 9. 触发 WebSocket 通知推送给在线管理端
+        // 9. 保存系统通知并触发 WebSocket 通知推送给在线管理端与学生端
         try {
-            JSONObject msg = new JSONObject();
-            msg.put("type", "gift_exchange");
-            msg.put("title", "新礼品兑换订单");
-            msg.put("content", String.format("学生 %s 兑换了【%s】x %d 件", student.getName(), gift.getName(), quantity));
-            msg.put("orderNo", orderNo);
-            msg.put("pickupCode", pickupCode);
-            msg.put("time", LocalDateTime.now().toString());
-            WebSocketServer.broadcastToUserType("admin", msg.toJSONString());
+            java.util.Map<String, Object> adminPayload = new java.util.HashMap<>();
+            adminPayload.put("orderNo", orderNo);
+            adminPayload.put("pickupCode", pickupCode);
+            adminPayload.put("time", LocalDateTime.now().toString());
+
+            String adminTitle = "新礼品兑换订单";
+            String adminContent = String.format("学生 %s 兑换了【%s】x %d 件，订单号: %s", student.getName(), gift.getName(), quantity, orderNo);
+            sysNoticeService.createAndSendNotice(1, 0L, "gift_exchange", adminTitle, adminContent, order.getId(), adminPayload);
+
+            // 同时记录学生端通知
+            String stuTitle = "🎁 礼品兑换成功";
+            String stuContent = String.format("您已成功兑换【%s】x %d 件，消耗 %d 积分，提货码：%s", gift.getName(), quantity, totalPointsCost, pickupCode);
+            sysNoticeService.createAndSendNotice(2, studentId, "gift_exchange", stuTitle, stuContent, order.getId());
         } catch (Exception e) {
-            log.warn("发送管理员实时兑换通知失败: {}", e.getMessage());
+            log.warn("发送与记录礼品兑换通知失败: {}", e.getMessage());
         }
 
         return GiftExchangeVO.builder()
@@ -247,13 +254,11 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         }
         this.updateById(order);
 
-        // 推送给学生端
+        // 保存系统通知并推送给学生端
         try {
-            JSONObject msg = new JSONObject();
-            msg.put("type", "gift_send");
-            msg.put("title", "礼品已成功核销领取");
-            msg.put("content", String.format("您的礼品订单【%s】已完成核销领奖！", order.getOrderNo()));
-            WebSocketServer.sendInfo("student", order.getStudentId().toString(), msg.toJSONString());
+            String title = "🎁 礼品已成功核销领取";
+            String content = String.format("您的礼品订单【%s】已完成核销领奖！", order.getOrderNo());
+            sysNoticeService.createAndSendNotice(2, order.getStudentId(), "gift_send", title, content, order.getId());
         } catch (Exception e) {
             log.warn("向学生发送核销通知异常: {}", e.getMessage());
         }

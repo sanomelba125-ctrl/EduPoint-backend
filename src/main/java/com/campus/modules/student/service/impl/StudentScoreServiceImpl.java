@@ -11,6 +11,7 @@ import com.campus.modules.student.dto.*;
 import com.campus.modules.student.entity.Student;
 import com.campus.modules.student.mapper.StudentMapper;
 import com.campus.modules.student.service.StudentScoreService;
+import com.campus.modules.system.service.SysNoticeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -31,6 +32,7 @@ public class StudentScoreServiceImpl implements StudentScoreService {
 
     private final StudentMapper studentMapper;
     private final StudentPointRecordMapper pointRecordMapper;
+    private final SysNoticeService sysNoticeService;
 
     @Override
     public StudentScoreBalanceVO getBalance(Long studentId) {
@@ -218,17 +220,18 @@ public class StudentScoreServiceImpl implements StudentScoreService {
         record.setOperatorId(adminId);
         pointRecordMapper.insert(record);
 
-        // WebSocket 实时推送给对应学生
+        // 保存系统通知并触发 WebSocket 实时推送
         try {
-            JSONObject msg = new JSONObject();
-            msg.put("type", "points_adjusted");
-            msg.put("title", "系统积分调账通知");
-            msg.put("change", change);
-            msg.put("currentPoints", afterCurrent);
-            msg.put("reason", dto.getReason());
-            WebSocketServer.sendInfo("student", student.getId().toString(), msg.toJSONString());
+            Map<String, Object> extraPayload = new HashMap<>();
+            extraPayload.put("change", change);
+            extraPayload.put("currentPoints", afterCurrent);
+            extraPayload.put("reason", dto.getReason());
+
+            String title = "系统积分调账通知";
+            String content = String.format("您的账户积分变动 %+d，当前可用余额 %d 分。调账原因：%s", change, afterCurrent, dto.getReason());
+            sysNoticeService.createAndSendNotice(2, student.getId(), "points_adjusted", title, content, record.getId(), extraPayload);
         } catch (Exception e) {
-            log.warn("向学生推送调账通知失败: {}", e.getMessage());
+            log.warn("保存与推送调账通知失败: {}", e.getMessage());
         }
     }
 
@@ -312,17 +315,18 @@ public class StudentScoreServiceImpl implements StudentScoreService {
         record.setOperatorId(0L); // 0 为系统打卡自动触发
         pointRecordMapper.insert(record);
 
-        // 3. WebSocket 实时推送打卡入账通知给对应学生
+        // 3. 保存系统通知并触发 WebSocket 实时推送
         try {
-            JSONObject msg = new JSONObject();
-            msg.put("type", "activity_checkin_reward");
-            msg.put("title", "活动打卡奖励到账");
-            msg.put("activityTitle", actTitle);
-            msg.put("pointsAwarded", pointsAwarded);
-            msg.put("currentPoints", afterCurrent);
-            WebSocketServer.sendInfo("student", studentId.toString(), msg.toJSONString());
+            Map<String, Object> extraPayload = new HashMap<>();
+            extraPayload.put("activityTitle", actTitle);
+            extraPayload.put("pointsAwarded", pointsAwarded);
+            extraPayload.put("currentPoints", afterCurrent);
+
+            String title = "🎉 活动打卡奖励到账";
+            String content = String.format("参与活动【%s】打卡成功！奖励到账：+%d 分，当前可用余额：%d 分", actTitle, pointsAwarded, afterCurrent);
+            sysNoticeService.createAndSendNotice(2, studentId, "activity_checkin_reward", title, content, studentActivityId, extraPayload);
         } catch (Exception e) {
-            log.warn("向学生推送打卡奖励通知失败: {}", e.getMessage());
+            log.warn("保存与推送打卡奖励通知失败: {}", e.getMessage());
         }
     }
 
