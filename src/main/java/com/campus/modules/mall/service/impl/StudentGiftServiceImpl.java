@@ -1,3 +1,6 @@
+package com.campus.modules.mall.service.impl;
+
+import com.campus.common.auth.AuthUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -356,5 +359,20 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         Page<StudentGiftVO> voPage = new Page<>(orderPage.getCurrent(), orderPage.getSize(), orderPage.getTotal());
         voPage.setRecords(voList);
         return voPage;
+    }
+
+    @Override
+    public GiftOrderMetricsVO getOrderMetrics() {
+        AuthUtil.requireAdminId();
+        GiftOrderMetricsVO metrics = this.baseMapper.selectOrderMetrics();
+        if (metrics == null) {
+            metrics = new GiftOrderMetricsVO();
+            metrics.setTotalCount(0L);
+            metrics.setPendingCount(0L);
+            metrics.setCompletedCount(0L);
+            metrics.setCancelledCount(0L);
+            metrics.setTotalPoints(0L);
+        }
+        return metrics;
     }
 }

@@ -112,6 +112,17 @@ public class StudentGiftController {
     }
 
     /**
+     * 管理端查询礼品兑换订单全局指标统计（避免分页当前页数据当成全局数据）
+     * 对应 GET /gift/order/metrics 或 /admin/gift/orders/metrics
+     */
+    @GetMapping({"/gift/order/metrics", "/admin/gift/orders/metrics", "/admin/gift/order/metrics"})
+    public Result<GiftOrderMetricsVO> getAdminOrderMetrics() {
+        getAdminId();
+        GiftOrderMetricsVO metrics = studentGiftService.getOrderMetrics();
+        return Result.success(metrics);
+    }
+
+    /**
      * 管理端核销提货码并确认发放
      * 对应 API.md 5.5 POST /gift/deliver 或 /gift/order/confirm-delivery
      */
