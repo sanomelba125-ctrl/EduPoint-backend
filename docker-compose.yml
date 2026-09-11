@@ -1,3 +1,5 @@
+name: campus
+
 services:
   # -------------------------------------------------------------------
   # 1. MySQL 8.0 关系型数据库 (挂载 V1.0.0__init.sql 自动初始化库表与密码数据)
@@ -74,10 +76,8 @@ services:
 
   # -------------------------------------------------------------------
   # 4. 后端服务 (Spring Boot 3.3.2 容器化一键部署)
-  # 默认在本地 IDE 开发时直接运行主类；需要全容器化运行时可指定 --profile app
   # -------------------------------------------------------------------
   backend:
-    profiles: ["app", "all"]
     build:
       context: .
       dockerfile: Dockerfile
@@ -103,7 +103,6 @@ services:
   # 5. 管理端 Web（Nginx 静态托管并反向代理 /api 到 backend）
   # -------------------------------------------------------------------
   admin-web:
-    profiles: ["app", "all"]
     build:
       context: ../admin-web
       dockerfile: Dockerfile
@@ -121,7 +120,6 @@ services:
   # 6. 学生移动端 H5（Uni-app 构建产物，由 Nginx 托管）
   # -------------------------------------------------------------------
   mobile-app:
-    profiles: ["app", "all"]
     build:
       context: ../mobile-app
       dockerfile: Dockerfile
