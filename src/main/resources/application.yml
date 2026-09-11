@@ -37,3 +37,13 @@ activity:
     valid-seconds: ${ACTIVITY_QR_VALID_SECONDS:300}
     sign-secret: ${ACTIVITY_QR_SIGN_SECRET:EduPoint@QrSign#2026}
     checkin-base-url: ${ACTIVITY_CHECKIN_BASE_URL:http://localhost:5173/#/checkin}
+
+# AI 客服大模型配置 (支持 DeepSeek / OpenAI 兼容接口，未启用时自动走本地高质感知识库流式Mock)
+ai:
+  llm:
+    enabled: ${AI_LLM_ENABLED:false}
+    base-url: ${AI_LLM_BASE_URL:https://api.deepseek.com/v1}
+    api-key: ${AI_LLM_API_KEY:}
+    model: ${AI_LLM_MODEL:deepseek-chat}
+    timeout-seconds: 30
+
