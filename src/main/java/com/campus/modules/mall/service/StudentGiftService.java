@@ -39,4 +39,9 @@ public interface StudentGiftService extends IService<StudentGift> {
      * 管理端取消兑换订单（支持退款）
      */
     void adminCancelOrder(OrderCancelDTO dto, Long adminId);
+
+    /**
+     * 超时未提货订单自动关单与退还积分（由延时死信队列消费调用，具备严格幂等性）
+     */
+    void expireOrder(Long orderId);
 }

@@ -2,6 +2,7 @@ package com.campus.mq;
 
 import com.campus.config.RabbitMqConfig;
 import com.campus.modules.activity.service.ActivityCacheService;
+import com.campus.modules.mall.service.StudentGiftService;
 import jakarta.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,8 +12,9 @@ import org.springframework.stereotype.Component;
 import java.util.Map;
 
 /**
- * 校园平台 MQ 异步消息消费�? * 1. 异步消费活动打卡事件 (高并发削峰填�?
- * 2. 延时死信消费超时未提货礼品单 (自动取消与返还积�?
+ * 校园平台 MQ 异步消息消费者
+ * 1. 异步消费活动打卡事件 (高并发削峰填谷)
+ * 2. 延时死信消费超时未提货礼品单 (自动取消与返还积分)
  */
 @Component
 public class CampusMessageConsumer {
@@ -21,6 +23,9 @@ public class CampusMessageConsumer {
 
     @Resource
     private ActivityCacheService activityCacheService;
+
+    @Resource
+    private StudentGiftService studentGiftService;
 
     @RabbitListener(queues = RabbitMqConfig.ACTIVITY_CACHE_REFRESH_QUEUE, autoStartup = "true")
     public void refreshActivityCache(Map<String, Object> message) {
@@ -34,7 +39,7 @@ public class CampusMessageConsumer {
      */
     @RabbitListener(queues = RabbitMqConfig.ACTIVITY_CHECKIN_QUEUE)
     public void handleCheckinEvent(Map<String, Object> message) {
-        log.info("[MQ 削峰消费] 接收到学生活动打卡异步流�? studentId={}, activityId={}", 
+        log.info("[MQ 削峰消费] 接收到学生活动打卡异步流水: studentId={}, activityId={}", 
                 message.get("studentId"), message.get("activityId"));
     }
 
@@ -43,7 +48,27 @@ public class CampusMessageConsumer {
      */
     @RabbitListener(queues = RabbitMqConfig.GIFT_EXPIRE_QUEUE)
     public void handleGiftOrderExpire(Map<String, Object> message) {
-        log.info("[MQ 延时关单] 检查到礼品提货码已超时未核销: pickupCode={}, 执行自动退单与积分回滚", 
-                message.get("pickupCode"));
+        if (message == null) {
+            return;
+        }
+        Object orderIdVal = message.get("orderId");
+        Long orderId = null;
+        if (orderIdVal instanceof Number number) {
+            orderId = number.longValue();
+        } else if (orderIdVal != null) {
+            try {
+                orderId = Long.parseLong(orderIdVal.toString());
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        log.info("[MQ 延时关单] 检查到礼品提货码已超时未核销: orderId={}, pickupCode={}, 执行自动退单与积分回滚", 
+                orderId, message.get("pickupCode"));
+        if (orderId != null) {
+            try {
+                studentGiftService.expireOrder(orderId);
+            } catch (Exception e) {
+                log.error("[MQ 延时关单] 自动关单执行失败: orderId={}", orderId, e);
+            }
+        }
     }
 }

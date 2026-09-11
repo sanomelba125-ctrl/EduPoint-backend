@@ -63,6 +63,10 @@ public class ExportController {
                     .orderByDesc(Activity::getStartTime)
                     .list();
 
+            // 一次性查出全量活动打卡与报名聚合统计，避免在循环中产生 2N 次数据库往返
+            Map<Long, com.campus.modules.activity.dto.ActivityCountRow> countMap = studentActivityMapper.countByActivity()
+                    .stream().collect(Collectors.toMap(com.campus.modules.activity.dto.ActivityCountRow::getActivityId, r -> r, (k1, k2) -> k1));
+
             List<ActivityExportDTO> list = new ArrayList<>();
             for (Activity act : activities) {
                 ActivityExportDTO dto = new ActivityExportDTO();
@@ -73,18 +77,9 @@ public class ExportController {
                 dto.setLocation(loc);
                 dto.setRewardPoints(act.getPoints() != null ? act.getPoints() : 0);
 
-                // 统计报名人数与实际打卡完成人数
-                Long enrolled = studentActivityMapper.selectCount(new LambdaQueryWrapper<StudentActivity>()
-                        .eq(StudentActivity::getActivityId, act.getId())
-                        .eq(StudentActivity::getDeleted, 0)
-                        .in(StudentActivity::getStatus, 1, 2));
-                Long checkedIn = studentActivityMapper.selectCount(new LambdaQueryWrapper<StudentActivity>()
-                        .eq(StudentActivity::getActivityId, act.getId())
-                        .eq(StudentActivity::getDeleted, 0)
-                        .eq(StudentActivity::getStatus, 2));
-
-                dto.setEnrolledCount(enrolled != null ? enrolled.intValue() : 0);
-                dto.setCheckinCount(checkedIn != null ? checkedIn.intValue() : 0);
+                com.campus.modules.activity.dto.ActivityCountRow countRow = countMap.get(act.getId());
+                dto.setEnrolledCount(countRow != null && countRow.getEnrolledCount() != null ? countRow.getEnrolledCount() : 0);
+                dto.setCheckinCount(countRow != null && countRow.getCheckinCount() != null ? countRow.getCheckinCount() : 0);
                 dto.setStartTime(act.getStartTime());
                 dto.setEndTime(act.getEndTime());
                 dto.setStatus(act.getStatus());

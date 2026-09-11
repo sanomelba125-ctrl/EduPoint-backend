@@ -130,37 +130,87 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
                 .ne(Boolean.TRUE.equals(query.getExcludeArchived()), Activity::getStatus, 3)
                 .orderByDesc(Activity::getStartTime)
                 .page(new Page<>(current, size));
-        result.getRecords().forEach(this::applyStudentStatus);
+        applyStudentStatusBatch(result.getRecords());
         return result;
     }
 
-    /** 将当前学生的正式报名/完成/候补状态注入现有活动响应，不新增接口。 */
+    /** 将当前学生的正式报名/完成/候补状态注入现有活动响应（单条） */
     private void applyStudentStatus(Activity activity) {
-        activity.setMyEnrollmentStatus("NONE");
-        activity.setMyQueueNumber(null);
-        if (!isStudentLogin() || activity == null || activity.getId() == null) return;
+        if (activity != null) {
+            applyStudentStatusBatch(java.util.Collections.singletonList(activity));
+        }
+    }
 
-        Long studentId = currentStudentId();
-        StudentActivity record = studentActivityMapper.selectOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<StudentActivity>()
-                .eq(StudentActivity::getStudentId, studentId)
-                .eq(StudentActivity::getActivityId, activity.getId())
-                .in(StudentActivity::getStatus, java.util.Arrays.asList(1, 2))
-                .orderByDesc(StudentActivity::getStatus)
-                .last("LIMIT 1"));
-        if (record != null) {
-            activity.setMyEnrollmentStatus(record.getStatus() != null && record.getStatus() == 2 ? "COMPLETED" : "ENROLLED");
+    /** 批量将当前学生的正式报名/完成/候补状态注入活动响应，消除循环内 N+1 查询 */
+    private void applyStudentStatusBatch(java.util.List<Activity> activities) {
+        if (activities == null || activities.isEmpty()) {
             return;
         }
-        ActivityWaitlist waitlist = activityWaitlistMapper.selectOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ActivityWaitlist>()
-                .eq(ActivityWaitlist::getStudentId, studentId)
-                .eq(ActivityWaitlist::getActivityId, activity.getId())
-                .eq(ActivityWaitlist::getStatus, 1)
-                .eq(ActivityWaitlist::getDeleted, 0)
-                .orderByAsc(ActivityWaitlist::getQueueNumber)
-                .last("LIMIT 1"));
-        if (waitlist != null) {
-            activity.setMyEnrollmentStatus("WAITLIST");
-            activity.setMyQueueNumber(waitlist.getQueueNumber());
+        for (Activity activity : activities) {
+            if (activity != null) {
+                activity.setMyEnrollmentStatus("NONE");
+                activity.setMyQueueNumber(null);
+            }
+        }
+        if (!isStudentLogin()) {
+            return;
+        }
+
+        Long studentId = currentStudentId();
+        java.util.List<Long> activityIds = activities.stream()
+                .filter(Objects::nonNull)
+                .map(Activity::getId)
+                .filter(Objects::nonNull)
+                .collect(java.util.stream.Collectors.toList());
+        if (activityIds.isEmpty()) {
+            return;
+        }
+
+        java.util.List<StudentActivity> records = studentActivityMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<StudentActivity>()
+                        .eq(StudentActivity::getStudentId, studentId)
+                        .in(StudentActivity::getActivityId, activityIds)
+                        .in(StudentActivity::getStatus, java.util.Arrays.asList(1, 2))
+                        .orderByDesc(StudentActivity::getStatus)
+        );
+        java.util.Map<Long, StudentActivity> enrolledMap = new java.util.HashMap<>();
+        for (StudentActivity record : records) {
+            enrolledMap.putIfAbsent(record.getActivityId(), record);
+        }
+
+        java.util.List<Long> remainingIds = activityIds.stream()
+                .filter(id -> !enrolledMap.containsKey(id))
+                .collect(java.util.stream.Collectors.toList());
+
+        java.util.Map<Long, ActivityWaitlist> waitlistMap = new java.util.HashMap<>();
+        if (!remainingIds.isEmpty()) {
+            java.util.List<ActivityWaitlist> waitlists = activityWaitlistMapper.selectList(
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ActivityWaitlist>()
+                            .eq(ActivityWaitlist::getStudentId, studentId)
+                            .in(ActivityWaitlist::getActivityId, remainingIds)
+                            .eq(ActivityWaitlist::getStatus, 1)
+                            .eq(ActivityWaitlist::getDeleted, 0)
+                            .orderByAsc(ActivityWaitlist::getQueueNumber)
+            );
+            for (ActivityWaitlist w : waitlists) {
+                waitlistMap.putIfAbsent(w.getActivityId(), w);
+            }
+        }
+
+        for (Activity activity : activities) {
+            if (activity == null || activity.getId() == null) {
+                continue;
+            }
+            StudentActivity record = enrolledMap.get(activity.getId());
+            if (record != null) {
+                activity.setMyEnrollmentStatus(record.getStatus() != null && record.getStatus() == 2 ? "COMPLETED" : "ENROLLED");
+                continue;
+            }
+            ActivityWaitlist waitlist = waitlistMap.get(activity.getId());
+            if (waitlist != null) {
+                activity.setMyEnrollmentStatus("WAITLIST");
+                activity.setMyQueueNumber(waitlist.getQueueNumber());
+            }
         }
     }
 

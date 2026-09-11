@@ -1,12 +1,12 @@
 package com.campus.modules.student.service.impl;
 
-import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.common.exception.BusinessException;
-import com.campus.common.websocket.WebSocketServer;
+import com.campus.modules.mall.dto.LedgerMetricsRow;
 import com.campus.modules.mall.entity.StudentPointRecord;
 import com.campus.modules.mall.mapper.StudentPointRecordMapper;
+import com.campus.modules.mall.service.PointLedger;
 import com.campus.modules.student.dto.*;
 import com.campus.modules.student.entity.Student;
 import com.campus.modules.student.mapper.StudentMapper;
@@ -32,6 +32,7 @@ public class StudentScoreServiceImpl implements StudentScoreService {
 
     private final StudentMapper studentMapper;
     private final StudentPointRecordMapper pointRecordMapper;
+    private final PointLedger pointLedger;
     private final SysNoticeService sysNoticeService;
 
     @Override
@@ -204,21 +205,12 @@ public class StudentScoreServiceImpl implements StudentScoreService {
 
         int afterCurrent = beforeCurrent + change;
 
-        // 写入财务级对账流水
-        StudentPointRecord record = new StudentPointRecord();
-        record.setStudentId(student.getId());
-        record.setType(3); // 3-管理员手动调整
-        record.setChangePoints(change);
-        record.setBeforePoints(beforeCurrent);
-        record.setAfterPoints(afterCurrent);
-
+        // 写入财务级对账流水 (通过 PointLedger 统一落账)
         String remark = dto.getReason();
         if (StringUtils.hasText(dto.getApprovalNo())) {
             remark = String.format("调账审批单【%s】: %s", dto.getApprovalNo(), remark);
         }
-        record.setDescription(remark);
-        record.setOperatorId(adminId);
-        pointRecordMapper.insert(record);
+        pointLedger.record(student.getId(), 3, change, afterCurrent, remark, null, adminId);
 
         // 保存系统通知并触发 WebSocket 实时推送
         try {
@@ -229,7 +221,7 @@ public class StudentScoreServiceImpl implements StudentScoreService {
 
             String title = "系统积分调账通知";
             String content = String.format("您的账户积分变动 %+d，当前可用余额 %d 分。调账原因：%s", change, afterCurrent, dto.getReason());
-            sysNoticeService.createAndSendNotice(2, student.getId(), "points_adjusted", title, content, record.getId(), extraPayload);
+            sysNoticeService.createAndSendNotice(2, student.getId(), "points_adjusted", title, content, null, extraPayload);
         } catch (Exception e) {
             log.warn("保存与推送调账通知失败: {}", e.getMessage());
         }
@@ -302,18 +294,10 @@ public class StudentScoreServiceImpl implements StudentScoreService {
         Integer currentDb = studentMapper.selectCurrentPoints(studentId);
         int afterCurrent = currentDb != null ? currentDb : (beforeCurrent + pointsAwarded);
 
-        // 2. 写入财务级对账流水
-        StudentPointRecord record = new StudentPointRecord();
-        record.setStudentId(studentId);
-        record.setType(1); // 1-活动打卡奖励(+)
-        record.setChangePoints(pointsAwarded);
-        record.setBeforePoints(beforeCurrent);
-        record.setAfterPoints(afterCurrent);
+        // 2. 写入财务级对账流水 (通过 PointLedger 统一落账)
         String actTitle = StringUtils.hasText(activityTitle) ? activityTitle.trim() : "校园活动";
-        record.setDescription(String.format("参与活动打卡奖励【%s】", actTitle));
-        record.setRefId(studentActivityId);
-        record.setOperatorId(0L); // 0 为系统打卡自动触发
-        pointRecordMapper.insert(record);
+        pointLedger.record(studentId, 1, pointsAwarded, afterCurrent,
+                String.format("参与活动打卡奖励【%s】", actTitle), studentActivityId, 0L);
 
         // 3. 保存系统通知并触发 WebSocket 实时推送
         try {
@@ -334,43 +318,21 @@ public class StudentScoreServiceImpl implements StudentScoreService {
 
     @Override
     public LedgerMetricsVO getLedgerMetrics() {
-        // 统计全库流水 (仅拉取必要字段，避免大对象常驻内存)
-        List<StudentPointRecord> all = pointRecordMapper.selectList(
-                new LambdaQueryWrapper<StudentPointRecord>()
-                        .select(StudentPointRecord::getType, StudentPointRecord::getChangePoints)
-                        .eq(StudentPointRecord::getDeleted, 0)
-        );
-
-        int earned = 0;
-        int spent = 0;
-        int refunded = 0;
-        int adjustCount = 0;
-
-        for (StudentPointRecord r : all) {
-            int change = r.getChangePoints() != null ? r.getChangePoints() : 0;
-            int type = r.getType() != null ? r.getType() : 0;
-
-            if (type == 1) { // 活动打卡(+)
-                earned += Math.max(0, change);
-            } else if (type == 2) { // 礼品兑换(-)
-                spent += Math.abs(change);
-            } else if (type == 4) { // 退单返还(+)
-                refunded += Math.max(0, change);
-            } else if (type == 3) { // 人工调账
-                adjustCount++;
-                if (change > 0) {
-                    earned += change;
-                } else {
-                    spent += Math.abs(change);
-                }
-            }
+        // 单条 SQL 数据库聚合统计，消除将全量流水拉入 JVM 的内存与 CPU 瓶颈
+        LedgerMetricsRow row = pointRecordMapper.selectLedgerMetrics();
+        if (row == null) {
+            return LedgerMetricsVO.builder()
+                    .totalEarnedPoints(0)
+                    .totalSpentPoints(0)
+                    .totalRefundedPoints(0)
+                    .adjustCount(0)
+                    .build();
         }
-
         return LedgerMetricsVO.builder()
-                .totalEarnedPoints(earned)
-                .totalSpentPoints(spent)
-                .totalRefundedPoints(refunded)
-                .adjustCount(adjustCount)
+                .totalEarnedPoints(row.getEarned() != null ? row.getEarned().intValue() : 0)
+                .totalSpentPoints(row.getSpent() != null ? row.getSpent().intValue() : 0)
+                .totalRefundedPoints(row.getRefunded() != null ? row.getRefunded().intValue() : 0)
+                .adjustCount(row.getAdjustCount() != null ? row.getAdjustCount().intValue() : 0)
                 .build();
     }
 

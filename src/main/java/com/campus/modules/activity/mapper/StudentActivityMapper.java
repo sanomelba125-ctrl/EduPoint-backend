@@ -21,4 +21,13 @@ public interface StudentActivityMapper extends BaseMapper<StudentActivity> {
     IPage<ActivityRecordVO> selectAdminPage(Page<ActivityRecordVO> page, @Param("studentName") String studentName,
                                               @Param("studentNo") String studentNo, @Param("activityTitle") String activityTitle,
                                               @Param("status") Integer status);
+
+    /**
+     * 单条 SQL 聚合所有活动的报名人数与打卡人数（避免导出报表时产生 2N 次循环查询）
+     */
+    @Select("SELECT activity_id AS activityId, " +
+            "  COALESCE(SUM(CASE WHEN status IN (1, 2) THEN 1 ELSE 0 END), 0) AS enrolledCount, " +
+            "  COALESCE(SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END), 0) AS checkinCount " +
+            "FROM student_activity WHERE deleted = 0 GROUP BY activity_id")
+    java.util.List<com.campus.modules.activity.dto.ActivityCountRow> countByActivity();
 }

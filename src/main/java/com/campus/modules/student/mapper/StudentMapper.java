@@ -42,4 +42,16 @@ public interface StudentMapper extends BaseMapper<Student> {
      */
     @org.apache.ibatis.annotations.Select("SELECT current_points FROM student WHERE id = #{id} AND deleted = 0")
     Integer selectCurrentPoints(@Param("id") Long id);
+
+    /**
+     * 聚合计算全校当前可用积分总流通量
+     */
+    @org.apache.ibatis.annotations.Select("SELECT COALESCE(SUM(current_points), 0) FROM student WHERE deleted = 0")
+    Long sumCurrentPoints();
+
+    /**
+     * 聚合计算全校学生累计总积分之和
+     */
+    @org.apache.ibatis.annotations.Select("SELECT COALESCE(SUM(total_points), 0) FROM student WHERE deleted = 0")
+    Long sumTotalPoints();
 }
