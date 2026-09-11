@@ -13,6 +13,7 @@ import com.campus.modules.activity.service.ActivityService;
 import com.campus.modules.admin.dto.ActivityExportDTO;
 import com.campus.modules.admin.dto.ActivityRecordExportDTO;
 import com.campus.modules.admin.dto.PointRecordExportDTO;
+import com.campus.modules.mall.entity.PointRecordType;
 import com.campus.modules.mall.entity.StudentPointRecord;
 import com.campus.modules.mall.mapper.StudentPointRecordMapper;
 import com.campus.modules.student.entity.Student;
@@ -134,14 +135,7 @@ public class ExportController {
                 dto.setChangePoints(r.getChangePoints());
                 dto.setAfterPoints(r.getAfterPoints());
 
-                String bizType = switch (r.getType() != null ? r.getType() : 0) {
-                    case 1 -> "活动打卡奖励";
-                    case 2 -> "商城兑换消费";
-                    case 3 -> "系统人工调账";
-                    case 4 -> "订单取消返还";
-                    default -> "其他流水变动";
-                };
-                dto.setBizType(bizType);
+                dto.setBizType(PointRecordType.of(r.getType()).getDescription());
                 dto.setBizRef(StringUtils.hasText(r.getDescription()) ? r.getDescription() : "-");
                 dto.setCreateTime(r.getCreateTime());
                 list.add(dto);

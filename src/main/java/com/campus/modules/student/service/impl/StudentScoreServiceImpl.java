@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.common.exception.BusinessException;
 import com.campus.modules.mall.dto.LedgerMetricsRow;
+import com.campus.modules.mall.entity.PointRecordType;
 import com.campus.modules.mall.entity.StudentPointRecord;
 import com.campus.modules.mall.mapper.StudentPointRecordMapper;
 import com.campus.modules.mall.service.PointLedger;
@@ -352,13 +353,7 @@ public class StudentScoreServiceImpl implements StudentScoreService {
 
         List<StudentPointRecordVO> voList = records.stream().map(r -> {
             Student s = studentMap.get(r.getStudentId());
-            String typeDesc = switch (r.getType() != null ? r.getType() : 0) {
-                case 1 -> "活动打卡奖励";
-                case 2 -> "商城兑换消费";
-                case 3 -> "系统人工调账";
-                case 4 -> "订单取消返还";
-                default -> "其他流水变动";
-            };
+            String typeDesc = PointRecordType.of(r.getType()).getDescription();
 
             String businessType = switch (r.getType() != null ? r.getType() : 0) {
                 case 1 -> "ACTIVITY";

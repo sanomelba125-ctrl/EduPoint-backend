@@ -9,7 +9,8 @@ import java.time.LocalDateTime;
 
 /**
  * 活动报名候补排队记录实体
- * 对应需�? 3.3 活动报名(候补机制) / 4. 数据需�? */
+ * 对应需求: 3.3 活动报名(候补机制) / 4. 数据需求
+ */
 @Data
 @TableName("activity_waitlist")
 public class ActivityWaitlist {
@@ -26,7 +27,7 @@ public class ActivityWaitlist {
     /** 候补排队序号(按报名时间自增递增) */
     private Integer queueNumber;
 
-    /** 候补状�? 1-候补�?2-已递补转正 3-主动取消 4-活动结束已失�?*/
+    /** 候补状态: 1-候补中 2-已递补转正 3-主动取消 4-活动结束已失效 */
     private Integer status;
 
     /** 进入候补队列时间 */

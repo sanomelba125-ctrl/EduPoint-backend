@@ -10,7 +10,8 @@ import java.time.LocalDateTime;
 
 /**
  * 学生活动参与/报名/打卡记录实体
- * 对应需�? 3.3 活动报名 / 3.4 活动打卡 / 3.5 活动记录 / 4. 数据需�? */
+ * 对应需求: 3.3 活动报名 / 3.4 活动打卡 / 3.5 活动记录 / 4. 数据需求
+ */
 @Data
 @TableName("student_activity")
 public class StudentActivity {
@@ -36,16 +37,16 @@ public class StudentActivity {
     /** 学生实际打卡位置经度 */
     private BigDecimal checkinLongitude;
 
-    /** 打卡点距活动目标中心距离(�? */
+    /** 打卡点距活动目标中心距离(米) */
     private Integer checkinDistance;
 
     /** 打卡核销使用的动态二维码nonce */
     private String qrNonceUsed;
 
-    /** 实际获得的奖励积�?*/
+    /** 实际获得的奖励积分 */
     private Integer pointsAwarded;
 
-    /** 参与状�? 1-已报�?待打�? 2-已完�?打卡成功发分) 3-未完成或已失�?*/
+    /** 参与状态: 1-已报名(待打卡) 2-已完成(打卡成功发分) 3-未完成或已失效 */
     private Integer status;
 
     /** 备注/打卡审核反馈 */

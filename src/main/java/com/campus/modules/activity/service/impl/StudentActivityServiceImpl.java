@@ -55,28 +55,68 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
 
     @Override
     public ActivitySignupVO signup(ActivitySignupDTO dto) {
-        Long sid = currentStudentId(); Long aid = dto.getActivityId();
+        Long sid = currentStudentId();
+        Long aid = dto.getActivityId();
         return withLock("activity:signup:" + aid, () -> transactionTemplate.execute(status -> {
             Activity a = activityMapper.selectById(aid);
-            if (a == null || Objects.equals(a.getDeleted(),1)) throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "活动不存在");
-            if (a.getStatus() == null || a.getStatus() != 0 && a.getStatus() != 1) throw new BusinessException(ResultCode.ACTIVITY_EXPIRED.getCode(), "活动未开始或已结束");
-            StudentActivity old = getOne(new LambdaQueryWrapper<StudentActivity>().eq(StudentActivity::getStudentId,sid).eq(StudentActivity::getActivityId,aid), false);
-            if (old != null && old.getStatus() != 3) throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "您已报名该活动");
-            ActivityWaitlist waiting = waitlistMapper.selectOne(new LambdaQueryWrapper<ActivityWaitlist>().eq(ActivityWaitlist::getStudentId,sid).eq(ActivityWaitlist::getActivityId,aid));
-            if (waiting != null && Objects.equals(waiting.getStatus(), 1)) throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "您已在候补队列中");
+            if (a == null || Objects.equals(a.getDeleted(), 1)) {
+                throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "活动不存在");
+            }
+            if (a.getStatus() == null || (a.getStatus() != 0 && a.getStatus() != 1)) {
+                throw new BusinessException(ResultCode.ACTIVITY_EXPIRED.getCode(), "活动未开始或已结束");
+            }
+            StudentActivity old = getOne(new LambdaQueryWrapper<StudentActivity>()
+                    .eq(StudentActivity::getStudentId, sid)
+                    .eq(StudentActivity::getActivityId, aid), false);
+            if (old != null && old.getStatus() != 3) {
+                throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "您已报名该活动");
+            }
+            ActivityWaitlist waiting = waitlistMapper.selectOne(new LambdaQueryWrapper<ActivityWaitlist>()
+                    .eq(ActivityWaitlist::getStudentId, sid)
+                    .eq(ActivityWaitlist::getActivityId, aid));
+            if (waiting != null && Objects.equals(waiting.getStatus(), 1)) {
+                throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "您已在候补队列中");
+            }
             int reserved = reserveParticipant(a);
             if (reserved > 0) {
                 StudentActivity rec = old == null ? new StudentActivity() : old;
-                rec.setStudentId(sid); rec.setActivityId(aid); rec.setSignupTime(LocalDateTime.now()); rec.setStatus(1); rec.setPointsAwarded(0); rec.setDeleted(0);
-                if (rec.getId() == null) save(rec); else updateById(rec);
+                rec.setStudentId(sid);
+                rec.setActivityId(aid);
+                rec.setSignupTime(LocalDateTime.now());
+                rec.setStatus(1);
+                rec.setPointsAwarded(0);
+                rec.setDeleted(0);
+                if (rec.getId() == null) {
+                    save(rec);
+                } else {
+                    updateById(rec);
+                }
                 refreshActivityCacheAfterCommit(aid);
                 return ActivitySignupVO.builder().status("ENROLLED").waitlist(false).message("您已成功正式报名！").build();
             }
-            if (!Objects.equals(a.getWaitlistEnabled(),1)) throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "活动报名名额已满");
-            Integer max = waitlistMapper.selectList(new LambdaQueryWrapper<ActivityWaitlist>().eq(ActivityWaitlist::getActivityId,aid)).stream().map(ActivityWaitlist::getQueueNumber).filter(Objects::nonNull).max(Integer::compareTo).orElse(0);
+            if (!Objects.equals(a.getWaitlistEnabled(), 1)) {
+                throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "活动报名名额已满");
+            }
+            Integer max = waitlistMapper.selectList(new LambdaQueryWrapper<ActivityWaitlist>()
+                    .eq(ActivityWaitlist::getActivityId, aid))
+                    .stream()
+                    .map(ActivityWaitlist::getQueueNumber)
+                    .filter(Objects::nonNull)
+                    .max(Integer::compareTo)
+                    .orElse(0);
             ActivityWaitlist w = waiting == null ? new ActivityWaitlist() : waiting;
-            w.setActivityId(aid); w.setStudentId(sid); w.setQueueNumber(max+1); w.setStatus(1); w.setWaitTime(LocalDateTime.now()); w.setPromotedTime(null); w.setDeleted(0);
-            if (w.getId() == null) waitlistMapper.insert(w); else waitlistMapper.updateById(w);
+            w.setActivityId(aid);
+            w.setStudentId(sid);
+            w.setQueueNumber(max + 1);
+            w.setStatus(1);
+            w.setWaitTime(LocalDateTime.now());
+            w.setPromotedTime(null);
+            w.setDeleted(0);
+            if (w.getId() == null) {
+                waitlistMapper.insert(w);
+            } else {
+                waitlistMapper.updateById(w);
+            }
             return ActivitySignupVO.builder().status("WAITLIST").waitlist(true).queueNumber(w.getQueueNumber()).message("名额已满，已进入候补队列").build();
         }));
     }
@@ -112,25 +152,74 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
     }
 
     private void promote(Long aid) {
-        ActivityWaitlist w = waitlistMapper.selectOne(new LambdaQueryWrapper<ActivityWaitlist>().eq(ActivityWaitlist::getActivityId,aid).eq(ActivityWaitlist::getStatus,1).orderByAsc(ActivityWaitlist::getQueueNumber).last("LIMIT 1"));
+        ActivityWaitlist w = waitlistMapper.selectOne(new LambdaQueryWrapper<ActivityWaitlist>()
+                .eq(ActivityWaitlist::getActivityId, aid)
+                .eq(ActivityWaitlist::getStatus, 1)
+                .orderByAsc(ActivityWaitlist::getQueueNumber)
+                .last("LIMIT 1"));
         Activity activity = activityMapper.selectById(aid);
-        if (w == null || activity == null || reserveParticipant(activity) == 0) return;
-        StudentActivity rec = getOne(new LambdaQueryWrapper<StudentActivity>().eq(StudentActivity::getStudentId, w.getStudentId()).eq(StudentActivity::getActivityId, aid), false);
-        if (rec == null) rec = new StudentActivity();
-        rec.setStudentId(w.getStudentId()); rec.setActivityId(aid); rec.setSignupTime(LocalDateTime.now()); rec.setStatus(1); rec.setPointsAwarded(0); rec.setDeleted(0);
-        if (rec.getId() == null) save(rec); else updateById(rec);
-        w.setStatus(2); w.setPromotedTime(LocalDateTime.now()); waitlistMapper.updateById(w);
+        if (w == null || activity == null || reserveParticipant(activity) == 0) {
+            return;
+        }
+        StudentActivity rec = getOne(new LambdaQueryWrapper<StudentActivity>()
+                .eq(StudentActivity::getStudentId, w.getStudentId())
+                .eq(StudentActivity::getActivityId, aid), false);
+        if (rec == null) {
+            rec = new StudentActivity();
+        }
+        rec.setStudentId(w.getStudentId());
+        rec.setActivityId(aid);
+        rec.setSignupTime(LocalDateTime.now());
+        rec.setStatus(1);
+        rec.setPointsAwarded(0);
+        rec.setDeleted(0);
+        if (rec.getId() == null) {
+            save(rec);
+        } else {
+            updateById(rec);
+        }
+        w.setStatus(2);
+        w.setPromotedTime(LocalDateTime.now());
+        waitlistMapper.updateById(w);
     }
 
     @Override
     public ActivityCheckinVO checkin(ActivityCheckinDTO dto) {
-        Long sid=currentStudentId(); Long aid=dto.getActivityId(); return withLock("activity:checkin:"+aid, () -> withLock("student:points:" + sid, () -> transactionTemplate.execute(status -> {
-            Activity a=activityMapper.selectById(aid); if(a==null||a.getStatus()==null||a.getStatus()!=1) throw new BusinessException(ResultCode.ACTIVITY_EXPIRED.getCode(),"活动未开始或已结束");
-            StudentActivity rec=getOne(new LambdaQueryWrapper<StudentActivity>().eq(StudentActivity::getStudentId,sid).eq(StudentActivity::getActivityId,aid).eq(StudentActivity::getStatus,1)); if(rec==null) throw new BusinessException(ResultCode.BAD_REQUEST.getCode(),"请先报名活动");
-            ActivityCheckinCode code=codeMapper.selectOne(new LambdaQueryWrapper<ActivityCheckinCode>().eq(ActivityCheckinCode::getActivityId,aid).eq(ActivityCheckinCode::getNonce,dto.getNonce()).eq(ActivityCheckinCode::getSign,dto.getSign()).eq(ActivityCheckinCode::getStatus,0));
-            if(code==null||code.getExpireTime()==null||code.getExpireTime().isBefore(LocalDateTime.now())) throw new BusinessException(ResultCode.BAD_REQUEST.getCode(),"签到码无效或已过期");
-            if(Objects.equals(a.getLocationCheckEnabled(),1)){ if(dto.getCheckinLatitude()==null||dto.getCheckinLongitude()==null) throw new BusinessException(ResultCode.BAD_REQUEST.getCode(),"请提供定位信息"); int dist=distance(a.getLatitude(),a.getLongitude(),dto.getCheckinLatitude(),dto.getCheckinLongitude()); if(dist>(a.getLocationRadius()==null?300:a.getLocationRadius())) throw new BusinessException(ResultCode.BAD_REQUEST.getCode(),"超出活动签到范围"); rec.setCheckinDistance(dist); }
-            if (codeMapper.consume(code.getId(), sid) == 0) throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "签到码已被使用或已过期");
+        Long sid = currentStudentId();
+        Long aid = dto.getActivityId();
+        return withLock("activity:checkin:" + aid, () -> withLock("student:points:" + sid, () -> transactionTemplate.execute(status -> {
+            Activity a = activityMapper.selectById(aid);
+            if (a == null || a.getStatus() == null || a.getStatus() != 1) {
+                throw new BusinessException(ResultCode.ACTIVITY_EXPIRED.getCode(), "活动未开始或已结束");
+            }
+            StudentActivity rec = getOne(new LambdaQueryWrapper<StudentActivity>()
+                    .eq(StudentActivity::getStudentId, sid)
+                    .eq(StudentActivity::getActivityId, aid)
+                    .eq(StudentActivity::getStatus, 1));
+            if (rec == null) {
+                throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "请先报名活动");
+            }
+            ActivityCheckinCode code = codeMapper.selectOne(new LambdaQueryWrapper<ActivityCheckinCode>()
+                    .eq(ActivityCheckinCode::getActivityId, aid)
+                    .eq(ActivityCheckinCode::getNonce, dto.getNonce())
+                    .eq(ActivityCheckinCode::getSign, dto.getSign())
+                    .eq(ActivityCheckinCode::getStatus, 0));
+            if (code == null || code.getExpireTime() == null || code.getExpireTime().isBefore(LocalDateTime.now())) {
+                throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "签到码无效或已过期");
+            }
+            if (Objects.equals(a.getLocationCheckEnabled(), 1)) {
+                if (dto.getCheckinLatitude() == null || dto.getCheckinLongitude() == null) {
+                    throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "请提供定位信息");
+                }
+                int dist = distance(a.getLatitude(), a.getLongitude(), dto.getCheckinLatitude(), dto.getCheckinLongitude());
+                if (dist > (a.getLocationRadius() == null ? 300 : a.getLocationRadius())) {
+                    throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "超出活动签到范围");
+                }
+                rec.setCheckinDistance(dist);
+            }
+            if (codeMapper.consume(code.getId(), sid) == 0) {
+                throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "签到码已被使用或已过期");
+            }
             int points = a.getPoints() == null ? 0 : a.getPoints();
             LocalDateTime now = LocalDateTime.now();
             rec.setStatus(2);
@@ -265,47 +354,80 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
         }
         return vo;
     }
-    @Override public IPage<ActivityRecordVO> adminList(Integer page, Integer size, String studentName, String studentNo, String activityTitle, Integer status) {
+    @Override
+    public IPage<ActivityRecordVO> adminList(Integer page, Integer size, String studentName, String studentNo, String activityTitle, Integer status) {
         requireAdmin();
         long current = Math.max(page == null ? 1 : page, 1);
         long pageSize = Math.min(Math.max(size == null ? 10 : size, 1), 100);
         return baseMapper.selectAdminPage(new Page<>(current, pageSize), trim(studentName), trim(studentNo), trim(activityTitle), status);
     }
 
-    private Long currentStudentId() { return AuthUtil.requireStudentId(); }
-    private String trim(String value) { return value == null || value.isBlank() ? null : value.trim(); }
-    private void requireAdmin() { AuthUtil.requireAdminId(); }
+    private Long currentStudentId() {
+        return AuthUtil.requireStudentId();
+    }
+
+    private String trim(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private void requireAdmin() {
+        AuthUtil.requireAdminId();
+    }
+
     private int reserveParticipant(Activity activity) {
         Activity candidate = activity;
         for (int attempt = 0; attempt < 3; attempt++) {
-            if (activityMapper.incrementParticipant(candidate.getId(), candidate.getVersion()) > 0) return 1;
+            if (activityMapper.incrementParticipant(candidate.getId(), candidate.getVersion()) > 0) {
+                return 1;
+            }
             Activity refreshed = activityMapper.selectById(candidate.getId());
             if (refreshed == null || !Objects.equals(refreshed.getDeleted(), 0)
-                    || !Objects.equals(refreshed.getStatus(), 0) && !Objects.equals(refreshed.getStatus(), 1)) return 0;
-            if (Objects.equals(refreshed.getVersion(), candidate.getVersion())) return 0;
+                    || (!Objects.equals(refreshed.getStatus(), 0) && !Objects.equals(refreshed.getStatus(), 1))) {
+                return 0;
+            }
+            if (Objects.equals(refreshed.getVersion(), candidate.getVersion())) {
+                return 0;
+            }
             candidate = refreshed;
         }
         throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "报名人数更新冲突，请重试");
     }
+
     private void publishAfterCommit(Map<String, Object> message) {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override public void afterCommit() {
+            @Override
+            public void afterCommit() {
                 try {
                     rabbitTemplate.convertAndSend(RabbitMqConfig.ACTIVITY_EXCHANGE,
                             RabbitMqConfig.ACTIVITY_CHECKIN_ROUTING_KEY, message);
                 } catch (Exception e) {
-                    // The persistent check-in record remains the source of truth for replay/reconciliation.
                     log.error("Post-commit check-in event publish failed: {}", message, e);
                 }
             }
         });
     }
+
     private void refreshActivityCacheAfterCommit(Long activityId) {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override public void afterCommit() { activityCacheService.requestRefresh(activityId); }
+            @Override
+            public void afterCommit() {
+                activityCacheService.requestRefresh(activityId);
+            }
         });
     }
-    private int distance(BigDecimal lat1,BigDecimal lon1,BigDecimal lat2,BigDecimal lon2){ if(lat1==null||lon1==null)return Integer.MAX_VALUE; double r=6371000, p=Math.PI/180, dLat=lat2.subtract(lat1).doubleValue()*p,dLon=lon2.subtract(lon1).doubleValue()*p; double x=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(lat1.doubleValue()*p)*Math.cos(lat2.doubleValue()*p)*Math.sin(dLon/2)*Math.sin(dLon/2); return (int)Math.round(2*r*Math.asin(Math.sqrt(x))); }
+
+    private int distance(BigDecimal lat1, BigDecimal lon1, BigDecimal lat2, BigDecimal lon2) {
+        if (lat1 == null || lon1 == null) {
+            return Integer.MAX_VALUE;
+        }
+        double r = 6371000;
+        double p = Math.PI / 180;
+        double dLat = lat2.subtract(lat1).doubleValue() * p;
+        double dLon = lon2.subtract(lon1).doubleValue() * p;
+        double x = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+                + Math.cos(lat1.doubleValue() * p) * Math.cos(lat2.doubleValue() * p) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        return (int) Math.round(2 * r * Math.asin(Math.sqrt(x)));
+    }
     private <T> T withLock(String key, java.util.function.Supplier<T> action) {
         RLock lock = redissonClient.getLock(key);
         boolean acquired;
