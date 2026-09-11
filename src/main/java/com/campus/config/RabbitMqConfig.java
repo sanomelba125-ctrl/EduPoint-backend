@@ -24,7 +24,7 @@ public class RabbitMqConfig {
     public static final String ACTIVITY_CACHE_REFRESH_QUEUE = "campus.activity.cache.refresh.queue";
     public static final String ACTIVITY_CACHE_REFRESH_ROUTING_KEY = "activity.cache.refresh";
 
-    // ================== 2. 礼品兑换 7 天延时超时关单队列（DLX 架构） ==================
+    // ================== 2. 礼品兑换 10 分钟延时超时关单队列（DLX 架构） ==================
     public static final String GIFT_ORDER_EXCHANGE = "campus.gift.order.exchange";
     public static final String GIFT_ORDER_DELAY_QUEUE = "campus.gift.order.delay.queue";
     public static final String GIFT_ORDER_DELAY_ROUTING_KEY = "gift.order.delay";

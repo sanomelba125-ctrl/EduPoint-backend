@@ -68,6 +68,7 @@ public class CampusMessageConsumer {
                 studentGiftService.expireOrder(orderId);
             } catch (Exception e) {
                 log.error("[MQ 延时关单] 自动关单执行失败: orderId={}", orderId, e);
+                throw new RuntimeException("礼品订单自动关单失败: orderId=" + orderId, e);
             }
         }
     }
