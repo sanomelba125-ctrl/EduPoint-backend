@@ -1,6 +1,7 @@
 package com.campus.modules.admin.controller;
 
 import cn.dev33.satoken.annotation.SaCheckLogin;
+import com.campus.common.auth.AuthUtil;
 import com.campus.common.result.Result;
 import com.campus.modules.admin.dto.DashboardOverviewVO;
 import com.campus.modules.admin.dto.DashboardTopStudentsVO;
@@ -29,6 +30,7 @@ public class DashboardController {
     @SaCheckLogin
     @GetMapping("/overview")
     public Result<DashboardOverviewVO> getOverview() {
+        AuthUtil.requireAdminId();
         return Result.success(dashboardService.getOverview());
     }
 
@@ -38,6 +40,7 @@ public class DashboardController {
     @SaCheckLogin
     @GetMapping("/top-students")
     public Result<DashboardTopStudentsVO> getTopStudents() {
+        AuthUtil.requireAdminId();
         return Result.success(dashboardService.getTopStudentsAndRecentCheckins());
     }
 }

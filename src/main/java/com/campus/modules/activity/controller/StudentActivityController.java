@@ -16,19 +16,32 @@ import org.springframework.web.bind.annotation.*;
 public class StudentActivityController {
     private final StudentActivityService service;
 
-    @SaCheckLogin @PostMapping("/signup")
-    public Result<ActivitySignupVO> signup(@Valid @RequestBody ActivitySignupDTO dto) { return Result.success("报名成功", service.signup(dto)); }
-
-    @SaCheckLogin @PostMapping("/cancel-signup")
-    public Result<String> cancel(@Valid @RequestBody ActivitySignupDTO dto) {
-        String message = service.cancelSignup(dto.getActivityId());
-        return Result.success(message, message);
+    @SaCheckLogin
+    @PostMapping("/signup")
+    public Result<ActivitySignupVO> signup(@Valid @RequestBody ActivitySignupDTO dto) {
+        return Result.success("报名成功", service.signup(dto));
     }
 
-    @SaCheckLogin @PostMapping("/checkin")
-    public Result<ActivityCheckinVO> checkin(@Valid @RequestBody ActivityCheckinDTO dto) { return Result.success("打卡签到成功", service.checkin(dto)); }
+    @SaCheckLogin
+    @PostMapping("/cancel-signup")
+    public Result<Void> cancel(@Valid @RequestBody ActivitySignupDTO dto) {
+        String message = service.cancelSignup(dto.getActivityId());
+        return Result.success(message, null);
+    }
 
-    @SaCheckLogin @GetMapping("/my-list")
-    public Result<IPage<MyActivityVO>> myList(@RequestParam(defaultValue="1") Integer page, @RequestParam(defaultValue="10") Integer size, @RequestParam(required=false) Integer status) { return Result.success(service.myList(page,size,status)); }
+    @SaCheckLogin
+    @PostMapping("/checkin")
+    public Result<ActivityCheckinVO> checkin(@Valid @RequestBody ActivityCheckinDTO dto) {
+        return Result.success("打卡签到成功", service.checkin(dto));
+    }
+
+    @SaCheckLogin
+    @GetMapping("/my-list")
+    public Result<IPage<MyActivityVO>> myList(
+            @RequestParam(defaultValue = "1") Integer page,
+            @RequestParam(defaultValue = "10") Integer size,
+            @RequestParam(required = false) Integer status) {
+        return Result.success(service.myList(page, size, status));
+    }
 
 }

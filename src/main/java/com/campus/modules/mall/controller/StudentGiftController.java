@@ -1,6 +1,6 @@
 package com.campus.modules.mall.controller;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.campus.common.auth.AuthUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.common.exception.BusinessException;
 import com.campus.common.result.Result;
@@ -64,11 +64,11 @@ public class StudentGiftController {
     }
 
     /**
-     * 学生或通用取消订单接口（兼容 POST /gift/cancel 传参 { orderId: 123 }）
-     * 对应 API.md 5.6 POST /gift/cancel
+     * 取消礼品兑换订单并返还积分（兼容移动端自主取消与管理端取消调用）
+     * 对应 POST /gift/cancel
      */
-    @PostMapping("/gift/cancel")
-    public Result<Void> cancelGiftOrder(@RequestBody Map<String, Object> params) {
+    @PostMapping({"/gift/cancel", "/student/gift/cancel"})
+    public Result<Void> cancelOrder(@RequestBody Map<String, Object> params) {
         Object orderIdObj = params.get("orderId");
         if (orderIdObj == null) {
             orderIdObj = params.get("id");
@@ -79,14 +79,12 @@ public class StudentGiftController {
         Long orderId = Long.valueOf(orderIdObj.toString());
 
         // 判断当前是学生还是管理员操作
-        StpUtil.checkLogin();
-        String loginId = StpUtil.getLoginIdAsString();
-        if (loginId.startsWith("student:")) {
-            Long studentId = Long.parseLong(loginId.substring("student:".length()));
+        if (AuthUtil.isStudent()) {
+            Long studentId = AuthUtil.requireStudentId();
             studentGiftService.studentCancelOrder(orderId, studentId);
             return Result.success("订单已取消，积分已原路退回", null);
-        } else if (loginId.startsWith("admin:")) {
-            Long adminId = Long.parseLong(loginId.substring("admin:".length()));
+        } else if (AuthUtil.isAdmin()) {
+            Long adminId = AuthUtil.requireAdminId();
             OrderCancelDTO cancelDTO = new OrderCancelDTO();
             cancelDTO.setOrderId(orderId);
             cancelDTO.setCancelReason(params.get("reason") != null ? params.get("reason").toString() : "管理端取消");
@@ -140,20 +138,10 @@ public class StudentGiftController {
     // ==========================================
 
     private Long getStudentId() {
-        StpUtil.checkLogin();
-        String loginId = StpUtil.getLoginIdAsString();
-        if (!loginId.startsWith("student:")) {
-            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "仅限移动端学生账号访问");
-        }
-        return Long.parseLong(loginId.substring("student:".length()));
+        return AuthUtil.requireStudentId();
     }
 
     private Long getAdminId() {
-        StpUtil.checkLogin();
-        String loginId = StpUtil.getLoginIdAsString();
-        if (!loginId.startsWith("admin:")) {
-            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "无权访问管理端接口");
-        }
-        return Long.parseLong(loginId.substring("admin:".length()));
+        return AuthUtil.requireAdminId();
     }
 }

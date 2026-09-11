@@ -8,7 +8,9 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 电子荣誉证书及真伪验证实�? * 对应需�? 3.16 电子证书与验�?/ 4. 数据需�? */
+ * 电子荣誉证书及真伪验证实体
+ * 对应需求: 3.16 电子证书与验真 / 4. 数据需求
+ */
 @Data
 @TableName("certificate")
 public class Certificate {
@@ -16,7 +18,7 @@ public class Certificate {
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    /** 全局唯一证书编号(不可预测防伪�? */
+    /** 全局唯一证书编号(不可预测防伪码) */
     private String certificateNo;
 
     /** 获奖学生ID */
@@ -34,10 +36,10 @@ public class Certificate {
     /** 证书签发时间 */
     private LocalDateTime issueTime;
 
-    /** 证书渲染生成的图�?PDF文件地址 */
+    /** 证书渲染生成的图片或PDF文件地址 */
     private String fileUrl;
 
-    /** 证书状�? 1-有效 2-已撤销 3-已过�?*/
+    /** 证书状态: 1-有效 2-已撤销 3-已过期 */
     private Integer status;
 
     /** 撤销原因说明 */
@@ -49,7 +51,7 @@ public class Certificate {
     /** 撤销时间 */
     private LocalDateTime revokedTime;
 
-    /** 被扫码验真核验次�?*/
+    /** 被扫码验真核验次数 */
     private Integer verifyCount;
 
     /** 生成时间 */

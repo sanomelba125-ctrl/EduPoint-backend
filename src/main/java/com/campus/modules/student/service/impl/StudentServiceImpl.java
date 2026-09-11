@@ -1,7 +1,11 @@
 package com.campus.modules.student.service.impl;
 
 import cn.dev33.satoken.stp.StpUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.campus.common.auth.AuthUtil;
 import com.campus.common.exception.BusinessException;
 import com.campus.common.result.ResultCode;
 import com.campus.common.util.PasswordUtil;
@@ -12,6 +16,10 @@ import com.campus.modules.student.service.StudentService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+
+import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * 学生服务实现类
@@ -21,7 +29,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
 
     private static final Logger log = LoggerFactory.getLogger(StudentServiceImpl.class);
 
-    private static final String STUDENT_LOGIN_PREFIX = "student:";
+    private static final String STUDENT_LOGIN_PREFIX = AuthUtil.STUDENT_PREFIX;
 
     @Override
     public StudentLoginVO login(StudentLoginDTO loginDTO) {
@@ -84,15 +92,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
 
     @Override
     public StudentVO getCurrentStudentInfo() {
-        StpUtil.checkLogin();
-        String loginId = StpUtil.getLoginIdAsString();
-
-        // 严格校验用户类型，防止管理员 Token 越权访问学生接口
-        if (!loginId.startsWith(STUDENT_LOGIN_PREFIX)) {
-            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "无权访问学生端接口");
-        }
-
-        long studentId = Long.parseLong(loginId.substring(STUDENT_LOGIN_PREFIX.length()));
+        Long studentId = AuthUtil.requireStudentId();
         Student student = getById(studentId);
         if (student == null || (student.getStatus() != null && student.getStatus() == 0)) {
             throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "学生账号不存在或已被禁用");
@@ -103,14 +103,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
 
     @Override
     public StudentVO updateProfile(StudentUpdateProfileDTO updateDTO) {
-        StpUtil.checkLogin();
-        String loginId = StpUtil.getLoginIdAsString();
-
-        if (!loginId.startsWith(STUDENT_LOGIN_PREFIX)) {
-            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "无权访问学生端接口");
-        }
-
-        long studentId = Long.parseLong(loginId.substring(STUDENT_LOGIN_PREFIX.length()));
+        Long studentId = AuthUtil.requireStudentId();
         Student student = getById(studentId);
         if (student == null || (student.getStatus() != null && student.getStatus() == 0)) {
             throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "学生账号不存在或已被禁用");
@@ -143,30 +136,28 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
     }
 
     @Override
-    public com.baomidou.mybatisplus.core.metadata.IPage<StudentVO> getStudentPage(StudentQueryDTO queryDTO) {
-        com.baomidou.mybatisplus.extension.plugins.pagination.Page<Student> page =
-                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(
-                        queryDTO.getPage() != null ? queryDTO.getPage() : 1,
-                        queryDTO.getSize() != null ? queryDTO.getSize() : 10
-                );
+    public IPage<StudentVO> getStudentPage(StudentQueryDTO queryDTO) {
+        Page<Student> page = new Page<>(
+                queryDTO.getPage() != null ? queryDTO.getPage() : 1,
+                queryDTO.getSize() != null ? queryDTO.getSize() : 10
+        );
 
-        com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Student> wrapper =
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<>();
+        LambdaQueryWrapper<Student> wrapper = new LambdaQueryWrapper<>();
 
         // 综合模糊匹配：学号或姓名
-        if (org.springframework.util.StringUtils.hasText(queryDTO.getKeyword())) {
+        if (StringUtils.hasText(queryDTO.getKeyword())) {
             String kw = queryDTO.getKeyword().trim();
             wrapper.and(w -> w.like(Student::getStudentNo, kw).or().like(Student::getName, kw));
         }
 
         // 精确/模糊条件过滤
-        if (org.springframework.util.StringUtils.hasText(queryDTO.getClassName())) {
+        if (StringUtils.hasText(queryDTO.getClassName())) {
             wrapper.eq(Student::getClassName, queryDTO.getClassName().trim());
         }
-        if (org.springframework.util.StringUtils.hasText(queryDTO.getCollege())) {
+        if (StringUtils.hasText(queryDTO.getCollege())) {
             wrapper.like(Student::getCollege, queryDTO.getCollege().trim());
         }
-        if (org.springframework.util.StringUtils.hasText(queryDTO.getMajor())) {
+        if (StringUtils.hasText(queryDTO.getMajor())) {
             wrapper.like(Student::getMajor, queryDTO.getMajor().trim());
         }
         if (queryDTO.getStatus() != null) {
@@ -175,7 +166,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
 
         wrapper.orderByDesc(Student::getCreateTime);
 
-        com.baomidou.mybatisplus.extension.plugins.pagination.Page<Student> studentPage = page(page, wrapper);
+        Page<Student> studentPage = page(page, wrapper);
         return studentPage.convert(this::convertToVO);
     }
 
@@ -190,7 +181,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
         }
 
         // 2. 初始密码处理（默认 123456，BCrypt 密文哈希）
-        String rawPassword = org.springframework.util.StringUtils.hasText(createDTO.getPassword())
+        String rawPassword = StringUtils.hasText(createDTO.getPassword())
                 ? createDTO.getPassword().trim()
                 : "123456";
         String encodedPassword = PasswordUtil.encode(rawPassword);
@@ -202,10 +193,10 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
         student.setPassword(encodedPassword);
         student.setGender(createDTO.getGender() != null ? createDTO.getGender() : 1);
         student.setClassName(createDTO.getClassName().trim());
-        student.setCollege(org.springframework.util.StringUtils.hasText(createDTO.getCollege()) ? createDTO.getCollege().trim() : null);
-        student.setMajor(org.springframework.util.StringUtils.hasText(createDTO.getMajor()) ? createDTO.getMajor().trim() : null);
-        student.setPhone(org.springframework.util.StringUtils.hasText(createDTO.getPhone()) ? createDTO.getPhone().trim() : null);
-        student.setAvatar(org.springframework.util.StringUtils.hasText(createDTO.getAvatar()) ? createDTO.getAvatar().trim() : null);
+        student.setCollege(StringUtils.hasText(createDTO.getCollege()) ? createDTO.getCollege().trim() : null);
+        student.setMajor(StringUtils.hasText(createDTO.getMajor()) ? createDTO.getMajor().trim() : null);
+        student.setPhone(StringUtils.hasText(createDTO.getPhone()) ? createDTO.getPhone().trim() : null);
+        student.setAvatar(StringUtils.hasText(createDTO.getAvatar()) ? createDTO.getAvatar().trim() : null);
         student.setTotalPoints(0);
         student.setCurrentPoints(0);
         student.setStatus(1); // 默认正常启用
@@ -224,26 +215,26 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
             throw new BusinessException(ResultCode.USER_NOT_EXIST.getCode(), "目标学生档案不存在");
         }
 
-        if (org.springframework.util.StringUtils.hasText(updateDTO.getName())) {
+        if (StringUtils.hasText(updateDTO.getName())) {
             student.setName(updateDTO.getName().trim());
         }
         if (updateDTO.getGender() != null) {
             student.setGender(updateDTO.getGender());
         }
-        if (org.springframework.util.StringUtils.hasText(updateDTO.getClassName())) {
+        if (StringUtils.hasText(updateDTO.getClassName())) {
             student.setClassName(updateDTO.getClassName().trim());
         }
         if (updateDTO.getCollege() != null) {
-            student.setCollege(org.springframework.util.StringUtils.hasText(updateDTO.getCollege()) ? updateDTO.getCollege().trim() : null);
+            student.setCollege(StringUtils.hasText(updateDTO.getCollege()) ? updateDTO.getCollege().trim() : null);
         }
         if (updateDTO.getMajor() != null) {
-            student.setMajor(org.springframework.util.StringUtils.hasText(updateDTO.getMajor()) ? updateDTO.getMajor().trim() : null);
+            student.setMajor(StringUtils.hasText(updateDTO.getMajor()) ? updateDTO.getMajor().trim() : null);
         }
         if (updateDTO.getPhone() != null) {
-            student.setPhone(org.springframework.util.StringUtils.hasText(updateDTO.getPhone()) ? updateDTO.getPhone().trim() : null);
+            student.setPhone(StringUtils.hasText(updateDTO.getPhone()) ? updateDTO.getPhone().trim() : null);
         }
         if (updateDTO.getAvatar() != null) {
-            student.setAvatar(org.springframework.util.StringUtils.hasText(updateDTO.getAvatar()) ? updateDTO.getAvatar().trim() : null);
+            student.setAvatar(StringUtils.hasText(updateDTO.getAvatar()) ? updateDTO.getAvatar().trim() : null);
         }
 
         if (updateDTO.getStatus() != null) {
@@ -255,7 +246,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
         }
 
         // 若传入新密码，则加密并更新，同时下线旧会话
-        if (org.springframework.util.StringUtils.hasText(updateDTO.getPassword())) {
+        if (StringUtils.hasText(updateDTO.getPassword())) {
             student.setPassword(PasswordUtil.encode(updateDTO.getPassword().trim()));
             StpUtil.kickout(STUDENT_LOGIN_PREFIX + student.getId());
         }
@@ -292,7 +283,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
             throw new BusinessException(ResultCode.USER_NOT_EXIST.getCode(), "目标学生档案不存在");
         }
 
-        String rawPassword = org.springframework.util.StringUtils.hasText(newPassword) ? newPassword.trim() : "123456";
+        String rawPassword = StringUtils.hasText(newPassword) ? newPassword.trim() : "123456";
         String encodedPassword = PasswordUtil.encode(rawPassword);
 
         lambdaUpdate()
@@ -318,7 +309,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
     }
 
     @Override
-    public java.util.List<String> getDistinctClasses() {
+    public List<String> getDistinctClasses() {
         return lambdaQuery()
                 .select(Student::getClassName)
                 .isNotNull(Student::getClassName)
@@ -326,10 +317,10 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
                 .list()
                 .stream()
                 .map(Student::getClassName)
-                .filter(org.springframework.util.StringUtils::hasText)
+                .filter(StringUtils::hasText)
                 .distinct()
                 .sorted()
-                .collect(java.util.stream.Collectors.toList());
+                .collect(Collectors.toList());
     }
 
     /**

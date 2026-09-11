@@ -1,23 +1,21 @@
-package com.campus.modules.mall.service.impl;
-
-import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.campus.common.exception.BusinessException;
-import com.campus.common.websocket.WebSocketServer;
+import com.campus.config.RabbitMqConfig;
 import com.campus.modules.mall.dto.*;
 import com.campus.modules.mall.entity.Gift;
 import com.campus.modules.mall.entity.StudentGift;
-import com.campus.modules.mall.entity.StudentPointRecord;
 import com.campus.modules.mall.mapper.GiftMapper;
 import com.campus.modules.mall.mapper.StudentGiftMapper;
-import com.campus.modules.mall.mapper.StudentPointRecordMapper;
+import com.campus.modules.mall.service.PointLedger;
 import com.campus.modules.mall.service.StudentGiftService;
 import com.campus.modules.student.entity.Student;
 import com.campus.modules.student.mapper.StudentMapper;
+import com.campus.modules.system.service.SysNoticeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +23,7 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -40,7 +39,9 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
 
     private final GiftMapper giftMapper;
     private final StudentMapper studentMapper;
-    private final StudentPointRecordMapper pointRecordMapper;
+    private final PointLedger pointLedger;
+    private final SysNoticeService sysNoticeService;
+    private final RabbitTemplate rabbitTemplate;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -88,6 +89,7 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         if (updatedPoints == 0) {
             throw new BusinessException("可用积分扣减失败，余额不足！");
         }
+        int afterPoints = studentMapper.selectCurrentPoints(student.getId());
 
         // 6. 生成全局唯一订单号与提货码
         String orderNo = "ORD" + DateTimeFormatter.ofPattern("yyyyMMddHHmmss").format(LocalDateTime.now())
@@ -96,12 +98,12 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
                 + String.format("%02d", (int) (Math.random() * 100));
 
         // 7. 保存兑换订单
-        String rName = org.springframework.util.StringUtils.hasText(dto.getReceiverName())
+        String rName = StringUtils.hasText(dto.getReceiverName())
                 ? dto.getReceiverName().trim() : student.getName();
-        String rPhone = org.springframework.util.StringUtils.hasText(dto.getReceiverPhone())
+        String rPhone = StringUtils.hasText(dto.getReceiverPhone())
                 ? dto.getReceiverPhone().trim()
-                : (org.springframework.util.StringUtils.hasText(student.getPhone()) ? student.getPhone() : "13911110006");
-        String rAddress = org.springframework.util.StringUtils.hasText(dto.getReceiverAddress())
+                : (StringUtils.hasText(student.getPhone()) ? student.getPhone() : "13911110006");
+        String rAddress = StringUtils.hasText(dto.getReceiverAddress())
                 ? dto.getReceiverAddress().trim() : "大学生活动中心一楼 102 创客服务台";
 
         StudentGift order = new StudentGift();
@@ -118,36 +120,45 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         order.setRefundPointsStatus(0);
         this.save(order);
 
-        // 8. 记录财务级积分对账台账
-        StudentPointRecord record = new StudentPointRecord();
-        record.setStudentId(studentId);
-        record.setType(2); // 2-商城兑换消耗(-)
-        record.setChangePoints(-totalPointsCost);
-        record.setBeforePoints(currentBalance);
-        record.setAfterPoints(currentBalance - totalPointsCost);
-        record.setDescription(String.format("商城兑换礼品【%s】x %d 件 (提货码: %s)", gift.getName(), quantity, pickupCode));
-        record.setRefId(order.getId());
-        pointRecordMapper.insert(record);
+        // 8. 记录财务级积分对账台账 (由 PointLedger 统一推导 before/after 并落账)
+        pointLedger.record(studentId, 2, -totalPointsCost, afterPoints,
+                String.format("商城兑换礼品【%s】x %d 件 (提货码: %s)", gift.getName(), quantity, pickupCode),
+                order.getId(), null);
 
-        // 9. 触发 WebSocket 通知推送给在线管理端
+        // 投递延时死信关单消息 (超时未提货由死信队列自动关单并原路返还积分与库存)
         try {
-            JSONObject msg = new JSONObject();
-            msg.put("type", "gift_exchange");
-            msg.put("title", "新礼品兑换订单");
-            msg.put("content", String.format("学生 %s 兑换了【%s】x %d 件", student.getName(), gift.getName(), quantity));
-            msg.put("orderNo", orderNo);
-            msg.put("pickupCode", pickupCode);
-            msg.put("time", LocalDateTime.now().toString());
-            WebSocketServer.broadcastToUserType("admin", msg.toJSONString());
+            rabbitTemplate.convertAndSend(RabbitMqConfig.GIFT_ORDER_EXCHANGE,
+                    RabbitMqConfig.GIFT_ORDER_DELAY_ROUTING_KEY,
+                    Map.of("orderId", order.getId(), "pickupCode", pickupCode, "studentId", studentId));
+            log.info("礼品订单延时关单消息投递成功: orderId={}, orderNo={}", order.getId(), orderNo);
         } catch (Exception e) {
-            log.warn("发送管理员实时兑换通知失败: {}", e.getMessage());
+            log.warn("礼品订单延时关单消息投递失败: orderId={}, error={}", order.getId(), e.getMessage());
+        }
+
+        // 9. 保存系统通知并触发 WebSocket 通知推送给在线管理端与学生端
+        try {
+            Map<String, Object> adminPayload = new HashMap<>();
+            adminPayload.put("orderNo", orderNo);
+            adminPayload.put("pickupCode", pickupCode);
+            adminPayload.put("time", LocalDateTime.now().toString());
+
+            String adminTitle = "新礼品兑换订单";
+            String adminContent = String.format("学生 %s 兑换了【%s】x %d 件，订单号: %s", student.getName(), gift.getName(), quantity, orderNo);
+            sysNoticeService.createAndSendNotice(1, 0L, "gift_exchange", adminTitle, adminContent, order.getId(), adminPayload);
+
+            // 同时记录学生端通知
+            String stuTitle = "🎁 礼品兑换成功";
+            String stuContent = String.format("您已成功兑换【%s】x %d 件，消耗 %d 积分，提货码：%s", gift.getName(), quantity, totalPointsCost, pickupCode);
+            sysNoticeService.createAndSendNotice(2, studentId, "gift_exchange", stuTitle, stuContent, order.getId());
+        } catch (Exception e) {
+            log.warn("发送与记录礼品兑换通知失败: {}", e.getMessage());
         }
 
         return GiftExchangeVO.builder()
                 .orderNo(orderNo)
                 .pickupCode(pickupCode)
                 .pointsCost(totalPointsCost)
-                .remainPoints(currentBalance - totalPointsCost)
+                .remainPoints(afterPoints)
                 .giftName(gift.getName())
                 .quantity(quantity)
                 .build();
@@ -188,21 +199,14 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         // 2. 原路恢复礼品可用库存
         giftMapper.increaseStock(order.getGiftId(), order.getQuantity());
 
-        // 3. 查验学生当前余额并返还积分
-        Student student = studentMapper.selectById(studentId);
-        int beforePoints = student != null && student.getCurrentPoints() != null ? student.getCurrentPoints() : 0;
+        // 3. 返还积分并读回真实余额
         studentMapper.addCurrentPoints(studentId, order.getPointsCost());
+        int afterPoints = studentMapper.selectCurrentPoints(studentId);
 
-        // 4. 记入积分流水台账
-        StudentPointRecord record = new StudentPointRecord();
-        record.setStudentId(studentId);
-        record.setType(4); // 4-订单取消返还(+)
-        record.setChangePoints(order.getPointsCost());
-        record.setBeforePoints(beforePoints);
-        record.setAfterPoints(beforePoints + order.getPointsCost());
-        record.setDescription(String.format("兑换订单【%s】取消，原路返还积分", order.getOrderNo()));
-        record.setRefId(order.getId());
-        pointRecordMapper.insert(record);
+        // 4. 记入积分流水台账 (由 PointLedger 统一推导 before/after 并落账)
+        pointLedger.record(studentId, 4, order.getPointsCost(), afterPoints,
+                String.format("兑换订单【%s】取消，原路返还积分", order.getOrderNo()),
+                order.getId(), null);
     }
 
     @Override
@@ -247,13 +251,11 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         }
         this.updateById(order);
 
-        // 推送给学生端
+        // 保存系统通知并推送给学生端
         try {
-            JSONObject msg = new JSONObject();
-            msg.put("type", "gift_send");
-            msg.put("title", "礼品已成功核销领取");
-            msg.put("content", String.format("您的礼品订单【%s】已完成核销领奖！", order.getOrderNo()));
-            WebSocketServer.sendInfo("student", order.getStudentId().toString(), msg.toJSONString());
+            String title = "🎁 礼品已成功核销领取";
+            String content = String.format("您的礼品订单【%s】已完成核销领奖！", order.getOrderNo());
+            sysNoticeService.createAndSendNotice(2, order.getStudentId(), "gift_send", title, content, order.getId());
         } catch (Exception e) {
             log.warn("向学生发送核销通知异常: {}", e.getMessage());
         }
@@ -284,21 +286,35 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
 
         // 原路退还积分
         if (refund) {
-            Student student = studentMapper.selectById(order.getStudentId());
-            int beforePoints = student != null && student.getCurrentPoints() != null ? student.getCurrentPoints() : 0;
             studentMapper.addCurrentPoints(order.getStudentId(), order.getPointsCost());
+            int afterPoints = studentMapper.selectCurrentPoints(order.getStudentId());
 
-            StudentPointRecord record = new StudentPointRecord();
-            record.setStudentId(order.getStudentId());
-            record.setType(4); // 4-订单取消返还(+)
-            record.setChangePoints(order.getPointsCost());
-            record.setBeforePoints(beforePoints);
-            record.setAfterPoints(beforePoints + order.getPointsCost());
-            record.setDescription(String.format("管理员取消订单【%s】，全额退还积分", order.getOrderNo()));
-            record.setRefId(order.getId());
-            record.setOperatorId(adminId);
-            pointRecordMapper.insert(record);
+            pointLedger.record(order.getStudentId(), 4, order.getPointsCost(), afterPoints,
+                    String.format("管理员取消订单【%s】，全额退还积分", order.getOrderNo()),
+                    order.getId(), adminId);
         }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void expireOrder(Long orderId) {
+        StudentGift order = this.getById(orderId);
+        if (order == null || (order.getDeleted() != null && order.getDeleted() == 1)) {
+            log.info("[延时关单] 订单不存在或已删除，跳过: orderId={}", orderId);
+            return;
+        }
+        // 严格幂等防线：只有待提货状态(status == 1)才执行超时自动关单
+        if (order.getStatus() == null || order.getStatus() != 1) {
+            log.info("[延时关单] 订单已非待提货状态(status={})，幂等退出: orderId={}", order.getStatus(), orderId);
+            return;
+        }
+
+        OrderCancelDTO cancelDTO = new OrderCancelDTO();
+        cancelDTO.setOrderId(orderId);
+        cancelDTO.setCancelReason("超时未提货，系统自动关单");
+        cancelDTO.setRefundPoints(true);
+        this.adminCancelOrder(cancelDTO, 0L);
+        log.info("[延时关单] 订单超时自动关单并退还积分成功: orderId={}, orderNo={}", orderId, order.getOrderNo());
     }
 
     private Page<StudentGiftVO> populateOrderVOs(Page<StudentGift> orderPage) {

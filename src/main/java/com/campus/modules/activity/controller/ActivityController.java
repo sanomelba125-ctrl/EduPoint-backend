@@ -1,5 +1,6 @@
 package com.campus.modules.activity.controller;
 
+import cn.dev33.satoken.annotation.SaCheckLogin;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.campus.common.result.Result;
 import com.campus.modules.activity.dto.ActivityPageQuery;
@@ -29,16 +30,19 @@ public class ActivityController {
     @Resource
     private ActivityService activityService;
 
+    @SaCheckLogin
     @PostMapping("/create")
     public Result<Activity> create(@Valid @RequestBody ActivitySaveDTO dto) {
         return Result.success("活动创建成功", activityService.create(dto));
     }
 
+    @SaCheckLogin
     @PutMapping("/update")
     public Result<Activity> update(@Valid @RequestBody ActivitySaveDTO dto) {
         return Result.success("活动修改成功", activityService.update(dto));
     }
 
+    @SaCheckLogin
     @DeleteMapping("/{id}")
     public Result<Void> archive(@PathVariable Long id) {
         activityService.archive(id);
@@ -60,6 +64,7 @@ public class ActivityController {
      * GET /activity/{id}/qrcode
      * 权限：管理员登录
      */
+    @SaCheckLogin
     @GetMapping("/{id}/qrcode")
     public Result<QrCodeVO> getQrCode(@PathVariable Long id) {
         return Result.success("二维码生成成功", activityService.generateQrCode(id));

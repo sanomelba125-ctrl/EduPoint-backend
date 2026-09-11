@@ -1,16 +1,18 @@
 package com.campus.modules.student.service.impl;
 
-import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.common.exception.BusinessException;
-import com.campus.common.websocket.WebSocketServer;
+import com.campus.modules.mall.dto.LedgerMetricsRow;
+import com.campus.modules.mall.entity.PointRecordType;
 import com.campus.modules.mall.entity.StudentPointRecord;
 import com.campus.modules.mall.mapper.StudentPointRecordMapper;
+import com.campus.modules.mall.service.PointLedger;
 import com.campus.modules.student.dto.*;
 import com.campus.modules.student.entity.Student;
 import com.campus.modules.student.mapper.StudentMapper;
 import com.campus.modules.student.service.StudentScoreService;
+import com.campus.modules.system.service.SysNoticeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -31,6 +33,8 @@ public class StudentScoreServiceImpl implements StudentScoreService {
 
     private final StudentMapper studentMapper;
     private final StudentPointRecordMapper pointRecordMapper;
+    private final PointLedger pointLedger;
+    private final SysNoticeService sysNoticeService;
 
     @Override
     public StudentScoreBalanceVO getBalance(Long studentId) {
@@ -202,33 +206,25 @@ public class StudentScoreServiceImpl implements StudentScoreService {
 
         int afterCurrent = beforeCurrent + change;
 
-        // 写入财务级对账流水
-        StudentPointRecord record = new StudentPointRecord();
-        record.setStudentId(student.getId());
-        record.setType(3); // 3-管理员手动调整
-        record.setChangePoints(change);
-        record.setBeforePoints(beforeCurrent);
-        record.setAfterPoints(afterCurrent);
-
+        // 写入财务级对账流水 (通过 PointLedger 统一落账)
         String remark = dto.getReason();
         if (StringUtils.hasText(dto.getApprovalNo())) {
             remark = String.format("调账审批单【%s】: %s", dto.getApprovalNo(), remark);
         }
-        record.setDescription(remark);
-        record.setOperatorId(adminId);
-        pointRecordMapper.insert(record);
+        pointLedger.record(student.getId(), 3, change, afterCurrent, remark, null, adminId);
 
-        // WebSocket 实时推送给对应学生
+        // 保存系统通知并触发 WebSocket 实时推送
         try {
-            JSONObject msg = new JSONObject();
-            msg.put("type", "points_adjusted");
-            msg.put("title", "系统积分调账通知");
-            msg.put("change", change);
-            msg.put("currentPoints", afterCurrent);
-            msg.put("reason", dto.getReason());
-            WebSocketServer.sendInfo("student", student.getId().toString(), msg.toJSONString());
+            Map<String, Object> extraPayload = new HashMap<>();
+            extraPayload.put("change", change);
+            extraPayload.put("currentPoints", afterCurrent);
+            extraPayload.put("reason", dto.getReason());
+
+            String title = "系统积分调账通知";
+            String content = String.format("您的账户积分变动 %+d，当前可用余额 %d 分。调账原因：%s", change, afterCurrent, dto.getReason());
+            sysNoticeService.createAndSendNotice(2, student.getId(), "points_adjusted", title, content, null, extraPayload);
         } catch (Exception e) {
-            log.warn("向学生推送调账通知失败: {}", e.getMessage());
+            log.warn("保存与推送调账通知失败: {}", e.getMessage());
         }
     }
 
@@ -277,94 +273,67 @@ public class StudentScoreServiceImpl implements StudentScoreService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void rewardActivityCheckin(Long studentId, Long studentActivityId, String activityTitle, Integer pointsAwarded) {
+    public int rewardActivityCheckin(Long studentId, Long studentActivityId, String activityTitle, Integer pointsAwarded) {
         if (studentId == null) {
             throw new BusinessException("打卡学生 ID 不能为空");
         }
-        if (pointsAwarded == null || pointsAwarded <= 0) {
-            log.warn("活动打卡积分奖励小于等于 0，跳过入账: studentId={}, points={}", studentId, pointsAwarded);
-            return;
-        }
-
         Student student = studentMapper.selectById(studentId);
         if (student == null || (student.getDeleted() != null && student.getDeleted() == 1)) {
             throw new BusinessException("目标学生学籍档案不存在或已注销");
         }
 
         int beforeCurrent = student.getCurrentPoints() != null ? student.getCurrentPoints() : 0;
+        if (pointsAwarded == null || pointsAwarded <= 0) {
+            log.warn("活动打卡积分奖励小于等于 0，跳过入账: studentId={}, points={}", studentId, pointsAwarded);
+            return beforeCurrent;
+        }
 
         // 1. 原子增加可用积分与历史累计积分
         studentMapper.addCurrentPoints(studentId, pointsAwarded);
         studentMapper.addTotalPoints(studentId, pointsAwarded);
 
-        int afterCurrent = beforeCurrent + pointsAwarded;
+        Integer currentDb = studentMapper.selectCurrentPoints(studentId);
+        int afterCurrent = currentDb != null ? currentDb : (beforeCurrent + pointsAwarded);
 
-        // 2. 写入财务级对账流水
-        StudentPointRecord record = new StudentPointRecord();
-        record.setStudentId(studentId);
-        record.setType(1); // 1-活动打卡奖励(+)
-        record.setChangePoints(pointsAwarded);
-        record.setBeforePoints(beforeCurrent);
-        record.setAfterPoints(afterCurrent);
+        // 2. 写入财务级对账流水 (通过 PointLedger 统一落账)
         String actTitle = StringUtils.hasText(activityTitle) ? activityTitle.trim() : "校园活动";
-        record.setDescription(String.format("参与活动打卡奖励【%s】", actTitle));
-        record.setRefId(studentActivityId);
-        record.setOperatorId(0L); // 0 为系统打卡自动触发
-        pointRecordMapper.insert(record);
+        pointLedger.record(studentId, 1, pointsAwarded, afterCurrent,
+                String.format("参与活动打卡奖励【%s】", actTitle), studentActivityId, 0L);
 
-        // 3. WebSocket 实时推送打卡入账通知给对应学生
+        // 3. 保存系统通知并触发 WebSocket 实时推送
         try {
-            JSONObject msg = new JSONObject();
-            msg.put("type", "activity_checkin_reward");
-            msg.put("title", "活动打卡奖励到账");
-            msg.put("activityTitle", actTitle);
-            msg.put("pointsAwarded", pointsAwarded);
-            msg.put("currentPoints", afterCurrent);
-            WebSocketServer.sendInfo("student", studentId.toString(), msg.toJSONString());
+            Map<String, Object> extraPayload = new HashMap<>();
+            extraPayload.put("activityTitle", actTitle);
+            extraPayload.put("pointsAwarded", pointsAwarded);
+            extraPayload.put("currentPoints", afterCurrent);
+
+            String title = "🎉 活动打卡奖励到账";
+            String content = String.format("参与活动【%s】打卡成功！奖励到账：+%d 分，当前可用余额：%d 分", actTitle, pointsAwarded, afterCurrent);
+            sysNoticeService.createAndSendNotice(2, studentId, "activity_checkin_reward", title, content, studentActivityId, extraPayload);
         } catch (Exception e) {
-            log.warn("向学生推送打卡奖励通知失败: {}", e.getMessage());
+            log.warn("保存与推送打卡奖励通知失败: {}", e.getMessage());
         }
+
+        return afterCurrent;
     }
 
     @Override
     public LedgerMetricsVO getLedgerMetrics() {
-        // 统计全库流水 (仅拉取必要字段，避免大对象常驻内存)
-        List<StudentPointRecord> all = pointRecordMapper.selectList(
-                new LambdaQueryWrapper<StudentPointRecord>()
-                        .select(StudentPointRecord::getType, StudentPointRecord::getChangePoints)
-                        .eq(StudentPointRecord::getDeleted, 0)
-        );
-
-        int earned = 0;
-        int spent = 0;
-        int refunded = 0;
-        int adjustCount = 0;
-
-        for (StudentPointRecord r : all) {
-            int change = r.getChangePoints() != null ? r.getChangePoints() : 0;
-            int type = r.getType() != null ? r.getType() : 0;
-
-            if (type == 1) { // 活动打卡(+)
-                earned += Math.max(0, change);
-            } else if (type == 2) { // 礼品兑换(-)
-                spent += Math.abs(change);
-            } else if (type == 4) { // 退单返还(+)
-                refunded += Math.max(0, change);
-            } else if (type == 3) { // 人工调账
-                adjustCount++;
-                if (change > 0) {
-                    earned += change;
-                } else {
-                    spent += Math.abs(change);
-                }
-            }
+        // 单条 SQL 数据库聚合统计，消除将全量流水拉入 JVM 的内存与 CPU 瓶颈
+        LedgerMetricsRow row = pointRecordMapper.selectLedgerMetrics();
+        if (row == null) {
+            return LedgerMetricsVO.builder()
+                    .totalEarnedPoints(0)
+                    .totalSpentPoints(0)
+                    .totalRefundedPoints(0)
+                    .adjustCount(0)
+                    .build();
         }
-
         return LedgerMetricsVO.builder()
-                .totalEarnedPoints(earned)
-                .totalSpentPoints(spent)
-                .totalRefundedPoints(refunded)
-                .adjustCount(adjustCount)
+                .totalEarnedPoints(row.getEarned() != null ? row.getEarned().intValue() : 0)
+                .totalSpentPoints(row.getSpent() != null ? row.getSpent().intValue() : 0)
+                .totalRefundedPoints(row.getRefunded() != null ? row.getRefunded().intValue() : 0)
+                .adjustCount(row.getAdjustCount() != null ? row.getAdjustCount().intValue() : 0)
                 .build();
     }
 
@@ -384,13 +353,7 @@ public class StudentScoreServiceImpl implements StudentScoreService {
 
         List<StudentPointRecordVO> voList = records.stream().map(r -> {
             Student s = studentMap.get(r.getStudentId());
-            String typeDesc = switch (r.getType() != null ? r.getType() : 0) {
-                case 1 -> "活动打卡奖励";
-                case 2 -> "商城兑换消费";
-                case 3 -> "系统人工调账";
-                case 4 -> "订单取消返还";
-                default -> "其他流水变动";
-            };
+            String typeDesc = PointRecordType.of(r.getType()).getDescription();
 
             String businessType = switch (r.getType() != null ? r.getType() : 0) {
                 case 1 -> "ACTIVITY";

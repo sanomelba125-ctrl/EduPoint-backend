@@ -1,8 +1,8 @@
 package com.campus.modules.student.controller;
 
 import cn.dev33.satoken.annotation.SaCheckLogin;
-import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.campus.common.auth.AuthUtil;
 import com.campus.common.exception.BusinessException;
 import com.campus.common.result.Result;
 import com.campus.common.result.ResultCode;
@@ -164,10 +164,7 @@ public class StudentController {
      * 校验管理端操作员鉴权前缀，防止学生端 Token 越权
      */
     private void checkAdminPermission() {
-        String loginId = StpUtil.getLoginIdAsString();
-        if (loginId == null || !loginId.startsWith("admin:")) {
-            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "无权访问管理端接口");
-        }
+        AuthUtil.requireAdminId();
     }
 }
 

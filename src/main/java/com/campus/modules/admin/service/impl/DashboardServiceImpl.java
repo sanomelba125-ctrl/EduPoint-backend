@@ -42,16 +42,11 @@ public class DashboardServiceImpl implements DashboardService {
                 new LambdaQueryWrapper<Student>().eq(Student::getDeleted, 0)
         );
 
-        // 2. 积分流通量 (当前可用积分之和) 与 累计总积分之和
-        List<Student> students = studentMapper.selectList(
-                new LambdaQueryWrapper<Student>().eq(Student::getDeleted, 0)
-        );
-        long circulatingPoints = students.stream()
-                .mapToLong(s -> s.getCurrentPoints() == null ? 0 : s.getCurrentPoints())
-                .sum();
-        long totalPoints = students.stream()
-                .mapToLong(s -> s.getTotalPoints() == null ? 0 : s.getTotalPoints())
-                .sum();
+        // 2. 积分流通量 (当前可用积分之和) 与 累计总积分之和 (单条 SQL 聚合求和)
+        Long circulatingPointsSum = studentMapper.sumCurrentPoints();
+        long circulatingPoints = circulatingPointsSum != null ? circulatingPointsSum : 0L;
+        Long totalPointsSum = studentMapper.sumTotalPoints();
+        long totalPoints = totalPointsSum != null ? totalPointsSum : 0L;
 
         // 3. 报名总数与打卡成功总人次
         Long totalSignups = studentActivityMapper.selectCount(
@@ -75,15 +70,16 @@ public class DashboardServiceImpl implements DashboardService {
                 new LambdaQueryWrapper<Activity>().eq(Activity::getDeleted, 0)
         );
 
-        // 5. 活动分类分布统计
-        List<Activity> activities = activityMapper.selectList(
-                new LambdaQueryWrapper<Activity>().eq(Activity::getDeleted, 0)
-        );
-        Map<String, Long> categoryCountMap = activities.stream()
-                .collect(Collectors.groupingBy(
-                        a -> a.getCategory() == null ? "OTHER" : a.getCategory(),
-                        Collectors.counting()
-                ));
+        // 5. 活动分类分布统计 (单条 GROUP BY 聚合查询)
+        List<Map<String, Object>> categoryGroupList = activityMapper.countGroupByCategory();
+        Map<String, Long> categoryCountMap = new HashMap<>();
+        if (categoryGroupList != null) {
+            for (Map<String, Object> map : categoryGroupList) {
+                String cat = map.get("category") != null ? map.get("category").toString() : "OTHER";
+                Long cnt = map.get("cnt") instanceof Number n ? n.longValue() : 0L;
+                categoryCountMap.put(cat, cnt);
+            }
+        }
 
         Map<String, String> categoryNames = new LinkedHashMap<>();
         categoryNames.put("ACADEMIC", "学术讲座");
@@ -101,13 +97,16 @@ public class DashboardServiceImpl implements DashboardService {
                     .build());
         }
 
-        // 6. 最近 7 天打卡趋势统计
+        // 6. 最近 7 天打卡趋势统计 (单查近 7 天有效记录，限制时间范围与轻量字段投影)
         LocalDate today = LocalDate.now();
         List<DashboardOverviewVO.DailyTrendVO> weeklyTrend = new ArrayList<>();
+        LocalDateTime sevenDaysAgoStart = today.minusDays(6).atStartOfDay();
         List<StudentActivity> checkinList = studentActivityMapper.selectList(
                 new LambdaQueryWrapper<StudentActivity>()
+                        .select(StudentActivity::getCheckinTime)
                         .eq(StudentActivity::getDeleted, 0)
                         .and(w -> w.eq(StudentActivity::getStatus, 2).or().isNotNull(StudentActivity::getCheckinTime))
+                        .ge(StudentActivity::getCheckinTime, sevenDaysAgoStart)
         );
 
         for (int i = 6; i >= 0; i--) {

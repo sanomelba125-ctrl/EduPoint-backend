@@ -3,22 +3,29 @@ package com.campus.modules.admin.controller;
 import cn.dev33.satoken.annotation.SaCheckLogin;
 import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.campus.modules.activity.dto.ActivityRecordVO;
 import com.campus.modules.activity.entity.Activity;
 import com.campus.modules.activity.entity.StudentActivity;
 import com.campus.modules.activity.mapper.StudentActivityMapper;
 import com.campus.modules.activity.service.ActivityService;
 import com.campus.modules.admin.dto.ActivityExportDTO;
+import com.campus.modules.admin.dto.ActivityRecordExportDTO;
 import com.campus.modules.admin.dto.PointRecordExportDTO;
+import com.campus.modules.mall.entity.PointRecordType;
 import com.campus.modules.mall.entity.StudentPointRecord;
 import com.campus.modules.mall.mapper.StudentPointRecordMapper;
 import com.campus.modules.student.entity.Student;
 import com.campus.modules.student.mapper.StudentMapper;
+import com.campus.common.auth.AuthUtil;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
@@ -48,6 +55,7 @@ public class ExportController {
     @SaCheckLogin
     @GetMapping("/activities")
     public void exportActivities(HttpServletResponse response) throws IOException {
+        AuthUtil.requireAdminId();
         try {
             setExcelResponseProp(response, "活动明细报表");
 
@@ -55,6 +63,10 @@ public class ExportController {
                     .eq(Activity::getDeleted, 0)
                     .orderByDesc(Activity::getStartTime)
                     .list();
+
+            // 一次性查出全量活动打卡与报名聚合统计，避免在循环中产生 2N 次数据库往返
+            Map<Long, com.campus.modules.activity.dto.ActivityCountRow> countMap = studentActivityMapper.countByActivity()
+                    .stream().collect(Collectors.toMap(com.campus.modules.activity.dto.ActivityCountRow::getActivityId, r -> r, (k1, k2) -> k1));
 
             List<ActivityExportDTO> list = new ArrayList<>();
             for (Activity act : activities) {
@@ -66,18 +78,9 @@ public class ExportController {
                 dto.setLocation(loc);
                 dto.setRewardPoints(act.getPoints() != null ? act.getPoints() : 0);
 
-                // 统计报名人数与实际打卡完成人数
-                Long enrolled = studentActivityMapper.selectCount(new LambdaQueryWrapper<StudentActivity>()
-                        .eq(StudentActivity::getActivityId, act.getId())
-                        .eq(StudentActivity::getDeleted, 0)
-                        .in(StudentActivity::getStatus, 1, 2));
-                Long checkedIn = studentActivityMapper.selectCount(new LambdaQueryWrapper<StudentActivity>()
-                        .eq(StudentActivity::getActivityId, act.getId())
-                        .eq(StudentActivity::getDeleted, 0)
-                        .eq(StudentActivity::getStatus, 2));
-
-                dto.setEnrolledCount(enrolled != null ? enrolled.intValue() : 0);
-                dto.setCheckinCount(checkedIn != null ? checkedIn.intValue() : 0);
+                com.campus.modules.activity.dto.ActivityCountRow countRow = countMap.get(act.getId());
+                dto.setEnrolledCount(countRow != null && countRow.getEnrolledCount() != null ? countRow.getEnrolledCount() : 0);
+                dto.setCheckinCount(countRow != null && countRow.getCheckinCount() != null ? countRow.getCheckinCount() : 0);
                 dto.setStartTime(act.getStartTime());
                 dto.setEndTime(act.getEndTime());
                 dto.setStatus(act.getStatus());
@@ -102,6 +105,7 @@ public class ExportController {
     @SaCheckLogin
     @GetMapping("/points")
     public void exportPoints(HttpServletResponse response) throws IOException {
+        AuthUtil.requireAdminId();
         try {
             setExcelResponseProp(response, "学生积分明细报表");
 
@@ -131,14 +135,7 @@ public class ExportController {
                 dto.setChangePoints(r.getChangePoints());
                 dto.setAfterPoints(r.getAfterPoints());
 
-                String bizType = switch (r.getType() != null ? r.getType() : 0) {
-                    case 1 -> "活动打卡奖励";
-                    case 2 -> "商城兑换消费";
-                    case 3 -> "系统人工调账";
-                    case 4 -> "订单取消返还";
-                    default -> "其他流水变动";
-                };
-                dto.setBizType(bizType);
+                dto.setBizType(PointRecordType.of(r.getType()).getDescription());
                 dto.setBizRef(StringUtils.hasText(r.getDescription()) ? r.getDescription() : "-");
                 dto.setCreateTime(r.getCreateTime());
                 list.add(dto);
@@ -153,6 +150,65 @@ public class ExportController {
             response.setContentType("application/json");
             response.setCharacterEncoding("utf-8");
             response.getWriter().println("{\"code\":500, \"message\":\"导出积分明细失败\"}");
+        }
+    }
+
+    /**
+     * 导出学生活动参与/打卡明细
+     */
+    @SaCheckLogin
+    @GetMapping({"/activity-records", "/activities/records"})
+    public void exportActivityRecords(
+            @RequestParam(required = false) String studentName,
+            @RequestParam(required = false) String studentNo,
+            @RequestParam(required = false) String activityTitle,
+            @RequestParam(required = false) Integer status,
+            HttpServletResponse response) throws IOException {
+        AuthUtil.requireAdminId();
+        try {
+            setExcelResponseProp(response, "学生活动打卡参与记录报表");
+
+            // 查询前 10000 条匹配记录用于报表生成
+            IPage<ActivityRecordVO> page = studentActivityMapper.selectAdminPage(
+                    new Page<>(1, 10000),
+                    StringUtils.hasText(studentName) ? studentName.trim() : null,
+                    StringUtils.hasText(studentNo) ? studentNo.trim() : null,
+                    StringUtils.hasText(activityTitle) ? activityTitle.trim() : null,
+                    status
+            );
+
+            List<ActivityRecordExportDTO> list = new ArrayList<>();
+            for (ActivityRecordVO r : page.getRecords()) {
+                ActivityRecordExportDTO dto = new ActivityRecordExportDTO();
+                dto.setId(r.getId());
+                dto.setStudentNo(r.getStudentNo() != null ? r.getStudentNo() : "-");
+                dto.setStudentName(r.getStudentName() != null ? r.getStudentName() : "-");
+                dto.setActivityTitle(r.getActivityTitle() != null ? r.getActivityTitle() : "-");
+
+                String statusDesc = switch (r.getStatus() != null ? r.getStatus() : 0) {
+                    case 1 -> "已报名(待打卡)";
+                    case 2 -> "已打卡出勤(已发分)";
+                    case 3 -> "已失效/取消";
+                    default -> "其他状态";
+                };
+                dto.setStatusDesc(statusDesc);
+                dto.setPointsAwarded(r.getPointsAwarded() != null ? r.getPointsAwarded() : 0);
+                dto.setSignupTime(r.getSignupTime());
+                dto.setCheckinTime(r.getCheckinTime());
+                dto.setCheckinDistance(r.getCheckinDistance() != null ? r.getCheckinDistance() + "m" : "-");
+                dto.setRemark(StringUtils.hasText(r.getRemark()) ? r.getRemark() : "-");
+                list.add(dto);
+            }
+
+            EasyExcel.write(response.getOutputStream(), ActivityRecordExportDTO.class)
+                    .sheet("学生活动打卡记录")
+                    .doWrite(list);
+        } catch (Exception e) {
+            log.error("导出学生活动记录失败", e);
+            response.reset();
+            response.setContentType("application/json");
+            response.setCharacterEncoding("utf-8");
+            response.getWriter().println("{\"code\":500, \"message\":\"导出学生活动记录失败\"}");
         }
     }
 
