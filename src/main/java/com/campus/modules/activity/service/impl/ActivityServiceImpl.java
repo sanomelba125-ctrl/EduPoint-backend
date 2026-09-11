@@ -160,7 +160,13 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
                 .last("LIMIT 1"));
         if (waitlist != null) {
             activity.setMyEnrollmentStatus("WAITLIST");
-            activity.setMyQueueNumber(waitlist.getQueueNumber());
+            // 动态计算当前实际在排队顺位（按 queue_number 排序位次）
+            Long rank = activityWaitlistMapper.selectCount(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ActivityWaitlist>()
+                    .eq(ActivityWaitlist::getActivityId, activity.getId())
+                    .eq(ActivityWaitlist::getStatus, 1)
+                    .eq(ActivityWaitlist::getDeleted, 0)
+                    .le(ActivityWaitlist::getQueueNumber, waitlist.getQueueNumber()));
+            activity.setMyQueueNumber(rank != null && rank > 0 ? rank.intValue() : 1);
         }
     }
 

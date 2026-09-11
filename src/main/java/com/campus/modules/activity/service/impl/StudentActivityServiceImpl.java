@@ -76,11 +76,40 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                 return ActivitySignupVO.builder().status("ENROLLED").waitlist(false).message("您已成功正式报名！").build();
             }
             if (!Objects.equals(a.getWaitlistEnabled(),1)) throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "活动报名名额已满");
-            Integer max = waitlistMapper.selectList(new LambdaQueryWrapper<ActivityWaitlist>().eq(ActivityWaitlist::getActivityId,aid)).stream().map(ActivityWaitlist::getQueueNumber).filter(Objects::nonNull).max(Integer::compareTo).orElse(0);
+            // 修复：仅统计当前处于候补中 (status=1 且 deleted=0) 的最大排队序号，避免退出后再进入时无限累加
+            Integer max = waitlistMapper.selectList(new LambdaQueryWrapper<ActivityWaitlist>()
+                    .eq(ActivityWaitlist::getActivityId, aid)
+                    .eq(ActivityWaitlist::getStatus, 1)
+                    .eq(ActivityWaitlist::getDeleted, 0))
+                    .stream()
+                    .map(ActivityWaitlist::getQueueNumber)
+                    .filter(Objects::nonNull)
+                    .max(Integer::compareTo)
+                    .orElse(0);
             ActivityWaitlist w = waiting == null ? new ActivityWaitlist() : waiting;
-            w.setActivityId(aid); w.setStudentId(sid); w.setQueueNumber(max+1); w.setStatus(1); w.setWaitTime(LocalDateTime.now()); w.setPromotedTime(null); w.setDeleted(0);
+            w.setActivityId(aid);
+            w.setStudentId(sid);
+            w.setQueueNumber(max + 1);
+            w.setStatus(1);
+            w.setWaitTime(LocalDateTime.now());
+            w.setPromotedTime(null);
+            w.setDeleted(0);
             if (w.getId() == null) waitlistMapper.insert(w); else waitlistMapper.updateById(w);
-            return ActivitySignupVO.builder().status("WAITLIST").waitlist(true).queueNumber(w.getQueueNumber()).message("名额已满，已进入候补队列").build();
+
+            // 动态计算当前排位顺位
+            Long currentRank = waitlistMapper.selectCount(new LambdaQueryWrapper<ActivityWaitlist>()
+                    .eq(ActivityWaitlist::getActivityId, aid)
+                    .eq(ActivityWaitlist::getStatus, 1)
+                    .eq(ActivityWaitlist::getDeleted, 0)
+                    .le(ActivityWaitlist::getQueueNumber, w.getQueueNumber()));
+            int rank = currentRank != null && currentRank > 0 ? currentRank.intValue() : 1;
+            refreshActivityCacheAfterCommit(aid);
+            return ActivitySignupVO.builder()
+                    .status("WAITLIST")
+                    .waitlist(true)
+                    .queueNumber(rank)
+                    .message("名额已满，已进入候补队列（当前排第 " + rank + " 位）")
+                    .build();
         }));
     }
 
@@ -108,6 +137,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             if (w != null) {
                 w.setStatus(3);
                 waitlistMapper.updateById(w);
+                refreshActivityCacheAfterCommit(activityId);
                 return "已退出候补队列";
             }
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "未找到有效报名记录");
@@ -220,7 +250,13 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             vo.setStatus(4);
             vo.setPointsAwarded(0);
             vo.setDeleted(waitlist.getDeleted());
-            vo.setQueueNumber(waitlist.getQueueNumber());
+            // 动态计算当前有效排位顺位
+            Long rank = waitlistMapper.selectCount(new LambdaQueryWrapper<ActivityWaitlist>()
+                    .eq(ActivityWaitlist::getActivityId, waitlist.getActivityId())
+                    .eq(ActivityWaitlist::getStatus, 1)
+                    .eq(ActivityWaitlist::getDeleted, 0)
+                    .le(ActivityWaitlist::getQueueNumber, waitlist.getQueueNumber()));
+            vo.setQueueNumber(rank != null && rank > 0 ? rank.intValue() : 1);
         }
         if (activity != null) {
             vo.setTitle(activity.getTitle());

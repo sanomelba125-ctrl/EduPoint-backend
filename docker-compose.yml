@@ -88,6 +88,7 @@ services:
       - "8080:8080"
     environment:
       SPRING_PROFILES_ACTIVE: docker
+      SA_TOKEN_TIMEOUT: 3600
       TZ: Asia/Shanghai
     depends_on:
       mysql:
