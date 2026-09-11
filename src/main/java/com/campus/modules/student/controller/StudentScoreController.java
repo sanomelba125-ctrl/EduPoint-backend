@@ -1,6 +1,6 @@
 package com.campus.modules.student.controller;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.campus.common.auth.AuthUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.common.exception.BusinessException;
 import com.campus.common.result.Result;
@@ -26,24 +26,24 @@ public class StudentScoreController {
     // ==========================================
 
     /**
-     * 学生查看当前可用积分与历史累计总积分汇总
+     * 查询学生当前可用积分与历史累计总积分（双积分模型）
      * 对应 API.md 4.1 GET /student/score/balance
      */
-    @GetMapping("/student/score/balance")
+    @GetMapping({"/student/score/balance", "/student/points/balance", "/score/balance"})
     public Result<StudentScoreBalanceVO> getBalance() {
         Long studentId = getStudentId();
-        StudentScoreBalanceVO vo = studentScoreService.getBalance(studentId);
-        return Result.success(vo);
+        StudentScoreBalanceVO balanceVO = studentScoreService.getBalance(studentId);
+        return Result.success(balanceVO);
     }
 
     /**
-     * 学生分页查询个人积分变动明细流水
+     * 学生查询个人积分明细台账列表
      * 对应 API.md 4.2 GET /student/score/records
      */
-    @GetMapping("/student/score/records")
-    public Result<Page<StudentPointRecordVO>> getMyRecords(
+    @GetMapping({"/student/score/records", "/student/points/records", "/score/records"})
+    public Result<Page<StudentPointRecordVO>> getMyPointRecords(
             @RequestParam(value = "page", defaultValue = "1") Integer page,
-            @RequestParam(value = "size", defaultValue = "20") Integer size,
+            @RequestParam(value = "size", defaultValue = "10") Integer size,
             @RequestParam(value = "type", required = false) Integer type) {
         Long studentId = getStudentId();
         Page<StudentPointRecordVO> pageResult = studentScoreService.getMyPointRecords(page, size, type, studentId);
@@ -60,17 +60,7 @@ public class StudentScoreController {
             @RequestParam(value = "size", defaultValue = "20") Integer size,
             @RequestParam(value = "college", required = false) String college) {
 
-        Long currentStudentId = null;
-        try {
-            if (StpUtil.isLogin()) {
-                String loginId = StpUtil.getLoginIdAsString();
-                if (loginId.startsWith("student:")) {
-                    currentStudentId = Long.parseLong(loginId.substring("student:".length()));
-                }
-            }
-        } catch (Exception ignored) {
-        }
-
+        Long currentStudentId = AuthUtil.currentStudentIdOrNull();
         StudentRankResultVO result = studentScoreService.getLeaderboard(page, size, college, currentStudentId);
         return Result.success(result);
     }
@@ -117,20 +107,10 @@ public class StudentScoreController {
     // ==========================================
 
     private Long getStudentId() {
-        StpUtil.checkLogin();
-        String loginId = StpUtil.getLoginIdAsString();
-        if (!loginId.startsWith("student:")) {
-            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "仅限学生端账号访问");
-        }
-        return Long.parseLong(loginId.substring("student:".length()));
+        return AuthUtil.requireStudentId();
     }
 
     private Long getAdminId() {
-        StpUtil.checkLogin();
-        String loginId = StpUtil.getLoginIdAsString();
-        if (!loginId.startsWith("admin:")) {
-            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "无权访问管理端接口");
-        }
-        return Long.parseLong(loginId.substring("admin:".length()));
+        return AuthUtil.requireAdminId();
     }
 }

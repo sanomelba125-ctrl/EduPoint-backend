@@ -1,6 +1,6 @@
 package com.campus.modules.mall.controller;
 
-import cn.dev33.satoken.stp.StpUtil;
+import com.campus.common.auth.AuthUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.common.exception.BusinessException;
 import com.campus.common.result.Result;
@@ -98,11 +98,6 @@ public class GiftController {
     }
 
     private Long getAdminId() {
-        StpUtil.checkLogin();
-        String loginId = StpUtil.getLoginIdAsString();
-        if (!loginId.startsWith("admin:")) {
-            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "无权访问管理端接口");
-        }
-        return Long.parseLong(loginId.substring("admin:".length()));
+        return AuthUtil.requireAdminId();
     }
 }

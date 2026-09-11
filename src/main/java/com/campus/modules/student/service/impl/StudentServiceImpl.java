@@ -9,9 +9,13 @@ import com.campus.modules.student.dto.*;
 import com.campus.modules.student.entity.Student;
 import com.campus.modules.student.mapper.StudentMapper;
 import com.campus.modules.student.service.StudentService;
+import com.campus.common.auth.AuthUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
+
+import java.util.List;
 
 /**
  * 学生服务实现类
@@ -21,7 +25,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
 
     private static final Logger log = LoggerFactory.getLogger(StudentServiceImpl.class);
 
-    private static final String STUDENT_LOGIN_PREFIX = "student:";
+    private static final String STUDENT_LOGIN_PREFIX = AuthUtil.STUDENT_PREFIX;
 
     @Override
     public StudentLoginVO login(StudentLoginDTO loginDTO) {
@@ -84,15 +88,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
 
     @Override
     public StudentVO getCurrentStudentInfo() {
-        StpUtil.checkLogin();
-        String loginId = StpUtil.getLoginIdAsString();
-
-        // 严格校验用户类型，防止管理员 Token 越权访问学生接口
-        if (!loginId.startsWith(STUDENT_LOGIN_PREFIX)) {
-            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "无权访问学生端接口");
-        }
-
-        long studentId = Long.parseLong(loginId.substring(STUDENT_LOGIN_PREFIX.length()));
+        Long studentId = AuthUtil.requireStudentId();
         Student student = getById(studentId);
         if (student == null || (student.getStatus() != null && student.getStatus() == 0)) {
             throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "学生账号不存在或已被禁用");
@@ -103,14 +99,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
 
     @Override
     public StudentVO updateProfile(StudentUpdateProfileDTO updateDTO) {
-        StpUtil.checkLogin();
-        String loginId = StpUtil.getLoginIdAsString();
-
-        if (!loginId.startsWith(STUDENT_LOGIN_PREFIX)) {
-            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "无权访问学生端接口");
-        }
-
-        long studentId = Long.parseLong(loginId.substring(STUDENT_LOGIN_PREFIX.length()));
+        Long studentId = AuthUtil.requireStudentId();
         Student student = getById(studentId);
         if (student == null || (student.getStatus() != null && student.getStatus() == 0)) {
             throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "学生账号不存在或已被禁用");

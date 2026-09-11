@@ -280,27 +280,27 @@ public class StudentScoreServiceImpl implements StudentScoreService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void rewardActivityCheckin(Long studentId, Long studentActivityId, String activityTitle, Integer pointsAwarded) {
+    public int rewardActivityCheckin(Long studentId, Long studentActivityId, String activityTitle, Integer pointsAwarded) {
         if (studentId == null) {
             throw new BusinessException("打卡学生 ID 不能为空");
         }
-        if (pointsAwarded == null || pointsAwarded <= 0) {
-            log.warn("活动打卡积分奖励小于等于 0，跳过入账: studentId={}, points={}", studentId, pointsAwarded);
-            return;
-        }
-
         Student student = studentMapper.selectById(studentId);
         if (student == null || (student.getDeleted() != null && student.getDeleted() == 1)) {
             throw new BusinessException("目标学生学籍档案不存在或已注销");
         }
 
         int beforeCurrent = student.getCurrentPoints() != null ? student.getCurrentPoints() : 0;
+        if (pointsAwarded == null || pointsAwarded <= 0) {
+            log.warn("活动打卡积分奖励小于等于 0，跳过入账: studentId={}, points={}", studentId, pointsAwarded);
+            return beforeCurrent;
+        }
 
         // 1. 原子增加可用积分与历史累计积分
         studentMapper.addCurrentPoints(studentId, pointsAwarded);
         studentMapper.addTotalPoints(studentId, pointsAwarded);
 
-        int afterCurrent = beforeCurrent + pointsAwarded;
+        Integer currentDb = studentMapper.selectCurrentPoints(studentId);
+        int afterCurrent = currentDb != null ? currentDb : (beforeCurrent + pointsAwarded);
 
         // 2. 写入财务级对账流水
         StudentPointRecord record = new StudentPointRecord();
@@ -328,6 +328,8 @@ public class StudentScoreServiceImpl implements StudentScoreService {
         } catch (Exception e) {
             log.warn("保存与推送打卡奖励通知失败: {}", e.getMessage());
         }
+
+        return afterCurrent;
     }
 
     @Override

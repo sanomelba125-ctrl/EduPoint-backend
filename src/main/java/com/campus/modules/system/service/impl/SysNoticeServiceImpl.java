@@ -7,6 +7,9 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.campus.common.auth.AuthUtil;
+import com.campus.common.exception.BusinessException;
+import com.campus.common.result.ResultCode;
 import com.campus.common.websocket.WebSocketServer;
 import com.campus.modules.system.dto.NoticePageQuery;
 import com.campus.modules.system.dto.SysNoticeVO;
@@ -72,7 +75,8 @@ public class SysNoticeServiceImpl extends ServiceImpl<SysNoticeMapper, SysNotice
         if (notice == null || !notice.getReceiverType().equals(identity.receiverType)) {
             return false;
         }
-        if (notice.getReceiverId() != 0L && !notice.getReceiverId().equals(identity.receiverId)) {
+        Long recId = notice.getReceiverId() != null ? notice.getReceiverId() : 0L;
+        if (recId != 0L && !recId.equals(identity.receiverId)) {
             return false;
         }
         if (Integer.valueOf(1).equals(notice.getIsRead())) {
@@ -103,7 +107,8 @@ public class SysNoticeServiceImpl extends ServiceImpl<SysNoticeMapper, SysNotice
         if (notice == null || !notice.getReceiverType().equals(identity.receiverType)) {
             return false;
         }
-        if (notice.getReceiverId() != 0L && !notice.getReceiverId().equals(identity.receiverId)) {
+        Long recId = notice.getReceiverId() != null ? notice.getReceiverId() : 0L;
+        if (recId != 0L && !recId.equals(identity.receiverId)) {
             return false;
         }
         return this.removeById(id);
@@ -193,24 +198,27 @@ public class SysNoticeServiceImpl extends ServiceImpl<SysNoticeMapper, SysNotice
     }
 
     private UserIdentity getCurrentUserIdentity() {
-        StpUtil.checkLogin();
-        String loginId = StpUtil.getLoginIdAsString();
-        if (loginId.startsWith("student:")) {
-            Long id = Long.parseLong(loginId.substring("student:".length()));
-            return new UserIdentity(2, id);
-        } else if (loginId.startsWith("admin:")) {
-            Long id = Long.parseLong(loginId.substring("admin:".length()));
-            return new UserIdentity(1, id);
+        if (AuthUtil.isStudent()) {
+            return new UserIdentity(2, AuthUtil.requireStudentId());
+        } else if (AuthUtil.isAdmin()) {
+            return new UserIdentity(1, AuthUtil.requireAdminId());
         }
 
         // 兜底基于 Session 判断
-        Object userType = StpUtil.getSession().get("userType");
-        if ("STUDENT".equals(userType)) {
-            Object studentId = StpUtil.getSession().get("studentId");
-            return new UserIdentity(2, Long.valueOf(studentId.toString()));
+        if (StpUtil.isLogin()) {
+            Object userType = StpUtil.getSession().get("userType");
+            if ("STUDENT".equals(userType)) {
+                Object studentId = StpUtil.getSession().get("studentId");
+                if (studentId != null) {
+                    return new UserIdentity(2, Long.valueOf(studentId.toString()));
+                }
+            }
+            Object userId = StpUtil.getSession().get("userId");
+            if (userId != null) {
+                return new UserIdentity(1, Long.valueOf(userId.toString()));
+            }
         }
-        Object userId = StpUtil.getSession().get("userId");
-        return new UserIdentity(1, Long.valueOf(userId.toString()));
+        throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "未获取到有效登录身份");
     }
 
     private static class UserIdentity {

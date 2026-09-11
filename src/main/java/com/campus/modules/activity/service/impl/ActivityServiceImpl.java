@@ -3,7 +3,7 @@ package com.campus.modules.activity.service.impl;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import cn.dev33.satoken.stp.StpUtil;
+import com.campus.common.auth.AuthUtil;
 import com.campus.common.exception.BusinessException;
 import com.campus.common.result.ResultCode;
 import com.campus.config.ActivityQrCodeProperties;
@@ -165,18 +165,11 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
     }
 
     private boolean isStudentLogin() {
-        if (!StpUtil.isLogin()) return false;
-        String loginId = StpUtil.getLoginIdAsString();
-        return loginId != null && loginId.startsWith("student:");
+        return AuthUtil.isStudent();
     }
 
     private Long currentStudentId() {
-        String loginId = StpUtil.getLoginIdAsString();
-        try {
-            return Long.valueOf(loginId.substring("student:".length()));
-        } catch (Exception e) {
-            throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "登录状态无效");
-        }
+        return AuthUtil.requireStudentId();
     }
 
     @Override
@@ -250,16 +243,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
     }
 
     private Long requireAdminId() {
-        StpUtil.checkLogin();
-        String loginId = StpUtil.getLoginIdAsString();
-        if (loginId == null || !loginId.startsWith("admin:")) {
-            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "无权访问管理员活动接口");
-        }
-        try {
-            return Long.parseLong(loginId.substring("admin:".length()));
-        } catch (NumberFormatException ex) {
-            throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "管理员登录状态无效");
-        }
+        return AuthUtil.requireAdminId();
     }
 
     private void validateTime(ActivitySaveDTO dto) {

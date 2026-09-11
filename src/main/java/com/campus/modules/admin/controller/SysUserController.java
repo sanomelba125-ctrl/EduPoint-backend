@@ -1,7 +1,7 @@
 package com.campus.modules.admin.controller;
 
 import cn.dev33.satoken.annotation.SaCheckLogin;
-import cn.dev33.satoken.stp.StpUtil;
+import com.campus.common.auth.AuthUtil;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.campus.common.result.Result;
 import com.campus.modules.admin.dto.*;
@@ -115,11 +115,7 @@ public class SysUserController {
     @DeleteMapping("/{id}")
     @SaCheckLogin
     public Result<Void> deleteUser(@PathVariable Long id) {
-        String loginId = StpUtil.getLoginIdAsString();
-        Long currentUserId = null;
-        if (loginId != null && loginId.startsWith("admin:")) {
-            currentUserId = Long.parseLong(loginId.substring("admin:".length()));
-        }
+        Long currentUserId = AuthUtil.requireAdminId();
         sysUserService.deleteUser(id, currentUserId);
         return Result.success("管理员账号注销成功", null);
     }

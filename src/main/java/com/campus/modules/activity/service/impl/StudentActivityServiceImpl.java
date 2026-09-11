@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.campus.common.auth.AuthUtil;
 import com.campus.common.exception.BusinessException;
 import com.campus.common.result.ResultCode;
 import com.campus.config.RabbitMqConfig;
@@ -13,10 +14,7 @@ import com.campus.modules.activity.entity.*;
 import com.campus.modules.activity.mapper.*;
 import com.campus.modules.activity.service.StudentActivityService;
 import com.campus.modules.activity.service.ActivityCacheService;
-import com.campus.modules.mall.entity.StudentPointRecord;
-import com.campus.modules.mall.mapper.StudentPointRecordMapper;
-import com.campus.modules.student.entity.Student;
-import com.campus.modules.student.mapper.StudentMapper;
+import com.campus.modules.student.service.StudentScoreService;
 import com.campus.modules.certificate.entity.Certificate;
 import com.campus.modules.certificate.service.CertificateService;
 import lombok.RequiredArgsConstructor;
@@ -39,8 +37,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
     private final ActivityMapper activityMapper;
     private final ActivityWaitlistMapper waitlistMapper;
     private final ActivityCheckinCodeMapper codeMapper;
-    private final StudentMapper studentMapper;
-    private final StudentPointRecordMapper pointRecordMapper;
+    private final StudentScoreService studentScoreService;
     private final RedissonClient redissonClient;
     private final RabbitTemplate rabbitTemplate;
     private final CertificateService certificateService;
@@ -134,13 +131,41 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             if(code==null||code.getExpireTime()==null||code.getExpireTime().isBefore(LocalDateTime.now())) throw new BusinessException(ResultCode.BAD_REQUEST.getCode(),"签到码无效或已过期");
             if(Objects.equals(a.getLocationCheckEnabled(),1)){ if(dto.getCheckinLatitude()==null||dto.getCheckinLongitude()==null) throw new BusinessException(ResultCode.BAD_REQUEST.getCode(),"请提供定位信息"); int dist=distance(a.getLatitude(),a.getLongitude(),dto.getCheckinLatitude(),dto.getCheckinLongitude()); if(dist>(a.getLocationRadius()==null?300:a.getLocationRadius())) throw new BusinessException(ResultCode.BAD_REQUEST.getCode(),"超出活动签到范围"); rec.setCheckinDistance(dist); }
             if (codeMapper.consume(code.getId(), sid) == 0) throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "签到码已被使用或已过期");
-            int points=a.getPoints()==null?0:a.getPoints(); Student s=studentMapper.selectById(sid); int before=s.getCurrentPoints()==null?0:s.getCurrentPoints(); studentMapper.addCurrentPoints(sid,points); studentMapper.addTotalPoints(sid,points);
-            LocalDateTime now=LocalDateTime.now(); rec.setStatus(2); rec.setCheckinTime(now); rec.setCheckinLatitude(dto.getCheckinLatitude()); rec.setCheckinLongitude(dto.getCheckinLongitude()); rec.setQrNonceUsed(dto.getNonce()); rec.setPointsAwarded(points); updateById(rec);
-            StudentPointRecord pr=new StudentPointRecord(); pr.setStudentId(sid); pr.setType(1); pr.setChangePoints(points); pr.setBeforePoints(before); pr.setAfterPoints(before+points); pr.setDescription("活动打卡奖励"); pr.setRefId(rec.getId()); pointRecordMapper.insert(pr);
+            int points = a.getPoints() == null ? 0 : a.getPoints();
+            LocalDateTime now = LocalDateTime.now();
+            rec.setStatus(2);
+            rec.setCheckinTime(now);
+            rec.setCheckinLatitude(dto.getCheckinLatitude());
+            rec.setCheckinLongitude(dto.getCheckinLongitude());
+            rec.setQrNonceUsed(dto.getNonce());
+            rec.setPointsAwarded(points);
+            updateById(rec);
+
+            // 统一调用 StudentScoreService 进行积分原子入账、记账流水与 WebSocket 通知
+            int currentPoints = studentScoreService.rewardActivityCheckin(sid, rec.getId(), a.getTitle(), points);
+
             publishAfterCommit(Map.of("studentId", sid, "activityId", aid, "recordId", rec.getId()));
-            boolean issued=false;
-            if (Objects.equals(a.getCertificateEnabled(),1)) { Certificate c=new Certificate(); c.setCertificateNo("CERT-"+aid+"-"+sid+"-"+UUID.randomUUID().toString().substring(0,8).toUpperCase()); c.setStudentId(sid); c.setActivityId(aid); c.setTitle(a.getCertificateTitle()); c.setIssuer(a.getCertificateIssuer()); c.setIssueTime(now); c.setStatus(1); c.setVerifyCount(0); c.setDeleted(0); certificateService.save(c); issued=true; }
-            return ActivityCheckinVO.builder().pointsAwarded(points).currentPoints(before+points).certificateIssued(issued).checkinTime(now).build();
+            boolean issued = false;
+            if (Objects.equals(a.getCertificateEnabled(), 1)) {
+                Certificate c = new Certificate();
+                c.setCertificateNo("CERT-" + aid + "-" + sid + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase());
+                c.setStudentId(sid);
+                c.setActivityId(aid);
+                c.setTitle(a.getCertificateTitle());
+                c.setIssuer(a.getCertificateIssuer());
+                c.setIssueTime(now);
+                c.setStatus(1);
+                c.setVerifyCount(0);
+                c.setDeleted(0);
+                certificateService.save(c);
+                issued = true;
+            }
+            return ActivityCheckinVO.builder()
+                    .pointsAwarded(points)
+                    .currentPoints(currentPoints)
+                    .certificateIssued(issued)
+                    .checkinTime(now)
+                    .build();
         })));
     }
 
@@ -247,9 +272,9 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
         return baseMapper.selectAdminPage(new Page<>(current, pageSize), trim(studentName), trim(studentNo), trim(activityTitle), status);
     }
 
-    private Long currentStudentId(){ StpUtil.checkLogin(); String id=StpUtil.getLoginIdAsString(); if(id==null||!id.startsWith("student:")) throw new BusinessException(ResultCode.FORBIDDEN.getCode(),"仅学生可操作"); try{return Long.valueOf(id.substring(8));}catch(Exception e){throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(),"登录状态无效");} }
+    private Long currentStudentId() { return AuthUtil.requireStudentId(); }
     private String trim(String value) { return value == null || value.isBlank() ? null : value.trim(); }
-    private void requireAdmin(){ StpUtil.checkLogin(); String id=StpUtil.getLoginIdAsString(); if(id==null||!id.startsWith("admin:")) throw new BusinessException(ResultCode.FORBIDDEN.getCode(),"仅管理员可操作"); }
+    private void requireAdmin() { AuthUtil.requireAdminId(); }
     private int reserveParticipant(Activity activity) {
         Activity candidate = activity;
         for (int attempt = 0; attempt < 3; attempt++) {

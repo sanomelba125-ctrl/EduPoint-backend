@@ -46,6 +46,7 @@ public interface StudentScoreService {
      * @param studentActivityId 参与打卡记录 ID (student_activity.id)
      * @param activityTitle     活动名称标题
      * @param pointsAwarded     打卡获得积分值 (需 > 0)
+     * @return 入账后学生当前可用积分余额
      */
-    void rewardActivityCheckin(Long studentId, Long studentActivityId, String activityTitle, Integer pointsAwarded);
+    int rewardActivityCheckin(Long studentId, Long studentActivityId, String activityTitle, Integer pointsAwarded);
 }

@@ -17,6 +17,7 @@ import com.campus.modules.mall.entity.StudentPointRecord;
 import com.campus.modules.mall.mapper.StudentPointRecordMapper;
 import com.campus.modules.student.entity.Student;
 import com.campus.modules.student.mapper.StudentMapper;
+import com.campus.common.auth.AuthUtil;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -53,6 +54,7 @@ public class ExportController {
     @SaCheckLogin
     @GetMapping("/activities")
     public void exportActivities(HttpServletResponse response) throws IOException {
+        AuthUtil.requireAdminId();
         try {
             setExcelResponseProp(response, "活动明细报表");
 
@@ -107,6 +109,7 @@ public class ExportController {
     @SaCheckLogin
     @GetMapping("/points")
     public void exportPoints(HttpServletResponse response) throws IOException {
+        AuthUtil.requireAdminId();
         try {
             setExcelResponseProp(response, "学生积分明细报表");
 
@@ -172,6 +175,7 @@ public class ExportController {
             @RequestParam(required = false) String activityTitle,
             @RequestParam(required = false) Integer status,
             HttpServletResponse response) throws IOException {
+        AuthUtil.requireAdminId();
         try {
             setExcelResponseProp(response, "学生活动打卡参与记录报表");
 
