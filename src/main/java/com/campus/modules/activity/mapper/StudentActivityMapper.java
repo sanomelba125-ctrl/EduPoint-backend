@@ -30,4 +30,19 @@ public interface StudentActivityMapper extends BaseMapper<StudentActivity> {
             "  COALESCE(SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END), 0) AS checkinCount " +
             "FROM student_activity WHERE deleted = 0 GROUP BY activity_id")
     java.util.List<com.campus.modules.activity.dto.ActivityCountRow> countByActivity();
+
+    /**
+     * 全局打卡参与记录指标统计（SQL下推聚合，避免分页前端口径失真）
+     */
+    @Select("SELECT " +
+            "  COUNT(*) AS totalRecords, " +
+            "  COALESCE(SUM(CASE WHEN sa.status = 2 THEN 1 ELSE 0 END), 0) AS completedCount, " +
+            "  COALESCE(SUM(CASE WHEN sa.status = 1 THEN 1 ELSE 0 END), 0) AS pendingCount, " +
+            "  COALESCE(SUM(CASE WHEN sa.status = 3 THEN 1 ELSE 0 END), 0) AS cancelledCount, " +
+            "  COALESCE(SUM(CASE WHEN sa.status = 2 THEN sa.points_awarded ELSE 0 END), 0) AS pointsDistributed " +
+            "FROM student_activity sa " +
+            "JOIN student s ON s.id = sa.student_id AND s.deleted = 0 " +
+            "JOIN activity a ON a.id = sa.activity_id AND a.deleted = 0 " +
+            "WHERE sa.deleted = 0")
+    com.campus.modules.activity.dto.ActivityRecordMetricsVO selectRecordMetrics();
 }

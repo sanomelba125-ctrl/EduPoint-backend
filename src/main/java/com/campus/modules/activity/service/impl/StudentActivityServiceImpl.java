@@ -386,6 +386,19 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
         return baseMapper.selectAdminPage(new Page<>(current, pageSize), trim(studentName), trim(studentNo), trim(activityTitle), status);
     }
 
+    @Override
+    public ActivityRecordMetricsVO getRecordMetrics() {
+        requireAdmin();
+        ActivityRecordMetricsVO vo = baseMapper.selectRecordMetrics();
+        return vo != null ? vo : ActivityRecordMetricsVO.builder()
+                .totalRecords(0L)
+                .completedCount(0L)
+                .pendingCount(0L)
+                .cancelledCount(0L)
+                .pointsDistributed(0L)
+                .build();
+    }
+
     private Long currentStudentId() {
         return AuthUtil.requireStudentId();
     }

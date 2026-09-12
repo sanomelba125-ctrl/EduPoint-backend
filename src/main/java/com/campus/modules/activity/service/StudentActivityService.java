@@ -10,4 +10,5 @@ public interface StudentActivityService {
     ActivityCheckinVO checkin(ActivityCheckinDTO dto);
     IPage<MyActivityVO> myList(Integer page, Integer size, Integer status);
     IPage<ActivityRecordVO> adminList(Integer page, Integer size, String studentName, String studentNo, String activityTitle, Integer status);
+    ActivityRecordMetricsVO getRecordMetrics();
 }

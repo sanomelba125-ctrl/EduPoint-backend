@@ -44,4 +44,9 @@ public interface StudentGiftService extends IService<StudentGift> {
      * 超时未提货订单自动关单与退还积分（由延时死信队列消费调用，具备严格幂等性）
      */
     void expireOrder(Long orderId);
+
+    /**
+     * 管理端获取礼品兑换订单全局业务统计指标
+     */
+    GiftOrderMetricsVO getOrderMetrics();
 }
