@@ -62,7 +62,7 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
         StpUtil.getSession().set("userType", "ADMIN");
         StpUtil.getSession().set("userId", user.getId());
         StpUtil.getSession().set("role", user.getRole());
-        log.info("管理员 [{}] (ID: {}) 登录成功, 获得 Token: {}", user.getUsername(), user.getId(), token);
+        log.info("管理员 [{}] (ID: {}) 登录成功", user.getUsername(), user.getId());
 
         // 6. 组装脱敏后的返回视图对象
         SysUserVO userVO = convertToVO(user);

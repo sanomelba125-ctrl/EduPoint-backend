@@ -15,8 +15,15 @@ import java.util.concurrent.atomic.AtomicInteger;
  * WebSocket 服务端
  * 路径格式：/ws/{userType}/{userId}
  * userType: admin / student
+ *
+ * <p>握手阶段由 {@link WebSocketAuthConfigurator} 完成 Origin 白名单、token 有效性、路径身份一致性三重校验，
+ * 校验不通过则握手直接失败，因此 {@link #onOpen} 可以信任路径参数。</p>
  */
-@ServerEndpoint("/ws/{userType}/{userId}")
+@ServerEndpoint(
+        value = WebSocketConstants.ENDPOINT_PATH,
+        subprotocols = {WebSocketConstants.PROTOCOL_MARKER},
+        configurator = WebSocketAuthConfigurator.class
+)
 @Component
 @Slf4j
 public class WebSocketServer {

@@ -33,6 +33,9 @@ public class StudentGift {
     /** 实际扣减积分 */
     private Integer pointsCost;
 
+    /** 客户端兑换请求幂等标识(UUID，防弱网重试/双端并发重复落单) */
+    private String requestId;
+
     /** 收件人真实姓名 */
     private String receiverName;
 

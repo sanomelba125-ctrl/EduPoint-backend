@@ -38,6 +38,14 @@ activity:
     sign-secret: ${ACTIVITY_QR_SIGN_SECRET:EduPoint@QrSign#2026}
     checkin-base-url: ${ACTIVITY_CHECKIN_BASE_URL:http://localhost:5173/#/checkin}
 
+# WebSocket 握手鉴权配置
+websocket:
+  auth:
+    # Origin 白名单(逗号分隔)，单个 * 表示放行所有来源(仅建议本地开发使用)
+    allowed-origins: ${WEBSOCKET_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:3200,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:3200,http://127.0.0.1:5173}
+    # 是否放行不带 Origin 请求头的非浏览器客户端(微信小程序原生连接、部分真机调试不会携带 Origin)
+    allow-missing-origin: ${WEBSOCKET_ALLOW_MISSING_ORIGIN:true}
+
 # AI 客服大模型配置 (支持 DeepSeek / OpenAI 兼容接口，未启用时自动走本地高质感知识库流式Mock)
 ai:
   llm:

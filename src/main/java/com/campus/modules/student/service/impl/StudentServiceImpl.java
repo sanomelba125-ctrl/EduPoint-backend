@@ -68,7 +68,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
         StpUtil.getSession().set("userType", "STUDENT");
         StpUtil.getSession().set("studentId", student.getId());
         StpUtil.getSession().set("studentNo", student.getStudentNo());
-        log.info("学生 [{}] (学号: {}, ID: {}) 登录成功, 获得 Token: {}", student.getName(), student.getStudentNo(), student.getId(), token);
+        log.info("学生 [{}] (学号: {}, ID: {}) 登录成功", student.getName(), student.getStudentNo(), student.getId());
 
         // 6. 组装脱敏出参
         StudentVO vo = convertToVO(student);
