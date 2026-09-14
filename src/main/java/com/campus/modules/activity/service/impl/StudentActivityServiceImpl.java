@@ -229,8 +229,16 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                 if (dto.getCheckinLatitude() == null || dto.getCheckinLongitude() == null) {
                     throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "请提供定位信息");
                 }
+                if (!isValidCoordinate(a.getLatitude(), a.getLongitude())
+                        || !isValidCoordinate(dto.getCheckinLatitude(), dto.getCheckinLongitude())) {
+                    throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "定位信息无效");
+                }
+                int radius = a.getLocationRadius() == null ? 300 : a.getLocationRadius();
+                if (radius <= 0) {
+                    throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "活动签到范围配置无效");
+                }
                 int dist = distance(a.getLatitude(), a.getLongitude(), dto.getCheckinLatitude(), dto.getCheckinLongitude());
-                if (dist > (a.getLocationRadius() == null ? 300 : a.getLocationRadius())) {
+                if (dist > radius) {
                     throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "超出活动签到范围");
                 }
                 rec.setCheckinDistance(dist);
@@ -454,7 +462,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
     }
 
     private int distance(BigDecimal lat1, BigDecimal lon1, BigDecimal lat2, BigDecimal lon2) {
-        if (lat1 == null || lon1 == null) {
+        if (!isValidCoordinate(lat1, lon1) || !isValidCoordinate(lat2, lon2)) {
             return Integer.MAX_VALUE;
         }
         double r = 6371000;
@@ -463,7 +471,15 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
         double dLon = lon2.subtract(lon1).doubleValue() * p;
         double x = Math.sin(dLat / 2) * Math.sin(dLat / 2)
                 + Math.cos(lat1.doubleValue() * p) * Math.cos(lat2.doubleValue() * p) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-        return (int) Math.round(2 * r * Math.asin(Math.sqrt(x)));
+        return (int) Math.round(2 * r * Math.asin(Math.sqrt(Math.min(1d, Math.max(0d, x)))));
+    }
+
+    private boolean isValidCoordinate(BigDecimal latitude, BigDecimal longitude) {
+        return latitude != null && longitude != null
+                && latitude.compareTo(BigDecimal.valueOf(-90)) >= 0
+                && latitude.compareTo(BigDecimal.valueOf(90)) <= 0
+                && longitude.compareTo(BigDecimal.valueOf(-180)) >= 0
+                && longitude.compareTo(BigDecimal.valueOf(180)) <= 0;
     }
     private <T> T withLock(String key, java.util.function.Supplier<T> action) {
         RLock lock = redissonClient.getLock(key);

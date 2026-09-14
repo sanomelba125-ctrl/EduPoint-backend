@@ -27,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Base64;
@@ -61,6 +62,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
     public Activity create(ActivitySaveDTO dto) {
         Long adminId = requireAdminId();
         validateTime(dto);
+        validateLocation(dto);
         Activity activity = new Activity();
         copy(dto, activity);
         activity.setParticipantCount(0);
@@ -80,6 +82,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "活动ID不能为空");
         }
         validateTime(dto);
+        validateLocation(dto);
         Activity activity = getById(dto.getId());
         if (activity == null || Objects.equals(activity.getDeleted(), 1)) {
             throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "活动不存在");
@@ -305,6 +308,26 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
     private void validateTime(ActivitySaveDTO dto) {
         if (dto.getEndTime().isBefore(dto.getStartTime())) {
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "活动结束时间不能早于开始时间");
+        }
+    }
+
+    private void validateLocation(ActivitySaveDTO dto) {
+        boolean enabled = Objects.equals(dto.getLocationCheckEnabled(), 1);
+        boolean hasCoordinates = dto.getLongitude() != null && dto.getLatitude() != null;
+        if (enabled && !hasCoordinates) {
+            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "开启定位核验时必须配置活动坐标");
+        }
+        if (enabled) {
+            Integer radius = dto.getLocationRadius() == null ? 300 : dto.getLocationRadius();
+            if (radius < 50) {
+                throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "定位核验半径不能小于50米");
+            }
+        }
+        if (hasCoordinates && (dto.getLongitude().compareTo(BigDecimal.valueOf(-180)) < 0
+                || dto.getLongitude().compareTo(BigDecimal.valueOf(180)) > 0
+                || dto.getLatitude().compareTo(BigDecimal.valueOf(-90)) < 0
+                || dto.getLatitude().compareTo(BigDecimal.valueOf(90)) > 0)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "活动坐标超出有效范围");
         }
     }
 
