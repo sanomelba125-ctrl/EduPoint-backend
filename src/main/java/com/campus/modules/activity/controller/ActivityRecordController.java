@@ -14,7 +14,9 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class ActivityRecordController {
     private final StudentActivityService service;
-    @SaCheckLogin @GetMapping("/list")
+
+    @SaCheckLogin
+    @GetMapping("/list")
     public Result<IPage<ActivityRecordVO>> list(@RequestParam(defaultValue="1") Integer page, @RequestParam(defaultValue="10") Integer size,
                                                  @RequestParam(required=false) String studentName, @RequestParam(required=false) String studentNo,
                                                  @RequestParam(required=false) String activityTitle, @RequestParam(required=false) Integer status) {

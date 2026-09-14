@@ -1,5 +1,6 @@
 # 校园活动积分平台 (EduPoint) - 后端 RESTful API 接口规范文档
 
+> **【开发规范红线】**：**严格禁止私自增加业务接口！系统前后端只允许对接与实现本文档已定义的接口，严禁擅自新增非 API 文档规定的接口！**  
 > **版本**：v1.0.0  
 > **基础路径 (Base URL)**：`http://localhost:8080/api` (Server Context-Path 为 `/api`)  
 > **数据格式**：Request / Response 均使用 `application/json;charset=UTF-8`（文件上传接口除外）  

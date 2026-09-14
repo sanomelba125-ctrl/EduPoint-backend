@@ -25,7 +25,7 @@ spring:
 # Sa-Token 配置
 sa-token:
   token-name: satoken
-  timeout: 2592000 # 30天
+  timeout: 3600 # 1小时 (3600秒，测试用)
   active-timeout: -1
   is-concurrent: true
   is-share: true
