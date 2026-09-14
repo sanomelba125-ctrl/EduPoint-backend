@@ -1,13 +1,14 @@
 package com.campus.modules.admin.controller;
 
-import cn.dev33.satoken.annotation.SaCheckLogin;
+import cn.dev33.satoken.annotation.SaCheckRole;
+import cn.dev33.satoken.annotation.SaMode;
 import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.campus.common.constant.UserRole;
 import com.campus.modules.activity.dto.ActivityRecordVO;
 import com.campus.modules.activity.entity.Activity;
-import com.campus.modules.activity.entity.StudentActivity;
 import com.campus.modules.activity.mapper.StudentActivityMapper;
 import com.campus.modules.activity.service.ActivityService;
 import com.campus.modules.admin.dto.ActivityExportDTO;
@@ -18,7 +19,6 @@ import com.campus.modules.mall.entity.StudentPointRecord;
 import com.campus.modules.mall.mapper.StudentPointRecordMapper;
 import com.campus.modules.student.entity.Student;
 import com.campus.modules.student.mapper.StudentMapper;
-import com.campus.common.auth.AuthUtil;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,6 +41,7 @@ import java.util.stream.Collectors;
 @Slf4j
 @RestController
 @RequestMapping({"/admin/export", "/dashboard/export"})
+@SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
 @RequiredArgsConstructor
 public class ExportController {
 
@@ -52,10 +53,8 @@ public class ExportController {
     /**
      * 导出活动明细
      */
-    @SaCheckLogin
     @GetMapping("/activities")
     public void exportActivities(HttpServletResponse response) throws IOException {
-        AuthUtil.requireAdminId();
         try {
             setExcelResponseProp(response, "活动明细报表");
 
@@ -102,10 +101,8 @@ public class ExportController {
     /**
      * 导出积分明细
      */
-    @SaCheckLogin
     @GetMapping("/points")
     public void exportPoints(HttpServletResponse response) throws IOException {
-        AuthUtil.requireAdminId();
         try {
             setExcelResponseProp(response, "学生积分明细报表");
 
@@ -156,7 +153,6 @@ public class ExportController {
     /**
      * 导出学生活动参与/打卡明细
      */
-    @SaCheckLogin
     @GetMapping({"/activity-records", "/activities/records"})
     public void exportActivityRecords(
             @RequestParam(required = false) String studentName,
@@ -164,7 +160,6 @@ public class ExportController {
             @RequestParam(required = false) String activityTitle,
             @RequestParam(required = false) Integer status,
             HttpServletResponse response) throws IOException {
-        AuthUtil.requireAdminId();
         try {
             setExcelResponseProp(response, "学生活动打卡参与记录报表");
 

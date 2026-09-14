@@ -94,12 +94,7 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
         if (updateDTO.getPointsRequired() != null) {
             gift.setPointsRequired(updateDTO.getPointsRequired());
         }
-        if (updateDTO.getTotalStock() != null) {
-            gift.setTotalStock(updateDTO.getTotalStock());
-        }
-        if (updateDTO.getStock() != null) {
-            gift.setStock(updateDTO.getStock());
-        }
+        // 注意：基础信息编辑不再更新 stock 与 totalStock，避免管理员改名/改图冲掉并发兑换扣减的实时库存
         if (updateDTO.getStatus() != null) {
             gift.setStatus(updateDTO.getStatus());
         }
@@ -117,8 +112,6 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
                 if (updateDTO.getDescription() != null) fresh.setDescription(updateDTO.getDescription());
                 if (StringUtils.hasText(updateDTO.getImage())) fresh.setImage(updateDTO.getImage());
                 if (updateDTO.getPointsRequired() != null) fresh.setPointsRequired(updateDTO.getPointsRequired());
-                if (updateDTO.getTotalStock() != null) fresh.setTotalStock(updateDTO.getTotalStock());
-                if (updateDTO.getStock() != null) fresh.setStock(updateDTO.getStock());
                 if (updateDTO.getStatus() != null) fresh.setStatus(updateDTO.getStatus());
                 if (fresh.getVersion() == null) fresh.setVersion(0);
                 fresh.setUpdatedBy(adminId);

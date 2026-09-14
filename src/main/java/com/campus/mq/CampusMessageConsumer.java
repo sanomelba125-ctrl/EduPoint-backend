@@ -37,16 +37,16 @@ public class CampusMessageConsumer {
     /**
      * 1. 异步消费打卡签到事件
      */
-    @RabbitListener(queues = RabbitMqConfig.ACTIVITY_CHECKIN_QUEUE)
+    @RabbitListener(queues = RabbitMqConfig.ACTIVITY_CHECKIN_QUEUE, autoStartup = "${spring.rabbitmq.listener.simple.auto-startup:true}")
     public void handleCheckinEvent(Map<String, Object> message) {
         log.info("[MQ 削峰消费] 接收到学生活动打卡异步流水: studentId={}, activityId={}", 
                 message.get("studentId"), message.get("activityId"));
     }
 
     /**
-     * 2. 消费超时未领取的礼品兑换订单
+     * 2. 消费超时未领取的礼品兑换订单 (延时死信自动关单)
      */
-    @RabbitListener(queues = RabbitMqConfig.GIFT_EXPIRE_QUEUE)
+    @RabbitListener(queues = RabbitMqConfig.GIFT_EXPIRE_QUEUE, autoStartup = "${spring.rabbitmq.listener.simple.auto-startup:true}")
     public void handleGiftOrderExpire(Map<String, Object> message) {
         if (message == null) {
             return;

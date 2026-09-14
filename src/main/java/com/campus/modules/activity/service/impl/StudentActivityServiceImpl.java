@@ -388,7 +388,6 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
     }
     @Override
     public IPage<ActivityRecordVO> adminList(Integer page, Integer size, String studentName, String studentNo, String activityTitle, Integer status) {
-        requireAdmin();
         long current = Math.max(page == null ? 1 : page, 1);
         long pageSize = Math.min(Math.max(size == null ? 10 : size, 1), 100);
         return baseMapper.selectAdminPage(new Page<>(current, pageSize), trim(studentName), trim(studentNo), trim(activityTitle), status);
@@ -396,7 +395,6 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
 
     @Override
     public ActivityRecordMetricsVO getRecordMetrics() {
-        requireAdmin();
         ActivityRecordMetricsVO vo = baseMapper.selectRecordMetrics();
         return vo != null ? vo : ActivityRecordMetricsVO.builder()
                 .totalRecords(0L)
@@ -413,10 +411,6 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
 
     private String trim(String value) {
         return value == null || value.isBlank() ? null : value.trim();
-    }
-
-    private void requireAdmin() {
-        AuthUtil.requireAdminId();
     }
 
     private int reserveParticipant(Activity activity) {

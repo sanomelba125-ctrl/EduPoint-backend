@@ -23,7 +23,7 @@ spring:
     password: guest
     listener:
       simple:
-        auto-startup: false
+        auto-startup: ${RABBITMQ_LISTENER_AUTO_STARTUP:true}
 
 # MyBatis-Plus 配置
 mybatis-plus:

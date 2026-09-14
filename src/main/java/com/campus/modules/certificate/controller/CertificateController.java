@@ -1,10 +1,12 @@
 package com.campus.modules.certificate.controller;
 
 import cn.dev33.satoken.annotation.SaCheckLogin;
+import cn.dev33.satoken.annotation.SaCheckRole;
+import cn.dev33.satoken.annotation.SaMode;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.campus.common.auth.AuthUtil;
+import com.campus.common.constant.UserRole;
 import com.campus.common.result.Result;
 import com.campus.modules.certificate.dto.*;
 import com.campus.modules.certificate.entity.Certificate;
@@ -49,6 +51,7 @@ public class CertificateController {
      * 8.3 管理端分页多条件查询证书台账（连表带出学生姓名、学号、活动标题等）
      * GET /certificate/list
      */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     @GetMapping("/list")
     public Result<IPage<CertificateAdminVO>> list(
             @RequestParam(defaultValue = "1") Integer page,
@@ -65,13 +68,13 @@ public class CertificateController {
      * 兼容 dev 分支的单表分页查询
      * GET /certificate/page
      */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     @GetMapping("/page")
     public Result<IPage<Certificate>> pageCertificates(
             @RequestParam(defaultValue = "1") Integer page,
             @RequestParam(defaultValue = "10") Integer size,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Integer status) {
-        AuthUtil.requireAdminId();
         long current = Math.max(page == null ? 1 : page, 1);
         long pageSize = Math.min(Math.max(size == null ? 10 : size, 1), 100);
 
@@ -94,6 +97,7 @@ public class CertificateController {
      * 8.4 管理端撤销有效证书。
      * PUT /certificate/{id}/revoke
      */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     @PutMapping("/{id}/revoke")
     public Result<Void> revoke(@PathVariable Long id, @Valid @RequestBody CertificateRevokeDTO dto) {
         certificateService.revoke(id, dto.getRevokeReason());

@@ -96,32 +96,48 @@ public class AiChatServiceImpl implements AiChatService {
         String cleanQuestion = DataDesensitizer.desensitize(rawQuestion.trim());
         log.info("【AI 对话】收到学生 (ID:{}) 提问: '{}' -> 脱敏后: '{}'", studentId, rawQuestion, cleanQuestion);
 
-        // 2. 检索本地 qa_knowledge 知识库
-        QaKnowledge hit = qaKnowledgeService.matchKnowledge(cleanQuestion);
-        if (hit != null) {
-            // 本地知识库强匹配命中 (Exact/High-Confidence Hit)
-            qaKnowledgeService.incrementViewCount(hit.getId());
-            streamKnowledgeAnswer(emitter, hit);
-            sendDone(emitter);
-            return;
-        }
-
-        // 3. 本地知识库未命中 -> 意图识别与学生私有数据注入
+        // 2. 意图识别与学生私有数据注入
+        boolean personalQuery = isPersonalQuery(cleanQuestion);
         String personalContext = extractStudentContext(cleanQuestion, studentId);
 
-        // 4. 调用外部大模型 或 本地智能推断兜底
+        // 3. 仅在非个人私有数据查询时，检索本地 qa_knowledge 官方通用问答库 (避免通用知识库截胡个人私有数据查询)
+        if (!personalQuery) {
+            QaKnowledge hit = qaKnowledgeService.matchKnowledge(cleanQuestion);
+            if (hit != null) {
+                // 本地知识库强匹配命中 (Exact/High-Confidence Hit)
+                qaKnowledgeService.incrementViewCount(hit.getId());
+                streamKnowledgeAnswer(emitter, hit);
+                sendDone(emitter);
+                return;
+            }
+        }
+
+        // 4. 调用商汤日日新大模型 (已注入真实学生上下文：积分、订单、活动)
         if (aiConfig.isEnabled() && StringUtils.hasText(aiConfig.getApiKey())) {
             boolean llmSuccess = streamFromLlm(cleanQuestion, personalContext, emitter);
             if (llmSuccess) {
                 sendDone(emitter);
                 return;
             }
-            log.warn("外部大模型调用失败或不可达，自动无缝降级为本地智能推断引擎");
+            log.warn("商汤大模型调用失败或不可达，自动无缝降级为本地智能推断引擎");
         }
 
         // 5. 本地智能推断兜底 (Fallback / Mock 模式)
         streamLocalSynthesizedAnswer(emitter, cleanQuestion, personalContext, studentId);
         sendDone(emitter);
+    }
+
+    /**
+     * 判断是否为针对个人私有业务数据的意图 (如查我自己的积分、查我的订单、查我报名的活动)
+     */
+    private boolean isPersonalQuery(String question) {
+        if (!StringUtils.hasText(question)) {
+            return false;
+        }
+        String q = question.toLowerCase();
+        return q.contains("我") || q.contains("咱") || q.contains("自己") || q.contains("本人")
+                || q.contains("余额") || q.contains("多少分") || q.contains("剩多少") || q.contains("有几")
+                || q.contains("查查") || q.contains("帮我查") || q.contains("提货码是多少");
     }
 
     /**
@@ -148,6 +164,9 @@ public class AiChatServiceImpl implements AiChatService {
      */
     private String extractStudentContext(String question, Long studentId) {
         if (studentId == null) {
+            if (isPersonalQuery(question)) {
+                return "【系统提示】：用户提问涉及个人私有业务数据（如查个人积分、查个人订单或活动），但当前未检测到学生登录状态。请礼貌提醒学生先前往平台【个人中心】登录账号，登录后即可为您实时查询个人积分和订单状态。";
+            }
             return "";
         }
 
@@ -193,7 +212,7 @@ public class AiChatServiceImpl implements AiChatService {
     }
 
     /**
-     * 调用外部兼容 OpenAI / DeepSeek REST SSE 接口
+     * 调用商汤日日新 (SenseNova 6.8 Flash Lite) REST SSE 流式接口
      */
     private boolean streamFromLlm(String cleanQuestion, String personalContext, SseEmitter emitter) {
         try {
@@ -207,6 +226,12 @@ public class AiChatServiceImpl implements AiChatService {
             JSONObject requestBody = new JSONObject();
             requestBody.put("model", aiConfig.getModel());
             requestBody.put("stream", true);
+            if (aiConfig.getMaxTokens() != null) {
+                requestBody.put("max_tokens", aiConfig.getMaxTokens());
+            }
+            if (StringUtils.hasText(aiConfig.getReasoningEffort())) {
+                requestBody.put("reasoning_effort", aiConfig.getReasoningEffort());
+            }
 
             JSONArray messages = new JSONArray();
             JSONObject sysMsg = new JSONObject();
@@ -242,7 +267,7 @@ public class AiChatServiceImpl implements AiChatService {
 
             HttpResponse<java.io.InputStream> response = client.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() != 200) {
-                log.warn("大模型接口返回非200状态: code={}", response.statusCode());
+                log.warn("商汤大模型接口返回非200状态: code={}", response.statusCode());
                 return false;
             }
 
@@ -266,7 +291,7 @@ public class AiChatServiceImpl implements AiChatService {
                                 if (delta != null && delta.containsKey("content")) {
                                     String text = delta.getString("content");
                                     if (text != null && !text.isEmpty()) {
-                                        sendChunk(emitter, text, false, "LLM");
+                                        sendChunk(emitter, text, false, "SENSENOVA");
                                     }
                                 }
                             }
@@ -278,7 +303,7 @@ public class AiChatServiceImpl implements AiChatService {
             }
             return true;
         } catch (Exception e) {
-            log.error("调用外部大模型异常: {}", e.getMessage());
+            log.error("调用商汤大模型异常: {}", e.getMessage());
             return false;
         }
     }

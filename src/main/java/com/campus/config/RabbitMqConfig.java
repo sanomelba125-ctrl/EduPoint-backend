@@ -3,6 +3,7 @@ package com.campus.config;
 import org.springframework.amqp.core.*;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -12,10 +13,13 @@ import java.util.Map;
 /**
  * RabbitMQ 消息队列核心拓扑配置
  * 1. 校园活动打卡高并发削峰填谷队列（Direct）
- * 2. 礼品兑换超时未提货自动关单与积分回退延时死信队列 (TTL + DLX)
+ * 2. 礼品兑换超时未提货自动关单与积分回退延时死信队列 (TTL + DLX，默认24小时)
  */
 @Configuration
 public class RabbitMqConfig {
+
+    @Value("${campus.mall.order-timeout-ms:86400000}")
+    private long orderTimeoutMs;
 
     // ================== 1. 活动打卡并发削峰队列 ==================
     public static final String ACTIVITY_EXCHANGE = "campus.activity.exchange";
@@ -24,7 +28,7 @@ public class RabbitMqConfig {
     public static final String ACTIVITY_CACHE_REFRESH_QUEUE = "campus.activity.cache.refresh.queue";
     public static final String ACTIVITY_CACHE_REFRESH_ROUTING_KEY = "activity.cache.refresh";
 
-    // ================== 2. 礼品兑换 10 分钟延时超时关单队列（DLX 架构） ==================
+    // ================== 2. 礼品兑换 24 小时 (1天) 延时超时关单队列（DLX 架构） ==================
     public static final String GIFT_ORDER_EXCHANGE = "campus.gift.order.exchange";
     public static final String GIFT_ORDER_DELAY_QUEUE = "campus.gift.order.delay.queue";
     public static final String GIFT_ORDER_DELAY_ROUTING_KEY = "gift.order.delay";
@@ -89,8 +93,8 @@ public class RabbitMqConfig {
         args.put("x-dead-letter-exchange", GIFT_DLX_EXCHANGE);
         // 绑定死信 Routing Key
         args.put("x-dead-letter-routing-key", GIFT_EXPIRE_ROUTING_KEY);
-        // 默认延时 10 分钟。
-        args.put("x-message-ttl", 600000); 
+        // 默认延时 24 小时 (86,400,000 ms)。
+        args.put("x-message-ttl", orderTimeoutMs); 
         return new Queue(GIFT_ORDER_DELAY_QUEUE, true, false, false, args);
     }
 

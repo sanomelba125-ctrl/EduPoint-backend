@@ -1,7 +1,8 @@
 package com.campus.modules.admin.controller;
 
-import cn.dev33.satoken.annotation.SaCheckLogin;
-import com.campus.common.auth.AuthUtil;
+import cn.dev33.satoken.annotation.SaCheckRole;
+import cn.dev33.satoken.annotation.SaMode;
+import com.campus.common.constant.UserRole;
 import com.campus.common.result.Result;
 import com.campus.modules.admin.dto.DashboardOverviewVO;
 import com.campus.modules.admin.dto.DashboardTopStudentsVO;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Slf4j
 @RestController
 @RequestMapping({"/dashboard", "/admin/dashboard"})
+@SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
 @RequiredArgsConstructor
 public class DashboardController {
 
@@ -27,20 +29,16 @@ public class DashboardController {
     /**
      * 获取数据看板核心指标概览 (学生总数、打卡总人次、签到率、流通积分、分类分布与趋势)
      */
-    @SaCheckLogin
     @GetMapping("/overview")
     public Result<DashboardOverviewVO> getOverview() {
-        AuthUtil.requireAdminId();
         return Result.success(dashboardService.getOverview());
     }
 
     /**
      * 获取数据看板学生积分光荣榜 Top 5 与近期实时打卡流水
      */
-    @SaCheckLogin
     @GetMapping("/top-students")
     public Result<DashboardTopStudentsVO> getTopStudents() {
-        AuthUtil.requireAdminId();
         return Result.success(dashboardService.getTopStudentsAndRecentCheckins());
     }
 }

@@ -41,6 +41,13 @@ public interface StudentService extends IService<Student> {
     StudentVO updateProfile(StudentUpdateProfileDTO updateDTO);
 
     /**
+     * 学生自助修改个人登录密码
+     *
+     * @param dto 修改密码入参
+     */
+    void changePassword(com.campus.modules.student.dto.StudentChangePasswordDTO dto);
+
+    /**
      * 管理端分页多条件查询学生档案列表
      *
      * @param queryDTO 查询入参

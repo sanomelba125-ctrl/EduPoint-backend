@@ -1,7 +1,9 @@
 package com.campus.modules.ai.controller;
 
+import cn.dev33.satoken.annotation.SaCheckRole;
+import cn.dev33.satoken.annotation.SaMode;
 import com.baomidou.mybatisplus.core.metadata.IPage;
-import com.campus.common.auth.AuthUtil;
+import com.campus.common.constant.UserRole;
 import com.campus.common.result.Result;
 import com.campus.modules.ai.dto.QaKnowledgeDTO;
 import com.campus.modules.ai.dto.QaKnowledgePageQuery;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.*;
  */
 @RestController
 @RequestMapping("/admin/qa-knowledge")
+@SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN}, mode = SaMode.OR)
 @RequiredArgsConstructor
 public class QaKnowledgeAdminController {
 
@@ -27,7 +30,6 @@ public class QaKnowledgeAdminController {
      */
     @GetMapping("/page")
     public Result<IPage<QaKnowledge>> page(QaKnowledgePageQuery query) {
-        AuthUtil.requireAdminId();
         if (query == null) {
             query = new QaKnowledgePageQuery();
         }
@@ -41,7 +43,6 @@ public class QaKnowledgeAdminController {
      */
     @GetMapping("/{id}")
     public Result<QaKnowledge> getById(@PathVariable("id") Long id) {
-        AuthUtil.requireAdminId();
         QaKnowledge item = qaKnowledgeService.getById(id);
         return Result.success(item);
     }
@@ -52,7 +53,6 @@ public class QaKnowledgeAdminController {
      */
     @PostMapping
     public Result<Boolean> create(@RequestBody QaKnowledgeDTO dto) {
-        AuthUtil.requireAdminId();
         boolean success = qaKnowledgeService.saveKnowledge(dto);
         return Result.success("知识库条目新增成功", success);
     }
@@ -63,7 +63,6 @@ public class QaKnowledgeAdminController {
      */
     @PutMapping
     public Result<Boolean> update(@RequestBody QaKnowledgeDTO dto) {
-        AuthUtil.requireAdminId();
         boolean success = qaKnowledgeService.updateKnowledge(dto);
         return Result.success("知识库条目更新成功", success);
     }
@@ -74,7 +73,6 @@ public class QaKnowledgeAdminController {
      */
     @DeleteMapping("/{id}")
     public Result<Boolean> delete(@PathVariable("id") Long id) {
-        AuthUtil.requireAdminId();
         boolean success = qaKnowledgeService.deleteKnowledge(id);
         return Result.success("知识库条目已删除", success);
     }
@@ -85,7 +83,6 @@ public class QaKnowledgeAdminController {
      */
     @PutMapping("/{id}/status")
     public Result<Boolean> toggleStatus(@PathVariable("id") Long id, @RequestParam("status") Integer status) {
-        AuthUtil.requireAdminId();
         boolean success = qaKnowledgeService.toggleStatus(id, status);
         return Result.success("状态更新成功", success);
     }

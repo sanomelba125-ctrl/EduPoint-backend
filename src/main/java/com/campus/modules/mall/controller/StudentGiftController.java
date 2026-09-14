@@ -1,6 +1,9 @@
 package com.campus.modules.mall.controller;
 
+import cn.dev33.satoken.annotation.SaCheckRole;
+import cn.dev33.satoken.annotation.SaMode;
 import com.campus.common.auth.AuthUtil;
+import com.campus.common.constant.UserRole;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.common.exception.BusinessException;
 import com.campus.common.result.Result;
@@ -9,6 +12,7 @@ import com.campus.modules.mall.dto.*;
 import com.campus.modules.mall.service.StudentGiftService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -17,6 +21,7 @@ import java.util.Map;
  * 礼品兑换订单控制器
  * 包含学生端兑换、查询本人订单、自主取消，以及管理端订单查询、核销提货码、后台退单
  */
+@Slf4j
 @RestController
 @RequiredArgsConstructor
 public class StudentGiftController {
@@ -24,7 +29,7 @@ public class StudentGiftController {
     private final StudentGiftService studentGiftService;
 
     // ==========================================
-    // 学生端接口 (Student Endpoints)
+    // 移动学生端接口 (Student Endpoints)
     // ==========================================
 
     /**
@@ -63,39 +68,6 @@ public class StudentGiftController {
         return Result.success("订单取消成功，积分已原路返还", null);
     }
 
-    /**
-     * 取消礼品兑换订单并返还积分（兼容移动端自主取消与管理端取消调用）
-     * 对应 POST /gift/cancel
-     */
-    @PostMapping({"/gift/cancel", "/student/gift/cancel"})
-    public Result<Void> cancelOrder(@RequestBody Map<String, Object> params) {
-        Object orderIdObj = params.get("orderId");
-        if (orderIdObj == null) {
-            orderIdObj = params.get("id");
-        }
-        if (orderIdObj == null) {
-            throw new BusinessException("缺少 orderId 参数");
-        }
-        Long orderId = Long.valueOf(orderIdObj.toString());
-
-        // 判断当前是学生还是管理员操作
-        if (AuthUtil.isStudent()) {
-            Long studentId = AuthUtil.requireStudentId();
-            studentGiftService.studentCancelOrder(orderId, studentId);
-            return Result.success("订单已取消，积分已原路退回", null);
-        } else if (AuthUtil.isAdmin()) {
-            Long adminId = AuthUtil.requireAdminId();
-            OrderCancelDTO cancelDTO = new OrderCancelDTO();
-            cancelDTO.setOrderId(orderId);
-            cancelDTO.setCancelReason(params.get("reason") != null ? params.get("reason").toString() : "管理端取消");
-            cancelDTO.setRefundPoints(true);
-            studentGiftService.adminCancelOrder(cancelDTO, adminId);
-            return Result.success("管理端取消成功", null);
-        } else {
-            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "未授权的角色身份");
-        }
-    }
-
     // ==========================================
     // 管理端接口 (Admin Endpoints)
     // ==========================================
@@ -104,9 +76,9 @@ public class StudentGiftController {
      * 管理端全量查询兑换订单列表
      * 对应 GET /gift/order/list 或 /gift/orders
      */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     @GetMapping({"/gift/order/list", "/gift/orders", "/admin/gift/orders"})
     public Result<Page<StudentGiftVO>> getAdminOrderList(GiftOrderQueryDTO queryDTO) {
-        getAdminId();
         Page<StudentGiftVO> page = studentGiftService.getAdminOrderPage(queryDTO);
         return Result.success(page);
     }
@@ -115,9 +87,9 @@ public class StudentGiftController {
      * 管理端查询礼品兑换订单全局指标统计（避免分页当前页数据当成全局数据）
      * 对应 GET /gift/order/metrics 或 /admin/gift/orders/metrics
      */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     @GetMapping({"/gift/order/metrics", "/admin/gift/orders/metrics", "/admin/gift/order/metrics"})
     public Result<GiftOrderMetricsVO> getAdminOrderMetrics() {
-        getAdminId();
         GiftOrderMetricsVO metrics = studentGiftService.getOrderMetrics();
         return Result.success(metrics);
     }
@@ -126,6 +98,7 @@ public class StudentGiftController {
      * 管理端核销提货码并确认发放
      * 对应 API.md 5.5 POST /gift/deliver 或 /gift/order/confirm-delivery
      */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     @PostMapping({"/gift/deliver", "/gift/order/confirm-delivery", "/gift/order/deliver"})
     public Result<Void> confirmDelivery(@Valid @RequestBody DeliveryConfirmDTO dto) {
         Long adminId = getAdminId();
@@ -137,6 +110,7 @@ public class StudentGiftController {
      * 管理端取消订单并退款
      * 对应 POST /gift/order/cancel 或 /admin/gift/order/cancel
      */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     @PostMapping({"/gift/order/cancel", "/admin/gift/order/cancel"})
     public Result<Void> adminCancelOrder(@Valid @RequestBody OrderCancelDTO dto) {
         Long adminId = getAdminId();

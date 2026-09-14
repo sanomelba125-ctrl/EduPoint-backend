@@ -1,6 +1,5 @@
 package com.campus.modules.mall.service.impl;
 
-import com.campus.common.auth.AuthUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -350,26 +349,11 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
             throw new BusinessException("仅处于【待发放/待提货】状态的订单支持自主取消！");
         }
 
-        // 1. 状态守卫的条件更新（status 1 -> 3）：并发下只有一方能成功。
-        //    受影响行数为 0 说明订单已被其他线程流转，直接退出，绝不重复退分/退库存。
-        int changed = this.baseMapper.cancelOrderWithStatusGuard(order.getId(), 1, 1, LocalDateTime.now(),
-                "学生在移动端自主申请取消提货", null);
-        if (changed == 0) {
+        boolean success = doCancelOrder(order, "学生在移动端自主申请取消提货", true, null);
+        if (!success) {
             log.warn("学生取消订单未生效，订单状态已被并发操作流转: orderId={}, orderNo={}", order.getId(), order.getOrderNo());
             throw new BusinessException("仅处于【待发放/待提货】状态的订单支持自主取消！");
         }
-
-        // 2. 原路恢复礼品可用库存（以下副作用全部在状态更新成功之后执行）
-        giftMapper.increaseStock(order.getGiftId(), order.getQuantity());
-
-        // 3. 返还积分并读回真实余额
-        studentMapper.addCurrentPoints(studentId, order.getPointsCost());
-        int afterPoints = studentMapper.selectCurrentPoints(studentId);
-
-        // 4. 记入积分流水台账 (由 PointLedger 统一推导 before/after 并落账)
-        pointLedger.record(studentId, 4, order.getPointsCost(), afterPoints,
-                String.format("兑换订单【%s】取消，原路返还积分", order.getOrderNo()),
-                order.getId(), null);
     }
 
     @Override
@@ -444,6 +428,18 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         if (!doCancelOrder(order, dto.getCancelReason(), refund, adminId)) {
             throw new BusinessException("仅【待发放】订单允许取消退单");
         }
+
+        runAfterCommit(() -> {
+            try {
+                String stuTitle = "📢 礼品兑换订单已被管理员取消";
+                String reason = StringUtils.hasText(dto.getCancelReason()) ? "原因：" + dto.getCancelReason() : "如有疑问请联系学工管理员。";
+                String refundTxt = refund ? String.format("，消耗的 %d 积分已全额退还您的账户", order.getPointsCost()) : "";
+                String stuContent = String.format("您的礼品订单【%s】已被管理员取消%s。%s", order.getOrderNo(), refundTxt, reason);
+                sysNoticeService.createAndSendNotice(2, order.getStudentId(), "gift_cancel", stuTitle, stuContent, order.getId());
+            } catch (Exception e) {
+                log.warn("向学生发送管理员取消订单通知异常: {}", e.getMessage());
+            }
+        });
     }
 
     /**
@@ -461,16 +457,38 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
             return false;
         }
 
-        // 以下副作用全部在状态更新成功之后执行
-        giftMapper.increaseStock(order.getGiftId(), order.getQuantity());
+        // 1. 原路恢复礼品可用库存并检查受影响行数（防静默失败）
+        int stockRows = giftMapper.increaseStock(order.getGiftId(), order.getQuantity());
+        if (stockRows <= 0) {
+            log.warn("[取消订单/库存回补告警] 礼品库存回补未生效(受影响行数为0): orderId={}, orderNo={}, giftId={}, quantity={}",
+                    order.getId(), order.getOrderNo(), order.getGiftId(), order.getQuantity());
+        }
 
+        // 2. 返还积分并记录流水台账
         if (refund) {
-            studentMapper.addCurrentPoints(order.getStudentId(), order.getPointsCost());
-            int afterPoints = studentMapper.selectCurrentPoints(order.getStudentId());
+            // 退分前先判学生是否存在（拦截已注销/不存在的学生，避免 null 拆箱引发 NPE 导致 RabbitMQ 消息无限重投死循环）
+            Student student = studentMapper.selectById(order.getStudentId());
+            if (student == null || (student.getDeleted() != null && student.getDeleted() == 1)) {
+                log.warn("[取消订单/退分告警] 学生不存在或已被注销，跳过退分及台账: studentId={}, orderId={}, orderNo={}, pointsCost={}",
+                        order.getStudentId(), order.getId(), order.getOrderNo(), order.getPointsCost());
+            } else {
+                studentMapper.addCurrentPoints(order.getStudentId(), order.getPointsCost());
+                Integer curPoints = studentMapper.selectCurrentPoints(order.getStudentId());
+                int afterPoints = curPoints != null ? curPoints : 0;
 
-            pointLedger.record(order.getStudentId(), 4, order.getPointsCost(), afterPoints,
-                    String.format("管理员取消订单【%s】，全额退还积分", order.getOrderNo()),
-                    order.getId(), operatorId);
+                String remark;
+                if (operatorId != null && operatorId == 0L) {
+                    remark = String.format("订单【%s】超时未提货，系统自动取消并退还积分", order.getOrderNo());
+                } else if (operatorId == null) {
+                    remark = String.format("兑换订单【%s】取消，原路返还积分", order.getOrderNo());
+                } else {
+                    remark = String.format("管理员取消订单【%s】，全额退还积分", order.getOrderNo());
+                }
+
+                pointLedger.record(order.getStudentId(), 4, order.getPointsCost(), afterPoints,
+                        remark,
+                        order.getId(), operatorId);
+            }
         }
         return true;
     }
@@ -494,6 +512,16 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         boolean cancelled = doCancelOrder(order, "超时未提货，系统自动关单", true, 0L);
         if (cancelled) {
             log.info("[延时关单] 订单超时自动关单并退还积分成功: orderId={}, orderNo={}", orderId, order.getOrderNo());
+            runAfterCommit(() -> {
+                try {
+                    String stuTitle = "⏰ 礼品提货已超时取消";
+                    String stuContent = String.format("您的礼品订单【%s】因逾期 24 小时未到指定地点核销，系统已自动取消订单并将 %d 积分全额原路退还您的账户。",
+                            order.getOrderNo(), order.getPointsCost());
+                    sysNoticeService.createAndSendNotice(2, order.getStudentId(), "gift_expire", stuTitle, stuContent, order.getId());
+                } catch (Exception e) {
+                    log.warn("发送超时关单通知失败: {}", e.getMessage());
+                }
+            });
         } else {
             log.info("[延时关单] 订单已被其他并发操作流转，跳过重复退单: orderId={}", orderId);
         }
@@ -559,7 +587,6 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
 
     @Override
     public GiftOrderMetricsVO getOrderMetrics() {
-        AuthUtil.requireAdminId();
         GiftOrderMetricsVO metrics = this.baseMapper.selectOrderMetrics();
         if (metrics == null) {
             metrics = new GiftOrderMetricsVO();

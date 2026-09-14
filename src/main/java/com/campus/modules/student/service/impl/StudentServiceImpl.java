@@ -136,6 +136,50 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
     }
 
     @Override
+    public void changePassword(StudentChangePasswordDTO dto) {
+        String oldPwd = dto.getOldPassword() != null ? dto.getOldPassword().trim() : "";
+        String newPwd = dto.getNewPassword() != null ? dto.getNewPassword().trim() : "";
+        String confirmPwd = dto.getConfirmPassword() != null ? dto.getConfirmPassword().trim() : "";
+
+        if (!newPwd.equals(confirmPwd)) {
+            throw new BusinessException("新密码与确认密码不一致，请重新输入");
+        }
+        if (oldPwd.equals(newPwd)) {
+            throw new BusinessException("新密码不能与原密码相同");
+        }
+        Long studentId = AuthUtil.requireStudentId();
+        // 关键修复：因 Student.password 实体字段标注了 @TableField(select = false)，默认查询不包含密码
+        // 此处必须显式声明 select(Student::getPassword) 才能取到数据库真实密文，否则 getPassword() 恒为 null
+        Student student = lambdaQuery()
+                .select(Student::getId, Student::getStudentNo, Student::getName,
+                        Student::getPassword, Student::getStatus)
+                .eq(Student::getId, studentId)
+                .one();
+        if (student == null || (student.getStatus() != null && student.getStatus() == 0)) {
+            throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "学生账号不存在或已被禁用");
+        }
+
+        boolean matched = PasswordUtil.matches(oldPwd, student.getPassword())
+                || oldPwd.equals(student.getPassword());
+
+        log.info("【学生修改密码】发起学生: ID={}, 学号={}, 姓名={}, 输入原密码='{}', 校验匹配结果={}",
+                student.getId(), student.getStudentNo(), student.getName(), oldPwd, matched);
+
+        if (!matched) {
+            throw new BusinessException(String.format("原密码校验错误（当前登录学籍: %s %s），请核对账号与密码",
+                    student.getStudentNo(), student.getName()));
+        }
+
+        String encodedPassword = PasswordUtil.encode(newPwd);
+        lambdaUpdate()
+                .eq(Student::getId, studentId)
+                .set(Student::getPassword, encodedPassword)
+                .update();
+        StpUtil.kickout(STUDENT_LOGIN_PREFIX + studentId);
+        log.info("学生 [{}] (ID: {}) 成功修改登录密码并强制下线旧会话", student.getStudentNo(), student.getId());
+    }
+
+    @Override
     public IPage<StudentVO> getStudentPage(StudentQueryDTO queryDTO) {
         Page<Student> page = new Page<>(
                 queryDTO.getPage() != null ? queryDTO.getPage() : 1,

@@ -46,12 +46,18 @@ websocket:
     # 是否放行不带 Origin 请求头的非浏览器客户端(微信小程序原生连接、部分真机调试不会携带 Origin)
     allow-missing-origin: ${WEBSOCKET_ALLOW_MISSING_ORIGIN:true}
 
-# AI 客服大模型配置 (支持 DeepSeek / OpenAI 兼容接口，未启用时自动走本地高质感知识库流式Mock)
+# AI 客服大模型配置 (商汤日日新 SenseNova 6.8 Flash Lite)
 ai:
   llm:
-    enabled: ${AI_LLM_ENABLED:false}
-    base-url: ${AI_LLM_BASE_URL:https://api.deepseek.com/v1}
-    api-key: ${AI_LLM_API_KEY:}
-    model: ${AI_LLM_MODEL:deepseek-chat}
-    timeout-seconds: 30
+    enabled: ${AI_LLM_ENABLED:true} # 启用大语言模型调用 (未配 Key 或网络异常时自动无缝降级为本地引擎)
+    base-url: ${AI_LLM_BASE_URL:https://token.sensenova.cn/v1}
+    api-key: ${SENSENOVA_API_KEY:${AI_LLM_API_KEY:sk-xLoVIzGvBKBfC2FvjyP8IItEUCCZUlGn}} # 商汤开放平台 API 密钥
+    model: ${AI_LLM_MODEL:sensenova-6.8-flash-lite}
+    timeout-seconds: 60
+    reasoning-effort: ${AI_LLM_REASONING_EFFORT:none} # 客服模式设为 none 关闭思考以秒级响应；可选 low/medium/high
+    max-tokens: 8192
 
+# 平台业务规约配置
+campus:
+  mall:
+    order-timeout-ms: ${CAMPUS_MALL_ORDER_TIMEOUT_MS:86400000} # 礼品订单未提货自动关单时效 (默认 24 小时 / 86400000 毫秒)

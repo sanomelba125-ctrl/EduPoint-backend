@@ -1,6 +1,9 @@
 package com.campus.modules.student.controller;
 
+import cn.dev33.satoken.annotation.SaCheckRole;
+import cn.dev33.satoken.annotation.SaMode;
 import com.campus.common.auth.AuthUtil;
+import com.campus.common.constant.UserRole;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.common.exception.BusinessException;
 import com.campus.common.result.Result;
@@ -59,7 +62,6 @@ public class StudentScoreController {
             @RequestParam(value = "page", defaultValue = "1") Integer page,
             @RequestParam(value = "size", defaultValue = "20") Integer size,
             @RequestParam(value = "college", required = false) String college) {
-
         Long currentStudentId = AuthUtil.currentStudentIdOrNull();
         StudentRankResultVO result = studentScoreService.getLeaderboard(page, size, college, currentStudentId);
         return Result.success(result);
@@ -73,9 +75,9 @@ public class StudentScoreController {
      * 管理端全量积分对账流水明细检索
      * 对应 GET /point/record/list 与 /admin/point/record/list
      */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     @GetMapping({"/point/record/list", "/admin/point/record/list", "/admin/point-record/list"})
     public Result<Page<StudentPointRecordVO>> getAdminPointRecords(AdminPointRecordQueryDTO queryDTO) {
-        getAdminId();
         Page<StudentPointRecordVO> page = studentScoreService.getAdminRecordPage(queryDTO);
         return Result.success(page);
     }
@@ -84,17 +86,18 @@ public class StudentScoreController {
      * 管理端对账流水大盘指标统计
      * 对应 GET /point/record/metrics 与 /admin/point/record/metrics
      */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     @GetMapping({"/point/record/metrics", "/admin/point/record/metrics"})
     public Result<LedgerMetricsVO> getLedgerMetrics() {
-        getAdminId();
         LedgerMetricsVO metrics = studentScoreService.getLedgerMetrics();
         return Result.success(metrics);
     }
 
     /**
-     * 管理端人工特殊积分调账
+     * 管理端人工特殊积分调账（仅超管与普通管理员专属）
      * 对应 API.md 4.4 POST /student/score/adjust 与 /admin/point/adjust
      */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN}, mode = SaMode.OR)
     @PostMapping({"/student/score/adjust", "/admin/point/adjust", "/admin/student/score/adjust"})
     public Result<Void> adjustPoints(@Valid @RequestBody PointAdjustDTO dto) {
         Long adminId = getAdminId();

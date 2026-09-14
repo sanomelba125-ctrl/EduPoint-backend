@@ -1,7 +1,9 @@
 package com.campus.modules.activity.controller;
 
-import cn.dev33.satoken.annotation.SaCheckLogin;
+import cn.dev33.satoken.annotation.SaCheckRole;
+import cn.dev33.satoken.annotation.SaMode;
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.campus.common.constant.UserRole;
 import com.campus.common.result.Result;
 import com.campus.modules.activity.dto.ActivityPageQuery;
 import com.campus.modules.activity.dto.ActivitySaveDTO;
@@ -30,19 +32,19 @@ public class ActivityController {
     @Resource
     private ActivityService activityService;
 
-    @SaCheckLogin
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     @PostMapping("/create")
     public Result<Activity> create(@Valid @RequestBody ActivitySaveDTO dto) {
         return Result.success("活动创建成功", activityService.create(dto));
     }
 
-    @SaCheckLogin
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     @PutMapping("/update")
     public Result<Activity> update(@Valid @RequestBody ActivitySaveDTO dto) {
         return Result.success("活动修改成功", activityService.update(dto));
     }
 
-    @SaCheckLogin
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     @DeleteMapping("/{id}")
     public Result<Void> archive(@PathVariable Long id) {
         activityService.archive(id);
@@ -64,7 +66,7 @@ public class ActivityController {
      * GET /activity/{id}/qrcode
      * 权限：管理员登录
      */
-    @SaCheckLogin
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     @GetMapping("/{id}/qrcode")
     public Result<QrCodeVO> getQrCode(@PathVariable Long id) {
         return Result.success("二维码生成成功", activityService.generateQrCode(id));

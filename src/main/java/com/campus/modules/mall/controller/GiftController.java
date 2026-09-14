@@ -1,6 +1,9 @@
 package com.campus.modules.mall.controller;
 
+import cn.dev33.satoken.annotation.SaCheckRole;
+import cn.dev33.satoken.annotation.SaMode;
 import com.campus.common.auth.AuthUtil;
+import com.campus.common.constant.UserRole;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.common.exception.BusinessException;
 import com.campus.common.result.Result;
@@ -49,6 +52,7 @@ public class GiftController {
      * 管理端新增礼品
      * 对应 API.md 5.2 POST /gift/create
      */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN}, mode = SaMode.OR)
     @PostMapping({"/create", "/save"})
     public Result<GiftVO> createGift(@Valid @RequestBody GiftCreateDTO createDTO) {
         Long adminId = getAdminId();
@@ -60,6 +64,7 @@ public class GiftController {
      * 管理端修改礼品
      * 对应 PUT /gift/update
      */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN}, mode = SaMode.OR)
     @PutMapping({"/update", "/edit"})
     public Result<GiftVO> updateGift(@Valid @RequestBody GiftUpdateDTO updateDTO) {
         Long adminId = getAdminId();
@@ -71,9 +76,9 @@ public class GiftController {
      * 管理端删除礼品
      * 对应 DELETE /gift/{id}
      */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN}, mode = SaMode.OR)
     @DeleteMapping("/{id}")
-    public Result<Void> deleteGift(@PathVariable("id") Long id) {
-        getAdminId();
+    public Result<Void> deleteGift(@PathVariable Long id) {
         giftService.deleteGift(id);
         return Result.success("删除成功", null);
     }
@@ -82,12 +87,12 @@ public class GiftController {
      * 管理端切换上架状态
      * 对应 PUT /gift/{id}/status/{status} 或 PUT /gift/{id}/status?status=0
      */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN}, mode = SaMode.OR)
     @RequestMapping(value = {"/{id}/status/{status}", "/{id}/status"}, method = {RequestMethod.PUT, RequestMethod.POST})
     public Result<Void> toggleStatus(
             @PathVariable("id") Long id,
             @PathVariable(value = "status", required = false) Integer pathStatus,
             @RequestParam(value = "status", required = false) Integer paramStatus) {
-        getAdminId();
         Integer status = pathStatus != null ? pathStatus : paramStatus;
         if (status == null) {
             throw new BusinessException("目标货架状态不能为空");

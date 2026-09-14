@@ -2,6 +2,7 @@ package com.campus.common.exception;
 
 import cn.dev33.satoken.exception.NotLoginException;
 import cn.dev33.satoken.exception.NotPermissionException;
+import cn.dev33.satoken.exception.NotRoleException;
 import com.campus.common.result.Result;
 import com.campus.common.result.ResultCode;
 import jakarta.validation.ConstraintViolationException;
@@ -29,9 +30,20 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ConstraintViolationException.class)
     public Result<?> handleConstraintViolationException(ConstraintViolationException e) { return Result.error(ResultCode.BAD_REQUEST.getCode(), e.getMessage()); }
     @ExceptionHandler(NotLoginException.class)
-    public Result<?> handleNotLoginException(NotLoginException e) { return Result.error(ResultCode.UNAUTHORIZED.getCode(), "账号未登录或登录态已过期，请重新登录"); }
+    public Result<?> handleNotLoginException(NotLoginException e) {
+        String msg = "账号未登录或登录态已过期，请重新登录";
+        if (NotLoginException.KICK_OUT.equals(e.getType())) {
+            msg = "账号已被管理员强制下线或已被禁用，请重新登录";
+        } else if (NotLoginException.TOKEN_TIMEOUT.equals(e.getType()) || NotLoginException.BE_REPLACED.equals(e.getType())) {
+            msg = "登录态已失效或已在其他设备登录，请重新登录";
+        }
+        log.warn("用户认证会话失效拦截: type={}, msg={}", e.getType(), msg);
+        return Result.error(ResultCode.UNAUTHORIZED.getCode(), msg);
+    }
     @ExceptionHandler(NotPermissionException.class)
     public Result<?> handleNotPermissionException(NotPermissionException e) { return Result.error(ResultCode.FORBIDDEN.getCode(), "无权执行该操作"); }
+    @ExceptionHandler(NotRoleException.class)
+    public Result<?> handleNotRoleException(NotRoleException e) { return Result.error(ResultCode.FORBIDDEN.getCode(), "无权访问此功能模块：角色权限不足"); }
     @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
     public Result<?> handleMethodNotSupported(org.springframework.web.HttpRequestMethodNotSupportedException e) { return Result.error(ResultCode.BAD_REQUEST.getCode(), "请求的HTTP动词 [" + e.getMethod() + "] 不支持"); }
     @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)

@@ -176,6 +176,8 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
             throw new BusinessException(ResultCode.USER_NOT_EXIST.getCode(), "目标管理员不存在");
         }
 
+        boolean needKickout = false;
+
         if (StringUtils.hasText(updateDTO.getNickname())) {
             user.setNickname(updateDTO.getNickname().trim());
         }
@@ -186,7 +188,10 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
             if (isSuperAdmin(user) && !"SUPER_ADMIN".equalsIgnoreCase(targetRole)) {
                 throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "系统核心超级管理员角色不可被降权修改");
             }
-            user.setRole(targetRole);
+            if (!targetRole.equalsIgnoreCase(user.getRole())) {
+                user.setRole(targetRole);
+                needKickout = true; // 角色权限变更，踢下线以刷新会话权限
+            }
         }
 
         if (updateDTO.getPhone() != null) {
@@ -202,16 +207,26 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
             if (isSuperAdmin(user) && updateDTO.getStatus() == 0) {
                 throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "禁止禁用系统超级管理员账号");
             }
+            if (updateDTO.getStatus() == 0 && (user.getStatus() == null || user.getStatus() != 0)) {
+                needKickout = true; // 账号被禁用，立即踢下线
+            }
             user.setStatus(updateDTO.getStatus());
         }
 
-        // 若传入了新密码，则进行加密更新
+        // 若传入了新密码，则进行加密更新，并强制旧会话下线
         if (StringUtils.hasText(updateDTO.getPassword())) {
             user.setPassword(PasswordUtil.encode(updateDTO.getPassword().trim()));
+            needKickout = true;
         }
 
         updateById(user);
-        log.info("管理员信息更新成功: (ID: {}, Username: {})", user.getId(), user.getUsername());
+
+        if (needKickout) {
+            StpUtil.kickout(ADMIN_LOGIN_PREFIX + user.getId());
+            log.info("管理员安全属性变更，强制踢下线: (ID: {}, Username: {})", user.getId(), user.getUsername());
+        } else {
+            log.info("管理员信息更新成功: (ID: {}, Username: {})", user.getId(), user.getUsername());
+        }
 
         return convertToVO(getById(user.getId()));
     }
@@ -229,7 +244,14 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
 
         user.setStatus(status);
         updateById(user);
-        log.info("管理员账号状态更新: (ID: {}, Username: {}, Status: {})", user.getId(), user.getUsername(), status);
+
+        // 核心安全修复：禁用账号时立即强踢当前管理员下线，注销 Token
+        if (status != null && status == 0) {
+            StpUtil.kickout(ADMIN_LOGIN_PREFIX + id);
+            log.warn("管理员账号已禁用并强制踢下线: (ID: {}, Username: {})", id, user.getUsername());
+        } else {
+            log.info("管理员账号状态更新: (ID: {}, Username: {}, Status: {})", user.getId(), user.getUsername(), status);
+        }
     }
 
     @Override
@@ -248,7 +270,10 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
         }
 
         removeById(id);
-        log.info("管理员账号注销成功: (ID: {}, Username: {})", user.getId(), user.getUsername());
+
+        // 核心安全修复：账号删除/注销后立即强制踢下线并清除全部活跃会话
+        StpUtil.kickout(ADMIN_LOGIN_PREFIX + id);
+        log.info("管理员账号注销成功并强制踢下线: (ID: {}, Username: {})", user.getId(), user.getUsername());
     }
 
     @Override
@@ -266,7 +291,9 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
                 .set(SysUser::getPassword, encodedPassword)
                 .update();
 
-        log.info("管理员密码重置成功: (ID: {}, Username: {})", user.getId(), user.getUsername());
+        // 核心安全修复：重置密码后立即强制踢下线，旧 Token 立即作废，必须重新登录
+        StpUtil.kickout(ADMIN_LOGIN_PREFIX + id);
+        log.info("管理员密码重置成功并强制踢下线: (ID: {}, Username: {})", user.getId(), user.getUsername());
     }
 
     /**

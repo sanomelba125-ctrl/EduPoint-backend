@@ -1,8 +1,10 @@
 package com.campus.modules.admin.controller;
 
-import cn.dev33.satoken.annotation.SaCheckLogin;
-import com.campus.common.auth.AuthUtil;
+import cn.dev33.satoken.annotation.SaCheckRole;
+import cn.dev33.satoken.annotation.SaMode;
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.campus.common.auth.AuthUtil;
+import com.campus.common.constant.UserRole;
 import com.campus.common.result.Result;
 import com.campus.modules.admin.dto.*;
 import com.campus.modules.admin.service.SysUserService;
@@ -38,7 +40,7 @@ public class SysUserController {
      * 对应 API.md 1.2 /user/logout 及 admin-web /auth/logout
      */
     @PostMapping("/logout")
-    @SaCheckLogin
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     public Result<Void> logout() {
         sysUserService.logout();
         return Result.success("退出成功", null);
@@ -49,51 +51,51 @@ public class SysUserController {
      * 对应 API.md 1.3 /user/info 及 admin-web /auth/me
      */
     @GetMapping({"/info", "/me"})
-    @SaCheckLogin
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     public Result<SysUserVO> getCurrentUser() {
         SysUserVO vo = sysUserService.getCurrentUserInfo();
         return Result.success(vo);
     }
 
     /**
-     * 分页查询管理员列表
+     * 分页查询管理员列表（仅超级管理员专属特权）
      * GET /user/list
      */
     @GetMapping("/list")
-    @SaCheckLogin
+    @SaCheckRole(UserRole.SUPER_ADMIN)
     public Result<IPage<SysUserVO>> getUserList(SysUserQueryDTO queryDTO) {
         IPage<SysUserVO> page = sysUserService.getUserPage(queryDTO);
         return Result.success(page);
     }
 
     /**
-     * 新增管理员账号
+     * 新增管理员账号（仅超级管理员专属特权）
      * POST /user/create
      */
     @PostMapping("/create")
-    @SaCheckLogin
+    @SaCheckRole(UserRole.SUPER_ADMIN)
     public Result<SysUserVO> createUser(@Valid @RequestBody SysUserCreateDTO createDTO) {
         SysUserVO vo = sysUserService.createUser(createDTO);
         return Result.success("管理员账号创建成功", vo);
     }
 
     /**
-     * 修改管理员信息
+     * 修改管理员信息（仅超级管理员专属特权）
      * PUT /user/update
      */
     @PutMapping("/update")
-    @SaCheckLogin
+    @SaCheckRole(UserRole.SUPER_ADMIN)
     public Result<SysUserVO> updateUser(@Valid @RequestBody SysUserUpdateDTO updateDTO) {
         SysUserVO vo = sysUserService.updateUser(updateDTO);
         return Result.success("管理员信息更新成功", vo);
     }
 
     /**
-     * 启用/停用管理员账号
+     * 启用/停用管理员账号（仅超级管理员专属特权）
      * PUT /user/{id}/status
      */
     @PutMapping("/{id}/status")
-    @SaCheckLogin
+    @SaCheckRole(UserRole.SUPER_ADMIN)
     public Result<Void> updateUserStatus(
             @PathVariable Long id,
             @RequestParam(required = false) Integer status,
@@ -109,11 +111,11 @@ public class SysUserController {
     }
 
     /**
-     * 删除/注销管理员账号 (逻辑删除)
+     * 删除/注销管理员账号（仅超级管理员专属特权）
      * DELETE /user/{id}
      */
     @DeleteMapping("/{id}")
-    @SaCheckLogin
+    @SaCheckRole(UserRole.SUPER_ADMIN)
     public Result<Void> deleteUser(@PathVariable Long id) {
         Long currentUserId = AuthUtil.requireAdminId();
         sysUserService.deleteUser(id, currentUserId);
@@ -121,11 +123,11 @@ public class SysUserController {
     }
 
     /**
-     * 重置管理员密码
+     * 重置管理员密码（仅超级管理员专属特权）
      * PUT /user/{id}/reset-password
      */
     @PutMapping("/{id}/reset-password")
-    @SaCheckLogin
+    @SaCheckRole(UserRole.SUPER_ADMIN)
     public Result<Void> resetPassword(
             @PathVariable Long id,
             @RequestBody(required = false) SysUserResetPasswordDTO dto) {

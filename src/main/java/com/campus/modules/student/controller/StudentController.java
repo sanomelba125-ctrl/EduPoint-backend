@@ -1,11 +1,11 @@
 package com.campus.modules.student.controller;
 
 import cn.dev33.satoken.annotation.SaCheckLogin;
+import cn.dev33.satoken.annotation.SaCheckRole;
+import cn.dev33.satoken.annotation.SaMode;
 import com.baomidou.mybatisplus.core.metadata.IPage;
-import com.campus.common.auth.AuthUtil;
-import com.campus.common.exception.BusinessException;
+import com.campus.common.constant.UserRole;
 import com.campus.common.result.Result;
-import com.campus.common.result.ResultCode;
 import com.campus.modules.student.dto.*;
 import com.campus.modules.student.service.StudentService;
 import jakarta.validation.Valid;
@@ -64,6 +64,17 @@ public class StudentController {
         return Result.success("修改成功", vo);
     }
 
+    /**
+     * 学生自助修改个人登录密码
+     * PUT /student/change-password
+     */
+    @SaCheckLogin
+    @PutMapping("/change-password")
+    public Result<Void> changePassword(@Valid @RequestBody StudentChangePasswordDTO dto) {
+        studentService.changePassword(dto);
+        return Result.success("密码修改成功，请妥善保管新密码", null);
+    }
+
     /* ==================== 管理端学生档案管理接口 ==================== */
 
     /**
@@ -71,9 +82,8 @@ public class StudentController {
      * GET /student/list
      */
     @GetMapping("/list")
-    @SaCheckLogin
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     public Result<IPage<StudentVO>> getStudentList(StudentQueryDTO queryDTO) {
-        checkAdminPermission();
         IPage<StudentVO> page = studentService.getStudentPage(queryDTO);
         return Result.success(page);
     }
@@ -83,9 +93,8 @@ public class StudentController {
      * POST /student/create
      */
     @PostMapping("/create")
-    @SaCheckLogin
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     public Result<StudentVO> createStudent(@Valid @RequestBody StudentCreateDTO createDTO) {
-        checkAdminPermission();
         StudentVO vo = studentService.createStudent(createDTO);
         return Result.success("学生档案录入成功", vo);
     }
@@ -95,9 +104,8 @@ public class StudentController {
      * PUT /student/update
      */
     @PutMapping("/update")
-    @SaCheckLogin
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     public Result<StudentVO> updateStudent(@Valid @RequestBody StudentAdminUpdateDTO updateDTO) {
-        checkAdminPermission();
         StudentVO vo = studentService.updateStudentByAdmin(updateDTO);
         return Result.success("学生档案修改成功", vo);
     }
@@ -107,12 +115,11 @@ public class StudentController {
      * PUT /student/{id}/status
      */
     @PutMapping("/{id}/status")
-    @SaCheckLogin
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     public Result<Void> updateStudentStatus(
             @PathVariable Long id,
             @RequestParam(required = false) Integer status,
             @RequestBody(required = false) Map<String, Integer> body) {
-        checkAdminPermission();
         if (status == null && body != null && body.containsKey("status")) {
             status = body.get("status");
         }
@@ -128,11 +135,10 @@ public class StudentController {
      * PUT /student/{id}/reset-password
      */
     @PutMapping("/{id}/reset-password")
-    @SaCheckLogin
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     public Result<Void> resetStudentPassword(
             @PathVariable Long id,
             @RequestBody(required = false) StudentResetPasswordDTO dto) {
-        checkAdminPermission();
         String newPassword = (dto != null && dto.getNewPassword() != null) ? dto.getNewPassword() : "123456";
         studentService.resetStudentPassword(id, newPassword);
         return Result.success("学生密码已成功重置", null);
@@ -143,9 +149,8 @@ public class StudentController {
      * DELETE /student/{id}
      */
     @DeleteMapping("/{id}")
-    @SaCheckLogin
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     public Result<Void> deleteStudent(@PathVariable Long id) {
-        checkAdminPermission();
         studentService.deleteStudent(id);
         return Result.success("学生档案注销成功", null);
     }
@@ -155,16 +160,9 @@ public class StudentController {
      * GET /student/classes
      */
     @GetMapping("/classes")
-    @SaCheckLogin
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     public Result<List<String>> getClasses() {
         return Result.success(studentService.getDistinctClasses());
-    }
-
-    /**
-     * 校验管理端操作员鉴权前缀，防止学生端 Token 越权
-     */
-    private void checkAdminPermission() {
-        AuthUtil.requireAdminId();
     }
 }
 
