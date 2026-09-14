@@ -141,9 +141,12 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
     public SysUserVO createUser(SysUserCreateDTO createDTO) {
         String username = createDTO.getUsername().trim();
 
-        // 1. 账号唯一性检查
-        boolean exists = lambdaQuery().eq(SysUser::getUsername, username).exists();
-        if (exists) {
+        // 1. 账号唯一性检查（忽略逻辑删除，防止碰撞底层 uk_username 唯一索引抛 500）
+        SysUser existingUser = baseMapper.selectByUsernameIgnoreDeleted(username);
+        if (existingUser != null) {
+            if (java.util.Objects.equals(existingUser.getDeleted(), 1)) {
+                throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "该管理员登录账号已被注销归档（历史占用），不可重复使用: " + username);
+            }
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "该管理员登录账号已存在: " + username);
         }
 

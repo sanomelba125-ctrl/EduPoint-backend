@@ -54,4 +54,10 @@ public interface StudentMapper extends BaseMapper<Student> {
      */
     @org.apache.ibatis.annotations.Select("SELECT COALESCE(SUM(total_points), 0) FROM student WHERE deleted = 0")
     Long sumTotalPoints();
+
+    /**
+     * 忽略逻辑删除，根据学号检索学生档案（用于新增查重，防止碰撞 uk_student_no 唯一索引）
+     */
+    @org.apache.ibatis.annotations.Select("SELECT * FROM student WHERE student_no = #{studentNo} LIMIT 1")
+    Student selectByStudentNoIgnoreDeleted(@Param("studentNo") String studentNo);
 }

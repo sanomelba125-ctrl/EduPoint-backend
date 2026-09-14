@@ -218,9 +218,12 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
     public StudentVO createStudent(StudentCreateDTO createDTO) {
         String studentNo = createDTO.getStudentNo().trim();
 
-        // 1. 学号唯一性校验
-        boolean exists = lambdaQuery().eq(Student::getStudentNo, studentNo).exists();
-        if (exists) {
+        // 1. 学号唯一性校验（忽略逻辑删除，防止碰撞底层 uk_student_no 唯一索引抛 500）
+        Student existingStudent = baseMapper.selectByStudentNoIgnoreDeleted(studentNo);
+        if (existingStudent != null) {
+            if (java.util.Objects.equals(existingStudent.getDeleted(), 1)) {
+                throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "该学号学生档案已被注销归档（历史占用），不可重复录入: " + studentNo);
+            }
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "该学号学生档案已存在: " + studentNo);
         }
 

@@ -48,6 +48,11 @@ public class GlobalExceptionHandler {
     public Result<?> handleMethodNotSupported(org.springframework.web.HttpRequestMethodNotSupportedException e) { return Result.error(ResultCode.BAD_REQUEST.getCode(), "请求的HTTP动词 [" + e.getMethod() + "] 不支持"); }
     @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
     public Result<?> handleNoResourceFound(org.springframework.web.servlet.resource.NoResourceFoundException e) { return Result.error(ResultCode.NOT_FOUND.getCode(), "请求的RESTful资源路径不存在 /" + e.getResourcePath()); }
+    @ExceptionHandler(org.springframework.dao.DuplicateKeyException.class)
+    public Result<?> handleDuplicateKeyException(org.springframework.dao.DuplicateKeyException e) {
+        log.warn("数据库唯一约束冲突: {}", e.getMessage());
+        return Result.error(ResultCode.BAD_REQUEST.getCode(), "数据已存在或已被历史归档占用，请勿重复提交");
+    }
     @ExceptionHandler(Exception.class)
     public Result<?> handleException(Exception e) {
         log.error("全局未捕获异常 [{}]: ", e.getClass().getName(), e);
