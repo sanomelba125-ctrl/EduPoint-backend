@@ -740,18 +740,29 @@
 - **请求参数 (JSON Body)**：
   ```json
   {
+    "requestId": "3f2b9c1e-8a4d-4b7f-a0d5-9e6c1b2a7f30",
     "giftId": 1,
+    "quantity": 1,
     "receiverName": "张伟",
     "receiverPhone": "13911110001",
     "receiverAddress": "南区学生公寓12栋302室"
   }
   ```
+  > `requestId` 为客户端生成的 UUID 幂等标识（推荐必传，≤64 位）：同一次兑换意图内必须保持不变
+  > （弱网重试、用户手动重试复用同一标识），兑换成功后由客户端重置。服务端按该标识去重，
+  > 重复提交直接返回首次成功的订单结果，不会重复扣减积分/库存，也不会重复发送通知。
+  > 若客户端未传，服务端将自动生成全局唯一降级标识兜底落库，平滑兼容旧版客户端。
 - **核心逻辑**：
   1. 校验可用积分是否充足；
   2. 校验礼品可用库存并基于 `@Version` 乐观锁原子扣减；
   3. 扣减学生可用积分，记录 `student_point_record` 流水；
   4. 生成兑换订单及随机唯一的提货核销码（Pickup Code）；
   5. 触发向管理端的 WebSocket 实时新订单通知。
+- **幂等保障（双保险）**：
+  1. Redis `SETNX gift:exchange:idem:{studentId}:{requestId}` 占位，挡住同一标识的并发重复提交；
+     占位成功但业务失败时释放（回滚），保证可重试；
+  2. `student_gift.request_id` 唯一索引 `uk_request_id` 作为最后防线，Redis 不可用时由数据库拒绝重复落单；
+  3. 命中已成功的 `requestId` 时直接返回原订单（`orderNo`/`pickupCode` 与首次一致）。
 - **成功响应**：
   ```json
   {
