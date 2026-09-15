@@ -13,4 +13,10 @@ public class AiChatRequest {
 
     /** 可选会话 ID */
     private String conversationId;
+
+    /** 模拟测试学生 ID (仅限管理员真机模拟器调试使用，普通学生提问时强制忽略以防越权) */
+    private Long simulateStudentId;
+
+    /** 模拟测试学生学号 (仅限管理员真机模拟器调试使用) */
+    private String simulateStudentNo;
 }
