@@ -6,6 +6,7 @@ import com.campus.common.result.Result;
 import com.campus.modules.ai.dto.AiChatRequest;
 import com.campus.modules.ai.service.AiChatService;
 import com.campus.modules.ai.service.QaKnowledgeService;
+import com.campus.modules.ai.vo.AiChatMessageVO;
 import com.campus.modules.ai.vo.AiFaqVO;
 import com.campus.modules.student.entity.Student;
 import com.campus.modules.student.mapper.StudentMapper;
@@ -21,7 +22,7 @@ import java.util.List;
 /**
  * AI 智能客服问答端点
  * 时序图组件: AiChatController
- * 对应设计: POST /ai/chat/stream SSE 流式协议响应
+ * 对应设计: POST /ai/chat/stream SSE 流式协议响应，支持历史查询与清空
  */
 @Slf4j
 @RestController
@@ -55,6 +56,39 @@ public class AiChatController {
         AiChatRequest request = new AiChatRequest();
         request.setQuestion(question);
         return aiChatService.streamChat(request, studentId);
+    }
+
+    /**
+     * 获取 AI 历史对话消息列表
+     * GET /api/ai/chat/history
+     */
+    @GetMapping("/chat/history")
+    public Result<List<AiChatMessageVO>> getChatHistory(
+            @RequestParam(value = "conversationId", required = false) String conversationId,
+            @RequestParam(value = "limit", defaultValue = "50") int limit,
+            @RequestParam(value = "simulateStudentNo", required = false) String simulateStudentNo) {
+        AiChatRequest req = new AiChatRequest();
+        req.setConversationId(conversationId);
+        req.setSimulateStudentNo(simulateStudentNo);
+        Long studentId = resolveStudentId(req);
+        List<AiChatMessageVO> history = aiChatService.getChatHistory(studentId, conversationId, limit);
+        return Result.success(history);
+    }
+
+    /**
+     * 清空 AI 对话历史消息
+     * DELETE /api/ai/chat/history
+     */
+    @DeleteMapping("/chat/history")
+    public Result<Void> clearChatHistory(
+            @RequestParam(value = "conversationId", required = false) String conversationId,
+            @RequestParam(value = "simulateStudentNo", required = false) String simulateStudentNo) {
+        AiChatRequest req = new AiChatRequest();
+        req.setConversationId(conversationId);
+        req.setSimulateStudentNo(simulateStudentNo);
+        Long studentId = resolveStudentId(req);
+        aiChatService.clearChatHistory(studentId, conversationId);
+        return Result.success();
     }
 
     /**

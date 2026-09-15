@@ -3,13 +3,17 @@ package com.campus.modules.ai.service.impl;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.campus.modules.ai.agent.model.ToolExecutionRecord;
 import com.campus.modules.ai.agent.tool.ToolRegistry;
 import com.campus.modules.ai.config.AiConfig;
 import com.campus.modules.ai.dto.AiChatRequest;
+import com.campus.modules.ai.entity.AiChatMessage;
+import com.campus.modules.ai.mapper.AiChatMessageMapper;
 import com.campus.modules.ai.service.AiChatService;
 import com.campus.modules.ai.service.QaKnowledgeService;
 import com.campus.modules.ai.util.DataDesensitizer;
+import com.campus.modules.ai.vo.AiChatMessageVO;
 import com.campus.modules.student.entity.Student;
 import com.campus.modules.student.mapper.StudentMapper;
 import com.campus.modules.system.entity.QaKnowledge;
@@ -27,14 +31,16 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * AI 客服流式对话业务实现类 (基于 Function Calling 调度引擎与本地智能双模架构)
- * 对应《智能交互与凭证中心实施规划》第二部分架构设计与任务一
+ * AI 客服流式对话业务实现类 (基于 Function Calling 调度引擎与本地智能双模架构，支持全流程消息持久化)
  */
 @Slf4j
 @Service
@@ -45,6 +51,7 @@ public class AiChatServiceImpl implements AiChatService {
     private final ToolRegistry toolRegistry;
     private final StudentMapper studentMapper;
     private final AiConfig aiConfig;
+    private final AiChatMessageMapper aiChatMessageMapper;
 
     /** 共享的高性能 HttpClient 实例 (强制 HTTP/1.1 避免 Docker/代理环境 HTTP/2 ALPN 偶发握手超时) */
     private final HttpClient httpClient = HttpClient.newBuilder()
@@ -58,6 +65,8 @@ public class AiChatServiceImpl implements AiChatService {
         t.setDaemon(true);
         return t;
     });
+
+    private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
 
     @Override
     public SseEmitter streamChat(AiChatRequest request, Long studentId) {
@@ -85,10 +94,14 @@ public class AiChatServiceImpl implements AiChatService {
     }
 
     /**
-     * 核心流式调度与 Agent 循环执行器 (Agent Loop)
+     * 核心流式调度与 Agent 循环执行器 (Agent Loop，全链路落库)
      */
     private void processChatStream(AiChatRequest request, Long studentId, SseEmitter emitter) {
         String rawQuestion = request != null ? request.getQuestion() : "";
+        String conversationId = (request != null && StringUtils.hasText(request.getConversationId()))
+                ? request.getConversationId().trim()
+                : "default";
+
         if (!StringUtils.hasText(rawQuestion)) {
             sendChunk(emitter, "您好！我是校园活动小助手“小智”，请问有什么可以帮您的吗？", true, "SYSTEM", null);
             sendDone(emitter);
@@ -97,7 +110,10 @@ public class AiChatServiceImpl implements AiChatService {
 
         // 1. 敏感数据脱敏过滤器 (DataDesensitizer)
         String cleanQuestion = DataDesensitizer.desensitize(rawQuestion.trim());
-        log.info("【AI 对话】收到提问: [学生ID:{}] '{}' -> 脱敏后: '{}'", studentId, rawQuestion, cleanQuestion);
+        log.info("【AI 对话】收到提问: [学生ID:{}, 会话:{}] '{}' -> 脱敏后: '{}'", studentId, conversationId, rawQuestion, cleanQuestion);
+
+        // 持久化用户提问 (role: user)
+        saveMessage(studentId, conversationId, "user", cleanQuestion, null, null);
 
         // 2. 检查是否为完全无需调用工具的强置信度高频官方标准问答
         boolean personalQuery = isPersonalQuery(cleanQuestion);
@@ -107,13 +123,15 @@ public class AiChatServiceImpl implements AiChatService {
                 qaKnowledgeService.incrementViewCount(hit.getId());
                 streamKnowledgeAnswer(emitter, hit);
                 sendDone(emitter);
+                // 持久化官方知识库标准回复
+                saveMessage(studentId, conversationId, "assistant", "【官方知识库解答】\n\n" + hit.getAnswer(), "KNOWLEDGE_BASE", null);
                 return;
             }
         }
 
-        // 3. 优先调度商汤日日新 / OpenAI 兼容大模型 Function Calling 引擎
+        // 3. 优先调度商汤日日新 / 通义千问 / OpenAI 兼容大模型 Function Calling 引擎
         if (aiConfig.isEnabled() && StringUtils.hasText(aiConfig.getApiKey())) {
-            boolean llmSuccess = runLlmAgentLoop(cleanQuestion, studentId, emitter);
+            boolean llmSuccess = runLlmAgentLoop(cleanQuestion, studentId, conversationId, emitter);
             if (llmSuccess) {
                 sendDone(emitter);
                 return;
@@ -122,7 +140,7 @@ public class AiChatServiceImpl implements AiChatService {
         }
 
         // 4. 本地智能工具引擎兜底 (Local Agent Fallback: 同样支持 5 大只读工具执行与轨迹展示)
-        streamLocalAgentAnswer(emitter, cleanQuestion, studentId);
+        streamLocalAgentAnswer(emitter, cleanQuestion, studentId, conversationId);
         sendDone(emitter);
     }
 
@@ -131,7 +149,7 @@ public class AiChatServiceImpl implements AiChatService {
      * 第一轮: 提交提问与可用工具集契约，大模型自主判定是否下发 tool_calls
      * 第二轮: 若大模型触发工具，后端在安全隔离下执行并将 Fact JSON 回传大模型流式组织最终解答
      */
-    private boolean runLlmAgentLoop(String cleanQuestion, Long studentId, SseEmitter emitter) {
+    private boolean runLlmAgentLoop(String cleanQuestion, Long studentId, String conversationId, SseEmitter emitter) {
         try {
             String endpoint = normalizeEndpoint(aiConfig.getBaseUrl());
 
@@ -202,7 +220,6 @@ public class AiChatServiceImpl implements AiChatService {
             }
 
             JSONArray toolCalls = assistantMsg.getJSONArray("tool_calls");
-
             String providerTag = StringUtils.hasText(aiConfig.getProvider()) ? aiConfig.getProvider().toUpperCase() : "LLM";
 
             // 情况 A: 大模型判定无需调用工具，直接给出回答
@@ -210,6 +227,7 @@ public class AiChatServiceImpl implements AiChatService {
                 String directAnswer = assistantMsg.getString("content");
                 if (StringUtils.hasText(directAnswer)) {
                     streamDirectText(emitter, directAnswer, providerTag);
+                    saveMessage(studentId, conversationId, "assistant", directAnswer, providerTag, null);
                     return true;
                 }
                 return false;
@@ -221,6 +239,8 @@ public class AiChatServiceImpl implements AiChatService {
             JSONArray round2Messages = new JSONArray();
             round2Messages.addAll(messages);
             round2Messages.add(assistantMsg); // 追加包含 tool_calls 的 assistant 消息
+
+            JSONObject lastExecutedToolRecord = null;
 
             // 逐个执行工具并组装 tool 响应
             for (int i = 0; i < toolCalls.size(); i++) {
@@ -251,6 +271,8 @@ public class AiChatServiceImpl implements AiChatService {
                 doneEvent.put("resultFactJson", record.getResultFactJson());
                 doneEvent.put("executionTimeMs", record.getExecutionTimeMs());
                 sendChunk(emitter, "", false, "TOOL_AGENT", doneEvent);
+
+                lastExecutedToolRecord = doneEvent;
 
                 // 组装 role: tool 消息
                 JSONObject toolResultMsg = new JSONObject();
@@ -299,6 +321,8 @@ public class AiChatServiceImpl implements AiChatService {
                 return false;
             }
 
+            StringBuilder fullAnswerBuilder = new StringBuilder();
+
             // 读取流式 SSE 字符并推给前端
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(round2Resp.body(), StandardCharsets.UTF_8))) {
                 String line;
@@ -320,6 +344,7 @@ public class AiChatServiceImpl implements AiChatService {
                                 if (delta != null && delta.containsKey("content")) {
                                     String text = delta.getString("content");
                                     if (StringUtils.hasText(text)) {
+                                        fullAnswerBuilder.append(text);
                                         sendChunk(emitter, text, false, providerTag, null);
                                     }
                                 }
@@ -330,6 +355,10 @@ public class AiChatServiceImpl implements AiChatService {
                 }
             }
 
+            // 持久化大模型最终答复与工具执行记录
+            String toolCallJson = lastExecutedToolRecord != null ? lastExecutedToolRecord.toJSONString() : null;
+            saveMessage(studentId, conversationId, "assistant", fullAnswerBuilder.toString(), providerTag, toolCallJson);
+
             return true;
         } catch (Exception e) {
             log.error("执行大模型 Agent 循环时发生异常: {}", e.getMessage(), e);
@@ -339,9 +368,9 @@ public class AiChatServiceImpl implements AiChatService {
 
     /**
      * 本地智能工具引擎兜底 (Local Agent Fallback)
-     * 在离线、无外网或无商汤 Key 时，仍然无缝触发只读工具，产出真实数据与轨迹
+     * 在离线、无外网或无大模型 Key 时，仍然无缝触发只读工具，产出真实数据与轨迹并持久化
      */
-    private void streamLocalAgentAnswer(SseEmitter emitter, String question, Long studentId) {
+    private void streamLocalAgentAnswer(SseEmitter emitter, String question, Long studentId, String conversationId) {
         String q = question.toLowerCase();
         boolean queryPoints = q.contains("积分") || q.contains("分") || q.contains("余额") || q.contains("流水") || q.contains("明细");
         boolean queryOrders = q.contains("礼品") || q.contains("兑换") || q.contains("订单") || q.contains("提货") || q.contains("核销");
@@ -352,31 +381,37 @@ public class AiChatServiceImpl implements AiChatService {
             String loginNotice = "同学你好！你咨询的内容涉及**个人私有业务数据**（如个人积分、兑换订单、活动报名或荣誉证书）。\n\n" +
                     "⚠️ **登录提示**：当前未检测到你的学生登录凭据，请前往【个人中心】完成账号登录，登录后小智即可为你实时查询个人专属数据！";
             streamDirectText(emitter, loginNotice, "LOCAL_AGENT");
+            saveMessage(studentId, conversationId, "assistant", loginNotice, "LOCAL_AGENT", null);
             return;
         }
 
         String answer;
+        JSONObject toolEvent = null;
 
         if (queryPoints) {
             ToolExecutionRecord record = toolRegistry.executeTool("local_pts_" + System.currentTimeMillis(),
                     "query_my_points", "{\"limit\": 5}", studentId);
             emitToolProgress(emitter, record);
             answer = buildPointsAnswer(record);
+            toolEvent = toToolEvent(record);
         } else if (queryOrders) {
             ToolExecutionRecord record = toolRegistry.executeTool("local_ord_" + System.currentTimeMillis(),
                     "query_my_orders", "{\"limit\": 5}", studentId);
             emitToolProgress(emitter, record);
             answer = buildOrdersAnswer(record);
+            toolEvent = toToolEvent(record);
         } else if (queryActivities) {
             ToolExecutionRecord record = toolRegistry.executeTool("local_act_" + System.currentTimeMillis(),
                     "query_my_activities", "{\"limit\": 5}", studentId);
             emitToolProgress(emitter, record);
             answer = buildActivitiesAnswer(record);
+            toolEvent = toToolEvent(record);
         } else if (queryCertificates) {
             ToolExecutionRecord record = toolRegistry.executeTool("local_cert_" + System.currentTimeMillis(),
                     "query_my_certificates", "{\"limit\": 5}", studentId);
             emitToolProgress(emitter, record);
             answer = buildCertificatesAnswer(record);
+            toolEvent = toToolEvent(record);
         } else {
             // 知识检索工具
             JSONObject args = new JSONObject();
@@ -385,14 +420,19 @@ public class AiChatServiceImpl implements AiChatService {
                     "search_platform_knowledge", args.toJSONString(), studentId);
             emitToolProgress(emitter, record);
             answer = buildKnowledgeAnswer(record, question);
+            toolEvent = toToolEvent(record);
         }
 
         // 打字机流式输出
         streamDirectText(emitter, answer, "LOCAL_AGENT");
+
+        // 持久化本地兜底回复
+        String toolCallJson = toolEvent != null ? toolEvent.toJSONString() : null;
+        saveMessage(studentId, conversationId, "assistant", answer, "LOCAL_AGENT", toolCallJson);
     }
 
-    private void emitToolProgress(SseEmitter emitter, ToolExecutionRecord record) {
-        if (record == null) return;
+    private JSONObject toToolEvent(ToolExecutionRecord record) {
+        if (record == null) return null;
         JSONObject event = new JSONObject();
         event.put("toolCallId", record.getToolCallId());
         event.put("toolName", record.getToolName());
@@ -401,6 +441,12 @@ public class AiChatServiceImpl implements AiChatService {
         event.put("arguments", record.getArgumentsJson());
         event.put("resultFactJson", record.getResultFactJson());
         event.put("executionTimeMs", record.getExecutionTimeMs());
+        return event;
+    }
+
+    private void emitToolProgress(SseEmitter emitter, ToolExecutionRecord record) {
+        if (record == null) return;
+        JSONObject event = toToolEvent(record);
         sendChunk(emitter, "", false, "TOOL_AGENT", event);
         sleep(50);
     }
@@ -660,6 +706,114 @@ public class AiChatServiceImpl implements AiChatService {
             Thread.sleep(millis);
         } catch (InterruptedException ignored) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    // =========================================================================
+    // 消息持久化、历史查询与清空服务实现
+    // =========================================================================
+
+    @Override
+    public List<AiChatMessageVO> getChatHistory(Long studentId, String conversationId, int limit) {
+        int queryLimit = (limit <= 0 || limit > 100) ? 50 : limit;
+
+        LambdaQueryWrapper<AiChatMessage> wrapper = new LambdaQueryWrapper<AiChatMessage>()
+                .eq(AiChatMessage::getDeleted, 0);
+
+        if (studentId != null) {
+            wrapper.eq(AiChatMessage::getStudentId, studentId);
+        } else if (StringUtils.hasText(conversationId)) {
+            wrapper.eq(AiChatMessage::getConversationId, conversationId);
+        } else {
+            // 未登录且未传会话ID，为防信息泄露返回空列表
+            return Collections.emptyList();
+        }
+
+        if (StringUtils.hasText(conversationId)) {
+            wrapper.eq(AiChatMessage::getConversationId, conversationId);
+        }
+
+        // 倒序取最新的 queryLimit 条
+        wrapper.orderByDesc(AiChatMessage::getCreateTime)
+                .orderByDesc(AiChatMessage::getId)
+                .last("LIMIT " + queryLimit);
+
+        List<AiChatMessage> list = aiChatMessageMapper.selectList(wrapper);
+        if (list == null || list.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 翻转为按时间正序排列（旧消息在顶部，新消息在底部）
+        Collections.reverse(list);
+
+        List<AiChatMessageVO> voList = new ArrayList<>(list.size());
+        for (AiChatMessage msg : list) {
+            JSONObject toolObj = null;
+            if (StringUtils.hasText(msg.getToolCallJson())) {
+                try {
+                    toolObj = JSON.parseObject(msg.getToolCallJson());
+                } catch (Exception ignored) {
+                }
+            }
+
+            String timeStr = msg.getCreateTime() != null ? msg.getCreateTime().format(TIME_FORMATTER) : "";
+
+            voList.add(AiChatMessageVO.builder()
+                    .id(msg.getId())
+                    .studentId(msg.getStudentId())
+                    .conversationId(msg.getConversationId())
+                    .role(msg.getRole())
+                    .content(msg.getContent())
+                    .source(msg.getSource())
+                    .toolCall(toolObj)
+                    .createTime(msg.getCreateTime())
+                    .time(timeStr)
+                    .build());
+        }
+
+        return voList;
+    }
+
+    @Override
+    public void clearChatHistory(Long studentId, String conversationId) {
+        if (studentId == null && !StringUtils.hasText(conversationId)) {
+            return;
+        }
+
+        LambdaQueryWrapper<AiChatMessage> wrapper = new LambdaQueryWrapper<>();
+
+        if (studentId != null) {
+            wrapper.eq(AiChatMessage::getStudentId, studentId);
+        }
+        if (StringUtils.hasText(conversationId)) {
+            wrapper.eq(AiChatMessage::getConversationId, conversationId);
+        }
+
+        int affected = aiChatMessageMapper.delete(wrapper);
+        log.info("【AI 对话】已清空历史消息: studentId={}, conversationId={}, affected={}", studentId, conversationId, affected);
+    }
+
+    @Override
+    public void saveMessage(Long studentId, String conversationId, String role, String content, String source, String toolCallJson) {
+        if (!StringUtils.hasText(content) && !StringUtils.hasText(toolCallJson)) {
+            return;
+        }
+        try {
+            AiChatMessage message = AiChatMessage.builder()
+                    .studentId(studentId)
+                    .conversationId(StringUtils.hasText(conversationId) ? conversationId : "default")
+                    .role(role)
+                    .content(content != null ? content : "")
+                    .source(source)
+                    .toolCallJson(toolCallJson)
+                    .createTime(LocalDateTime.now())
+                    .updateTime(LocalDateTime.now())
+                    .deleted(0)
+                    .build();
+            aiChatMessageMapper.insert(message);
+            log.debug("【AI 对话消息持久化】成功落库: [ID:{}] role={}, studentId={}", message.getId(), role, studentId);
+        } catch (Exception e) {
+            log.error("【AI 对话消息持久化】落库异常: studentId={}, role={}, error={}", studentId, role, e.getMessage());
         }
     }
 }
