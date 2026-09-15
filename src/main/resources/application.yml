@@ -49,13 +49,15 @@ websocket:
 # AI 客服大模型配置 (商汤日日新 SenseNova 6.8 Flash Lite)
 ai:
   llm:
-    enabled: ${AI_LLM_ENABLED:true} # 启用大语言模型调用 (未配 Key 或网络异常时自动无缝降级为本地引擎)
-    base-url: ${AI_LLM_BASE_URL:https://token.sensenova.cn/v1}
+    provider: ${AI_LLM_PROVIDER:sensenova} # 提供商: sensenova / openai / deepseek / local
+    enabled: ${AI_LLM_ENABLED:true} # 启用大语言模型调用 (未配 Key 或网络异常时自动无缝降级为本地智能工具引擎)
+    base-url: ${AI_LLM_BASE_URL:https://api.sensenova.cn/compatible-mode/v1}
     api-key: ${SENSENOVA_API_KEY:${AI_LLM_API_KEY:sk-xLoVIzGvBKBfC2FvjyP8IItEUCCZUlGn}} # 商汤开放平台 API 密钥
-    model: ${AI_LLM_MODEL:sensenova-6.8-flash-lite}
+    model: ${AI_LLM_MODEL:SenseNova-6.8-Flash-Lite}
+    temperature: ${AI_LLM_TEMPERATURE:0.2}
     timeout-seconds: 60
     reasoning-effort: ${AI_LLM_REASONING_EFFORT:none} # 客服模式设为 none 关闭思考以秒级响应；可选 low/medium/high
-    max-tokens: 8192
+    max-tokens: 4096
 
 # 平台业务规约配置
 campus:
