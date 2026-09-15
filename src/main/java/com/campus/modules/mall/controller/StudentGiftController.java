@@ -76,7 +76,7 @@ public class StudentGiftController {
      * 管理端全量查询兑换订单列表
      * 对应 GET /gift/order/list 或 /gift/orders
      */
-    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN}, mode = SaMode.OR)
     @GetMapping({"/gift/order/list", "/gift/orders", "/admin/gift/orders"})
     public Result<Page<StudentGiftVO>> getAdminOrderList(GiftOrderQueryDTO queryDTO) {
         Page<StudentGiftVO> page = studentGiftService.getAdminOrderPage(queryDTO);
@@ -87,7 +87,7 @@ public class StudentGiftController {
      * 管理端查询礼品兑换订单全局指标统计（避免分页当前页数据当成全局数据）
      * 对应 GET /gift/order/metrics 或 /admin/gift/orders/metrics
      */
-    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN}, mode = SaMode.OR)
     @GetMapping({"/gift/order/metrics", "/admin/gift/orders/metrics", "/admin/gift/order/metrics"})
     public Result<GiftOrderMetricsVO> getAdminOrderMetrics() {
         GiftOrderMetricsVO metrics = studentGiftService.getOrderMetrics();
@@ -98,7 +98,7 @@ public class StudentGiftController {
      * 管理端核销提货码并确认发放
      * 对应 API.md 5.5 POST /gift/deliver 或 /gift/order/confirm-delivery
      */
-    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN}, mode = SaMode.OR)
     @PostMapping({"/gift/deliver", "/gift/order/confirm-delivery", "/gift/order/deliver"})
     public Result<Void> confirmDelivery(@Valid @RequestBody DeliveryConfirmDTO dto) {
         Long adminId = getAdminId();
@@ -110,7 +110,7 @@ public class StudentGiftController {
      * 管理端取消订单并退款
      * 对应 POST /gift/order/cancel 或 /admin/gift/order/cancel
      */
-    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN}, mode = SaMode.OR)
     @PostMapping({"/gift/order/cancel", "/admin/gift/order/cancel"})
     public Result<Void> adminCancelOrder(@Valid @RequestBody OrderCancelDTO dto) {
         Long adminId = getAdminId();

@@ -85,6 +85,12 @@
             <artifactId>sa-token-spring-boot3-starter</artifactId>
             <version>${sa-token.version}</version>
         </dependency>
+        <!-- Sa-Token 整合 Redis (基于 Jackson 序列化，实现会话与 Token 分布式持久化) -->
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-redis-jackson</artifactId>
+            <version>${sa-token.version}</version>
+        </dependency>
 
         <!-- FastJSON2 -->
         <dependency>

@@ -25,8 +25,9 @@ spring:
 # Sa-Token 配置
 sa-token:
   token-name: satoken
-  timeout: 3600 # 1小时 (3600秒，测试用)
-  active-timeout: -1
+  timeout: 86400 # 绝对最大有效期: 24小时 (86400秒)
+  active-timeout: 1800 # 临时动态活跃寿命: 30分钟 (1800秒，期间有操作则自动续签刷新；连续30分钟无任何操作则自动失效)
+  auto-renew: true # 开启自动续签，持续操作自动顺延
   is-concurrent: true
   is-share: true
   token-style: uuid
