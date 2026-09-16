@@ -1,6 +1,8 @@
 package com.campus.modules.mall.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
@@ -31,10 +33,20 @@ public class Gift {
     /** 兑换所需积分单价(正整数) */
     private Integer pointsRequired;
 
-    /** 礼品入库总库存 */
+    /**
+     * 礼品入库总库存。
+     * updateStrategy = NEVER：实体 updateById 生成的 SQL 永不包含本列。
+     * 库存的增减只允许走 gift 表上的原子 SQL（兑换扣减 / 退单回补 / 补货自增），
+     * 避免管理员编辑礼品基础信息时把读出来的快照值写回，覆盖并发兑换已扣减的实时库存。
+     */
+    @TableField(updateStrategy = FieldStrategy.NEVER)
     private Integer totalStock;
 
-    /** 当前可用库存(兑换实时扣减, >=0) */
+    /**
+     * 当前可用库存(兑换实时扣减, >=0)。
+     * 同上，禁止通过实体更新回写，只由原子 SQL 维护。
+     */
+    @TableField(updateStrategy = FieldStrategy.NEVER)
     private Integer stock;
 
     /** 乐观锁版本号(高并发防超卖) */

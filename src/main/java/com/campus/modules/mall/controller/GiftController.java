@@ -73,6 +73,20 @@ public class GiftController {
     }
 
     /**
+     * 管理端补货：为指定礼品追加入库数量（入库总量与可用库存同步增加）
+     * 对应需求 3.8 礼物管理 —— 库存维护
+     * 例：POST /api/gift/12/restock?quantity=50
+     */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN}, mode = SaMode.OR)
+    @PostMapping("/{id}/restock")
+    public Result<GiftVO> restock(@PathVariable("id") Long id,
+                                  @RequestParam("quantity") Integer quantity) {
+        Long adminId = getAdminId();
+        GiftVO vo = giftService.restock(id, quantity, adminId);
+        return Result.success("补货成功", vo);
+    }
+
+    /**
      * 管理端删除礼品
      * 对应 DELETE /gift/{id}
      */

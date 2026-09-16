@@ -159,16 +159,16 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
             throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "学生账号不存在或已被禁用");
         }
 
-        boolean matched = PasswordUtil.matches(oldPwd, student.getPassword())
-                || oldPwd.equals(student.getPassword());
-
-        log.info("【学生修改密码】发起学生: ID={}, 学号={}, 姓名={}, 输入原密码='{}', 校验匹配结果={}",
-                student.getId(), student.getStudentNo(), student.getName(), oldPwd, matched);
+        // 只做 BCrypt 密文比对，不再保留 oldPwd.equals(库中值) 的明文兜底：
+        // 那等于给"库里存明文口令"留了一条合法通道，登录侧（login 第 59 行）本来也只认 BCrypt，口径必须统一。
+        boolean matched = PasswordUtil.matches(oldPwd, student.getPassword());
 
         if (!matched) {
-            throw new BusinessException(String.format("原密码校验错误（当前登录学籍: %s %s），请核对账号与密码",
-                    student.getStudentNo(), student.getName()));
+            // 日志只落"校验失败"这个事实，绝不把用户输入的原密码或库中密文写进日志文件
+            log.warn("【学生修改密码】原密码校验失败: studentId={}", student.getId());
+            throw new BusinessException("原密码不正确，请重新输入");
         }
+        log.info("【学生修改密码】原密码校验通过: studentId={}", student.getId());
 
         String encodedPassword = PasswordUtil.encode(newPwd);
         lambdaUpdate()

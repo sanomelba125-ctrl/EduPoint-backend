@@ -29,9 +29,14 @@ public interface GiftService extends IService<Gift> {
     GiftVO createGift(GiftCreateDTO createDTO, Long adminId);
 
     /**
-     * 管理端更新礼品
+     * 管理端更新礼品（仅基础信息，不含库存）
      */
     GiftVO updateGift(GiftUpdateDTO updateDTO, Long adminId);
+
+    /**
+     * 管理端补货：为指定礼品追加入库数量，入库总量与可用库存同步增加
+     */
+    GiftVO restock(Long id, Integer quantity, Long adminId);
 
     /**
      * 管理端删除礼品（防误删校验）

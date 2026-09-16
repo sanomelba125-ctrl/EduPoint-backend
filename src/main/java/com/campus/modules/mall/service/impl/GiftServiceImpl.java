@@ -14,6 +14,8 @@ import com.campus.modules.mall.mapper.GiftMapper;
 import com.campus.modules.mall.mapper.StudentGiftMapper;
 import com.campus.modules.mall.service.GiftService;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +30,11 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements GiftService {
+
+    private static final Logger log = LoggerFactory.getLogger(GiftServiceImpl.class);
+
+    /** 单次补货上限，防误操作输入天文数字 */
+    private static final int MAX_RESTOCK_QUANTITY = 100000;
 
     private final StudentGiftMapper studentGiftMapper;
 
@@ -94,7 +101,9 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
         if (updateDTO.getPointsRequired() != null) {
             gift.setPointsRequired(updateDTO.getPointsRequired());
         }
-        // 注意：基础信息编辑不再更新 stock 与 totalStock，避免管理员改名/改图冲掉并发兑换扣减的实时库存
+        // 注意：Gift 实体的 stock / totalStock 标注了 updateStrategy = FieldStrategy.NEVER，
+        // 这里 updateById 生成的 SQL 不会带这两列，所以改名称/图片/积分不会冲掉并发兑换已扣减的实时库存。
+        // 库存变更只走 GiftMapper 上的原子 SQL（补货 restock / 兑换 reduceStockWithOptimisticLock / 退单 increaseStock）。
         if (updateDTO.getStatus() != null) {
             gift.setStatus(updateDTO.getStatus());
         }
@@ -120,6 +129,35 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
             }
         }
         return convertToVO(gift);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public GiftVO restock(Long id, Integer quantity, Long adminId) {
+        if (quantity == null || quantity <= 0) {
+            throw new BusinessException("补货数量必须为正整数");
+        }
+        if (quantity > MAX_RESTOCK_QUANTITY) {
+            throw new BusinessException("单次补货数量不能超过 " + MAX_RESTOCK_QUANTITY + " 件，请分批入库");
+        }
+
+        Gift gift = this.getById(id);
+        if (gift == null) {
+            throw new BusinessException("要补货的礼品不存在或已被删除");
+        }
+        int beforeStock = gift.getStock() != null ? gift.getStock() : 0;
+        int beforeTotal = gift.getTotalStock() != null ? gift.getTotalStock() : 0;
+
+        // 在数据库当前值上自增，不做“读快照 → 写回”，与并发兑换的扣减互不覆盖
+        int rows = baseMapper.restock(id, quantity, adminId);
+        if (rows == 0) {
+            throw new BusinessException("补货失败，礼品可能已被删除，请刷新列表后重试");
+        }
+
+        log.info("礼品补货成功: giftId={}, 名称={}, 本次入库={}件, 补货前可用库存={}, 补货前入库总量={}, 操作管理员ID={}",
+                id, gift.getName(), quantity, beforeStock, beforeTotal, adminId);
+
+        return convertToVO(this.getById(id));
     }
 
     @Override

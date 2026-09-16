@@ -6,6 +6,13 @@ import lombok.Data;
 
 /**
  * 礼品更新请求入参
+ *
+ * 本接口只维护礼品基础信息（名称/描述/图片/所需积分/上下架状态）。
+ * 库存相关列（stock 实时可用库存、totalStock 入库总量）不在此处变更：
+ * 它们由兑换扣减、退单回补与补货三个动作在数据库当前值上原子维护，
+ * 若允许编辑接口直接赋值，管理员改个名字就会把读出来的库存快照写回，
+ * 覆盖并发兑换刚扣掉的数量。
+ * 需要追加库存请调用补货接口 POST /gift/{id}/restock。
  */
 @Data
 public class GiftUpdateDTO {
@@ -21,12 +28,6 @@ public class GiftUpdateDTO {
 
     @Min(value = 1, message = "所需积分必须大于0")
     private Integer pointsRequired;
-
-    @Min(value = 0, message = "总库存不能为负数")
-    private Integer totalStock;
-
-    @Min(value = 0, message = "可用库存不能为负数")
-    private Integer stock;
 
     private Integer status;
 
