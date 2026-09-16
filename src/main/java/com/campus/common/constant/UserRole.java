@@ -15,7 +15,7 @@ public final class UserRole {
     /** 普通管理员：可管理日常活动发布、学生档案、积分对账、礼品上下架与客服知识库 */
     public static final String ADMIN = "ADMIN";
 
-    /** 辅导员：负责本院系学生档案维护、活动打卡审核、现场提货核销，无权管理系统用户、礼品库和知识库 */
+    /** 辅导员：负责学生档案维护、活动打卡审核、荣誉证书管理与数据看板查阅，无权管理系统用户、礼品商城(含提货核销)与AI知识库 */
     public static final String COUNSELOR = "COUNSELOR";
 
     /** 学生端用户：移动端学生身份，仅可参与报名、打卡、积分兑换，绝对禁止访问任何管理端接口 */

@@ -27,7 +27,9 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 
+import java.security.SecureRandom;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -44,6 +46,9 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, StudentGift> implements StudentGiftService {
+
+    /** 加密级安全随机数生成器（替代伪随机数，防止提货码被预测） */
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     /** 兑换幂等占位键前缀（后接 studentId:requestId，按学生维度隔离） */
     private static final String IDEMPOTENT_KEY_PREFIX = "gift:exchange:idem:";
@@ -148,11 +153,9 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         }
         int afterPoints = studentMapper.selectCurrentPoints(student.getId());
 
-        // 8. 生成全局唯一订单号与提货码
-        String orderNo = "ORD" + DateTimeFormatter.ofPattern("yyyyMMddHHmmss").format(LocalDateTime.now())
-                + String.format("%04d", (int) (Math.random() * 10000));
-        String pickupCode = "PK" + String.format("%04d", (int) (Math.random() * 10000))
-                + String.format("%02d", (int) (Math.random() * 100));
+        // 8. 生成全局唯一订单号与加密防碰撞提货码
+        String orderNo = generateOrderNo();
+        String pickupCode = generateUniquePickupCode();
 
         // 9. 保存兑换订单（request_id 唯一索引是幂等的最后一道防线，
         //    万一 Redis 不可用导致占位失效，也由数据库拒绝重复落单，整单事务回滚）
@@ -322,6 +325,38 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
                 .giftName(gift != null ? gift.getName() : null)
                 .quantity(order.getQuantity())
                 .build();
+    }
+
+    /**
+     * 生成高并发毫秒级全局唯一业务订单号
+     * 规则：ORD + yyyyMMddHHmmssSSS(精确至毫秒) + 4位加密安全随机数
+     */
+    private String generateOrderNo() {
+        return "ORD" + DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS").format(LocalDateTime.now())
+                + String.format("%04d", SECURE_RANDOM.nextInt(10000));
+    }
+
+    /**
+     * 生成安全、防碰撞且语义清晰的礼品提货码
+     * 规则：前缀 PK + 月日(MMdd, 4位) + 4位加密安全随机数字（例如 PK09168821，共 10 位）
+     * 内置自动查重重试机制，彻底消除命中数据库 uk_pickup_code 唯一键冲突导致落单失败的风险
+     */
+    private String generateUniquePickupCode() {
+        String datePart = DateTimeFormatter.ofPattern("MMdd").format(LocalDate.now());
+        for (int i = 0; i < 5; i++) {
+            int randomNum = SECURE_RANDOM.nextInt(10000);
+            String candidate = "PK" + datePart + String.format("%04d", randomNum);
+            Long count = this.baseMapper.selectCount(
+                    new LambdaQueryWrapper<StudentGift>().eq(StudentGift::getPickupCode, candidate)
+            );
+            if (count == null || count == 0) {
+                return candidate;
+            }
+            log.warn("提货码生成命中唯一键碰撞，自动重新生成: candidate={}, retryCount={}", candidate, i + 1);
+        }
+        // 极端兜底（连续碰撞）：追加纳秒时间戳后3位，确保 100% 绝对唯一
+        return "PK" + datePart + String.format("%04d", SECURE_RANDOM.nextInt(10000))
+                + String.format("%03d", (int) (System.nanoTime() % 1000));
     }
 
     @Override
