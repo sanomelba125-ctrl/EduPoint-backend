@@ -137,6 +137,9 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
 
         // 6. 校验库存并执行原子乐观锁扣减（防高并发超卖）
         if (gift.getStock() == null || gift.getStock() < quantity) {
+            if (gift.getStock() != null && gift.getStock() <= 0) {
+                throw new BusinessException("礼品库存已被抢光！");
+            }
             throw new BusinessException(String.format("礼品可用库存不足！当前仅剩 %d 件", gift.getStock() != null ? gift.getStock() : 0));
         }
 
@@ -398,9 +401,50 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         LambdaQueryWrapper<StudentGift> wrapper = new LambdaQueryWrapper<StudentGift>()
                 .like(StringUtils.hasText(queryDTO.getOrderNo()), StudentGift::getOrderNo, queryDTO.getOrderNo())
                 .like(StringUtils.hasText(queryDTO.getPickupCode()), StudentGift::getPickupCode, queryDTO.getPickupCode())
-                .like(StringUtils.hasText(queryDTO.getStudentName()), StudentGift::getReceiverName, queryDTO.getStudentName())
-                .eq(queryDTO.getStatus() != null, StudentGift::getStatus, queryDTO.getStatus())
-                .orderByDesc(StudentGift::getCreateTime);
+                .eq(queryDTO.getStatus() != null, StudentGift::getStatus, queryDTO.getStatus());
+
+        // 统一处理学生姓名/学号多维度匹配：同时匹配学生账号真实姓名(student.name)、学号(student.student_no)以及订单收件人姓名(student_gift.receiver_name)
+        boolean hasNameFilter = StringUtils.hasText(queryDTO.getStudentName());
+        boolean hasNoFilter = StringUtils.hasText(queryDTO.getStudentNo());
+
+        if (hasNameFilter || hasNoFilter) {
+            String nameKeyword = hasNameFilter ? queryDTO.getStudentName().trim() : null;
+            String noKeyword = hasNoFilter ? queryDTO.getStudentNo().trim() : null;
+
+            // 联动 student 表查询真实学生档案
+            LambdaQueryWrapper<Student> studentWrapper = new LambdaQueryWrapper<Student>()
+                    .select(Student::getId);
+            if (nameKeyword != null && noKeyword != null) {
+                studentWrapper.and(w -> w.like(Student::getName, nameKeyword).or().like(Student::getStudentNo, noKeyword));
+            } else if (nameKeyword != null) {
+                studentWrapper.and(w -> w.like(Student::getName, nameKeyword).or().like(Student::getStudentNo, nameKeyword));
+            } else {
+                studentWrapper.like(Student::getStudentNo, noKeyword);
+            }
+            List<Long> matchedStudentIds = studentMapper.selectList(studentWrapper).stream()
+                    .map(Student::getId)
+                    .collect(Collectors.toList());
+
+            wrapper.and(w -> {
+                boolean hasCondition = false;
+                if (nameKeyword != null) {
+                    w.like(StudentGift::getReceiverName, nameKeyword);
+                    hasCondition = true;
+                }
+                if (!matchedStudentIds.isEmpty()) {
+                    if (hasCondition) {
+                        w.or().in(StudentGift::getStudentId, matchedStudentIds);
+                    } else {
+                        w.in(StudentGift::getStudentId, matchedStudentIds);
+                    }
+                } else if (!hasCondition) {
+                    // 查询了学号但在学生表未找到匹配记录，返回空结果
+                    w.eq(StudentGift::getId, -1L);
+                }
+            });
+        }
+
+        wrapper.orderByDesc(StudentGift::getCreateTime);
 
         Page<StudentGift> orderPage = this.page(page, wrapper);
         return populateOrderVOs(orderPage);
@@ -415,6 +459,9 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         }
 
         if (order.getStatus() != 1) {
+            if (order.getStatus() != null && order.getStatus() == 2) {
+                throw new BusinessException("该订单已核销，不可重复提货");
+            }
             throw new BusinessException("该订单状态不是待核销状态，不可重复操作");
         }
 
@@ -422,7 +469,7 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         String cleanInput = dto.getPickupCode().replaceAll("[\\s-]", "").toUpperCase();
         String cleanTarget = order.getPickupCode().replaceAll("[\\s-]", "").toUpperCase();
         if (!cleanInput.equals(cleanTarget)) {
-            throw new BusinessException("提货码核销校验不匹配，核验失败！");
+            throw new BusinessException("提货码核销校验不匹配，核销失败！");
         }
 
         // 状态守卫的条件更新（status 1 -> 2）：并发下只有一方能把订单核销掉
@@ -430,7 +477,7 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
                 adminId, StringUtils.hasText(dto.getRemark()) ? dto.getRemark() : null);
         if (changed == 0) {
             log.warn("核销未生效，订单状态已被并发操作流转: orderId={}, orderNo={}", order.getId(), order.getOrderNo());
-            throw new BusinessException("该订单状态不是待核销状态，不可重复操作");
+            throw new BusinessException("该订单已核销，不可重复提货");
         }
 
         // 核销通知放到事务提交之后执行，避免事务回滚时误推

@@ -39,9 +39,20 @@ public interface GiftService extends IService<Gift> {
     GiftVO restock(Long id, Integer quantity, Long adminId);
 
     /**
-     * 管理端删除礼品（防误删校验）
+     * 管理端调整库存（改库存：正数入库补货，负数盘亏核减，向加库存看齐采用条件 SQL 原子更新）
+     *
+     * @param id 礼品ID
+     * @param quantity 调整件数（正数增加，负数减少）
+     * @param adminId 操作员ID
+     * @return 调整后的礼品视图对象
      */
-    void deleteGift(Long id);
+    GiftVO adjustStock(Long id, Integer quantity, Long adminId);
+
+    /**
+     * 管理端删除礼品（防误删校验：无兑换记录则物理删除，有兑换记录则降级为下架）
+     * @return 操作结果提示信息
+     */
+    String deleteGift(Long id);
 
     /**
      * 切换礼品上架/下架状态

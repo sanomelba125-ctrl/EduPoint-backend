@@ -131,7 +131,7 @@ public class SysUserController {
     public Result<Void> resetPassword(
             @PathVariable Long id,
             @RequestBody(required = false) SysUserResetPasswordDTO dto) {
-        String newPassword = (dto != null && dto.getNewPassword() != null) ? dto.getNewPassword() : "123";
+        String newPassword = (dto != null && dto.getNewPassword() != null) ? dto.getNewPassword() : "123456";
         sysUserService.resetPassword(id, newPassword);
         return Result.success("管理员密码重置成功", null);
     }

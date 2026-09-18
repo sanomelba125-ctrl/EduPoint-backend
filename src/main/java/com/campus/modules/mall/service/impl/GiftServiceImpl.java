@@ -137,35 +137,55 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
         if (quantity == null || quantity <= 0) {
             throw new BusinessException("补货数量必须为正整数");
         }
-        if (quantity > MAX_RESTOCK_QUANTITY) {
-            throw new BusinessException("单次补货数量不能超过 " + MAX_RESTOCK_QUANTITY + " 件，请分批入库");
+        return adjustStock(id, quantity, adminId);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public GiftVO adjustStock(Long id, Integer quantity, Long adminId) {
+        if (quantity == null || quantity == 0) {
+            throw new BusinessException("库存调整数量不能为 0");
+        }
+        int absQuantity = Math.abs(quantity);
+        if (absQuantity > MAX_RESTOCK_QUANTITY) {
+            throw new BusinessException("单次库存调整数量不能超过 " + MAX_RESTOCK_QUANTITY + " 件，请分批操作");
         }
 
         Gift gift = this.getById(id);
         if (gift == null) {
-            throw new BusinessException("要补货的礼品不存在或已被删除");
+            throw new BusinessException("目标礼品不存在或已被删除");
         }
         int beforeStock = gift.getStock() != null ? gift.getStock() : 0;
         int beforeTotal = gift.getTotalStock() != null ? gift.getTotalStock() : 0;
 
-        // 在数据库当前值上自增，不做“读快照 → 写回”，与并发兑换的扣减互不覆盖
-        int rows = baseMapper.restock(id, quantity, adminId);
-        if (rows == 0) {
-            throw new BusinessException("补货失败，礼品可能已被删除，请刷新列表后重试");
+        int rows;
+        if (quantity > 0) {
+            // 1. 入库补货（盘盈）：可用库存与总入库同步原子自增
+            rows = baseMapper.restock(id, quantity, adminId);
+            if (rows == 0) {
+                throw new BusinessException("补货失败，礼品可能已被删除，请刷新列表后重试");
+            }
+            log.info("礼品入库补货成功: giftId={}, 名称={}, 本次入库=+{}件, 变动前可用库存={}, 变动前入库总量={}, 操作管理员ID={}",
+                    id, gift.getName(), quantity, beforeStock, beforeTotal, adminId);
+        } else {
+            // 2. 盘亏核减（报损）：向加库存看齐采用条件 SQL 原子自减，WHERE stock >= #{quantity} 严格杜绝负库存
+            rows = baseMapper.deductStock(id, absQuantity, adminId);
+            if (rows == 0) {
+                throw new BusinessException("库存核减失败：当前可用库存（" + beforeStock + "件）不足以核减 " + absQuantity + " 件，或礼品已被删除！");
+            }
+            log.info("礼品盘亏核减成功: giftId={}, 名称={}, 本次核减=-{}件, 变动前可用库存={}, 变动前入库总量={}, 操作管理员ID={}",
+                    id, gift.getName(), absQuantity, beforeStock, beforeTotal, adminId);
         }
-
-        log.info("礼品补货成功: giftId={}, 名称={}, 本次入库={}件, 补货前可用库存={}, 补货前入库总量={}, 操作管理员ID={}",
-                id, gift.getName(), quantity, beforeStock, beforeTotal, adminId);
 
         return convertToVO(this.getById(id));
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void deleteGift(Long id) {
+    public String deleteGift(Long id) {
         Gift gift = this.getById(id);
         if (gift == null) {
-            return;
+            return "礼品不存在";
         }
 
         // 检查是否已有学生兑换订单
@@ -174,13 +194,25 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
         );
 
         if (orderCount != null && orderCount > 0) {
-            // 已有兑换记录，严禁物理删除，降级为自动下架
+            // 已有兑换记录，严禁物理删除，降级为自动下架（正常提交事务，严禁抛出异常以避免触发事务回滚）
             gift.setStatus(0);
-            this.updateById(gift);
-            throw new BusinessException("该礼品已有学生兑换记录，为保证订单可溯不可删除，已自动转为下架状态！");
+            if (gift.getVersion() == null) {
+                gift.setVersion(0);
+            }
+            boolean updated = this.updateById(gift);
+            if (!updated) {
+                // 兜底强制更新货架状态（绕过乐观锁版本检查，确保管理员意志落地）
+                this.update(new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Gift>()
+                        .set(Gift::getStatus, 0)
+                        .eq(Gift::getId, id));
+            }
+            log.warn("礼品存在历史兑换订单，不可物理删除，已自动降级为下架状态: giftId={}, orderCount={}", id, orderCount);
+            return "该礼品已有学生兑换记录，为保证订单可溯不可删除，已自动转为下架状态！";
         }
 
         this.removeById(id);
+        log.info("礼品无兑换记录，已成功物理删除: giftId={}", id);
+        return "删除成功";
     }
 
     @Override

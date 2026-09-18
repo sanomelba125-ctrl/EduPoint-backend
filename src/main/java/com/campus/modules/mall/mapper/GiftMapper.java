@@ -39,4 +39,20 @@ public interface GiftMapper extends BaseMapper<Gift> {
     int restock(@Param("id") Long id,
                 @Param("quantity") Integer quantity,
                 @Param("adminId") Long adminId);
+
+    /**
+     * 盘亏报损核减库存：可用库存与入库总量同步原子自减。
+     * 使用条件 SQL 更新：WHERE stock >= #{quantity}，严防扣成负数。
+     *
+     * @param id 礼品ID
+     * @param quantity 本次核减件数（正整数）
+     * @param adminId 操作员ID
+     * @return 受影响行数，0 表示库存不足或礼品不存在
+     */
+    @Update("UPDATE gift SET stock = stock - #{quantity}, total_stock = total_stock - #{quantity}, " +
+            "updated_by = #{adminId,jdbcType=BIGINT} " +
+            "WHERE id = #{id} AND stock >= #{quantity} AND deleted = 0")
+    int deductStock(@Param("id") Long id,
+                    @Param("quantity") Integer quantity,
+                    @Param("adminId") Long adminId);
 }

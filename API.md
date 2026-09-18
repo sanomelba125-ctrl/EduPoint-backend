@@ -792,15 +792,16 @@
     "code": 200,
     "message": "礼品兑换成功",
     "data": {
-      "orderNo": "ORD202609152030451234",
-      "pickupCode": "PK482719",
+      "orderNo": "ORD202609152030451234567",
+      "pickupCode": "PK09168821",
       "pointsCost": 50,
       "remainPoints": 130
     }
   }
   ```
-  > 订单号格式为 `ORD` + `yyyyMMddHHmmss` + 4 位随机数；提货码格式为 `PK` + 4 位随机 + 2 位随机（共 6 位数字）。
-  > 两者都随订单一次性落库，唯一性由 `uk_order_no` / `uk_pickup_code` 唯一索引兜底；核销时忽略输入的空格与横杠后比对。
+  > 订单号格式为 `ORD` + `yyyyMMddHHmmssSSS`（毫秒级时间戳）+ 4 位随机数（共 24 位）；提货码格式为 `PK` + `MMdd`（4 位月日）+ 4 位随机数（共 10 位，例如 `PK09168821` 表示 9 月 16 日的单）。
+  > 两者都由 `java.security.SecureRandom` 生成（不是 `Math.random()`，避免被反推预测）。提货码在生成前会先按 `pickup_code` 查一次库，命中则重新生成，最多重试 5 次；极端连续碰撞时追加纳秒尾数兜底（13 位）。
+  > 唯一性最终仍由 `uk_order_no` / `uk_pickup_code` 唯一索引兜底；核销时忽略输入的空格与横杠后比对。
 
 #### 5.4 学生端查询我的兑换订单
 - **请求方式**：`GET`
@@ -830,7 +831,7 @@
   ```json
   {
     "orderId": 1,
-    "pickupCode": "PK482719",
+    "pickupCode": "PK09168821",
     "remark": "已在一站式服务大厅窗口领取核销"
   }
   ```

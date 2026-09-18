@@ -1,4 +1,4 @@
-package com.campus;
+package com.campus.modules.mall;
 
 import com.campus.modules.mall.entity.StudentPointRecord;
 import com.campus.modules.mall.mapper.StudentPointRecordMapper;

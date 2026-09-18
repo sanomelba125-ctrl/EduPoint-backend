@@ -286,7 +286,12 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
             throw new BusinessException(ResultCode.USER_NOT_EXIST.getCode(), "目标管理员不存在");
         }
 
-        String rawPassword = StringUtils.hasText(newPassword) ? newPassword.trim() : "123";
+        // 核心安全防御：禁止重置系统内置超级管理员账号密码
+        if (isSuperAdmin(user)) {
+            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "禁止重置系统内置超级管理员账号密码");
+        }
+
+        String rawPassword = StringUtils.hasText(newPassword) ? newPassword.trim() : "123456";
         String encodedPassword = PasswordUtil.encode(rawPassword);
 
         lambdaUpdate()

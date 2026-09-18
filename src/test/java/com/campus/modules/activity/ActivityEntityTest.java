@@ -1,4 +1,4 @@
-package com.campus;
+package com.campus.modules.activity;
 
 import com.campus.modules.activity.entity.Activity;
 import org.junit.jupiter.api.DisplayName;

@@ -1,4 +1,4 @@
-package com.campus;
+package com.campus.common;
 
 import com.campus.common.constant.UserRole;
 import org.junit.jupiter.api.DisplayName;

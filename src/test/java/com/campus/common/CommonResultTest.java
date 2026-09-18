@@ -1,4 +1,4 @@
-package com.campus;
+package com.campus.common;
 
 import com.campus.common.result.Result;
 import com.campus.common.result.ResultCode;

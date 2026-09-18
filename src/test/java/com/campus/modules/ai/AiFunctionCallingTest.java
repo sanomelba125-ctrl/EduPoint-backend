@@ -1,4 +1,4 @@
-package com.campus;
+package com.campus.modules.ai;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;

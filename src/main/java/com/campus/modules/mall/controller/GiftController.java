@@ -1,5 +1,6 @@
 package com.campus.modules.mall.controller;
 
+import cn.dev33.satoken.annotation.SaCheckLogin;
 import cn.dev33.satoken.annotation.SaCheckRole;
 import cn.dev33.satoken.annotation.SaMode;
 import com.campus.common.auth.AuthUtil;
@@ -29,9 +30,10 @@ public class GiftController {
     private final GiftService giftService;
 
     /**
-     * 分页查询礼品列表（管理端与移动端通用）
+     * 分页查询礼品列表（管理端与移动端通用，需登录鉴权防未授权刷取与爬虫）
      * 对应 API.md 5.1 GET /gift/list
      */
+    @SaCheckLogin
     @GetMapping({"/list", "/page"})
     public Result<Page<GiftVO>> getGiftList(GiftQueryDTO queryDTO) {
         Page<GiftVO> page = giftService.getGiftPage(queryDTO);
@@ -39,9 +41,10 @@ public class GiftController {
     }
 
     /**
-     * 查询单个礼品详情
+     * 查询单个礼品详情（需登录鉴权）
      * 对应 GET /gift/{id}
      */
+    @SaCheckLogin
     @GetMapping("/{id}")
     public Result<GiftVO> getGiftDetail(@PathVariable("id") Long id) {
         GiftVO vo = giftService.getGiftDetail(id);
@@ -73,8 +76,23 @@ public class GiftController {
     }
 
     /**
-     * 管理端补货：为指定礼品追加入库数量（入库总量与可用库存同步增加）
+     * 管理端库存调整（改库存：支持盘盈补货与盘亏核减）
      * 对应需求 3.8 礼物管理 —— 库存维护
+     * quantity > 0 为入库增加，quantity < 0 为盘亏核减（采用条件 SQL 原子更新）
+     * 例：POST /api/gift/12/stock/adjust?quantity=10 或 -5
+     */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN}, mode = SaMode.OR)
+    @PostMapping({"/{id}/stock/adjust", "/{id}/adjust-stock"})
+    public Result<GiftVO> adjustStock(@PathVariable("id") Long id,
+                                      @RequestParam("quantity") Integer quantity) {
+        Long adminId = getAdminId();
+        GiftVO vo = giftService.adjustStock(id, quantity, adminId);
+        String action = quantity != null && quantity > 0 ? "库存入库增加" : "库存盘亏核减";
+        return Result.success(action + "成功", vo);
+    }
+
+    /**
+     * 管理端补货兼容接口（转发至统一库存调整接口）
      * 例：POST /api/gift/12/restock?quantity=50
      */
     @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN}, mode = SaMode.OR)
@@ -82,8 +100,9 @@ public class GiftController {
     public Result<GiftVO> restock(@PathVariable("id") Long id,
                                   @RequestParam("quantity") Integer quantity) {
         Long adminId = getAdminId();
-        GiftVO vo = giftService.restock(id, quantity, adminId);
-        return Result.success("补货成功", vo);
+        GiftVO vo = giftService.adjustStock(id, quantity, adminId);
+        String action = quantity != null && quantity > 0 ? "补货成功" : "库存核减成功";
+        return Result.success(action, vo);
     }
 
     /**
@@ -92,9 +111,9 @@ public class GiftController {
      */
     @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN}, mode = SaMode.OR)
     @DeleteMapping("/{id}")
-    public Result<Void> deleteGift(@PathVariable Long id) {
-        giftService.deleteGift(id);
-        return Result.success("删除成功", null);
+    public Result<String> deleteGift(@PathVariable Long id) {
+        String msg = giftService.deleteGift(id);
+        return Result.success(msg, msg);
     }
 
     /**
