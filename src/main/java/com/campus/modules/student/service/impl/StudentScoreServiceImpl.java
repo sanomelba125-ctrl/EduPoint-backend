@@ -24,7 +24,38 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * 积分台账与学分光荣榜业务实现
+ * 积分台账与学分光荣榜业务实现。
+ *
+ * <p>本类承载积分账户域的全部读写逻辑，有三条贯穿始终的设计约束，改动前务必先读懂：
+ *
+ * <h3>一、双积分模型：两个字段语义不可混用</h3>
+ * <ul>
+ *   <li>{@code student.total_points} —— 历史累计积分，<b>只增不减</b>，是光荣榜排名与等级评定的唯一依据；</li>
+ *   <li>{@code student.current_points} —— 当前可用积分，用于商城兑换与惩罚扣减。</li>
+ * </ul>
+ * 各业务路径对两个字段的影响是不同的：
+ * <table border="1">
+ *   <caption>积分变动对照表</caption>
+ *   <tr><th>业务</th><th>type</th><th>可用积分</th><th>累计积分</th><th>用途</th></tr>
+ *   <tr><td>活动打卡奖励</td><td>1</td><td>+</td><td>+</td><td>可花、可排名</td></tr>
+ *   <tr><td>商城兑换扣减</td><td>2</td><td>-</td><td>不动</td><td>只花，不影响历史荣誉</td></tr>
+ *   <tr><td>人工调账</td><td>3</td><td>±</td><td>仅正向 +</td><td>正向视为奖励</td></tr>
+ *   <tr><td>订单取消返还</td><td>4</td><td>+</td><td>不动</td><td>回退支出，不算新增收入</td></tr>
+ * </table>
+ * 一句话：<b>累计只由「奖励类」事件驱动，可用才是真正能花掉的余额。</b>
+ *
+ * <h3>二、流水唯一出口</h3>
+ * 任何一次积分变动，最终都必须经 {@link PointLedger#record} 落一条可对账流水，
+ * 以保证「学生余额之和 == 流水净额」。禁止绕过本类直接改 {@code student} 表的积分字段，
+ * 否则会破坏对账性，管理端流水大盘（{@link #getLedgerMetrics()}）也会随之失真。
+ *
+ * <h3>三、并发安全策略</h3>
+ * 所有加减分一律走 {@code StudentMapper} 上的原子 SQL（{@code UPDATE ... SET x = x ± ?}），
+ * 而不是「先查再算再写」。扣减额外携带 {@code WHERE current_points >= #{points}} 条件，
+ * 由数据库保证余额不会被扣成负数。
+ *
+ * @see com.campus.modules.mall.service.PointLedger
+ * @see com.campus.modules.mall.entity.PointRecordType
  */
 @Slf4j
 @Service
@@ -85,6 +116,23 @@ public class StudentScoreServiceImpl implements StudentScoreService {
         return convertToVOPage(recordPage);
     }
 
+    /**
+     * 查询光荣榜榜单 + 本人实时位次 + 距上一名分差。
+     *
+     * <p><b>排序口径固定为 {@code total_points DESC, student_no ASC}</b>：
+     * 按累计积分降序排名，同分时用学号升序作为稳定兜底键。这个兜底键不能省——
+     * 否则同分学生的相对顺序将由数据库自行决定，翻页时会出现「同一个人在不同页重复出现或消失」的抖动。
+     * 分页列表序号与全校精确名次必须基于同一排序口径，改动排序时两边要同步改。
+     *
+     * <p>本人位次不使用分页列表推算（本人可能不在当前页），而是通过
+     * {@code COUNT(*) + 1} 实时算出全校精确排名；距上一名的分差用偏移分页取「第 exactRank-1 条」得到，
+     * 并与总分差做 {@code Math.max(0, ...)} 兜底，防止并发写入瞬间出现负分差。
+     *
+     * @param page             页码，从 1 开始
+     * @param size             每页条数
+     * @param college          按学院过滤榜单，为空表示查全校
+     * @param currentStudentId 当前登录学生 ID，为空则不返回本人位次与分差
+     */
     @Override
     public StudentRankResultVO getLeaderboard(Integer page, Integer size, String college, Long currentStudentId) {
         int pageNum = page != null && page > 0 ? page : 1;
@@ -175,6 +223,27 @@ public class StudentScoreServiceImpl implements StudentScoreService {
                 .build();
     }
 
+    /**
+     * 管理员人工调账：正向加分（奖励）或负向扣分（惩罚）。
+     *
+     * <p>扣分采用<b>双重防负</b>，两道防线缺一不可：
+     * <ol>
+     *   <li>Java 侧预校验 —— 目的是给管理员返回一句可读的失败原因（「余额仅剩 N 分」），
+     *       避免明知会失败还要打一次数据库；</li>
+     *   <li>SQL 侧条件更新 —— {@code deductCurrentPoints} 携带 {@code WHERE current_points >= #{points}}，
+     *       这是真正挡住并发的防线。只有第 1 道，两个请求同时读到「余额 10、各扣 10」就会双双通过，
+     *       最终扣成负数。</li>
+     * </ol>
+     *
+     * <p>加分则同时增加可用积分与累计积分（视为一次荣誉奖励）；扣分只动可用积分，
+     * 不动累计积分，即<b>积分可以花掉，但历史荣誉不被撤销</b>。
+     *
+     * <p>调账成功后向目标学生推送站内信 + WebSocket 实时提醒，但该通知属旁路逻辑，
+     * 失败只记 WARN 不影响调账结果（调账已落库，不应因通知失败而回滚）。
+     *
+     * @param dto     调账参数（目标学生、变动分值、调账原因、可选审批单号）
+     * @param adminId 操作管理员 ID，写入流水的 operator_id 用于责任追溯
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void adjustPoints(PointAdjustDTO dto, Long adminId) {
@@ -186,27 +255,32 @@ public class StudentScoreServiceImpl implements StudentScoreService {
         int beforeCurrent = student.getCurrentPoints() != null ? student.getCurrentPoints() : 0;
         int change = dto.getPoints();
 
-        // 负数扣除强防穿透校验
+        // 负数扣除强防穿透校验（第 1 道防线：Java 侧预校验，负责给出可读原因）
         if (change < 0) {
             int deduct = Math.abs(change);
             if (beforeCurrent < deduct) {
                 throw new BusinessException(String.format("扣减后可用积分将变负数，系统拦截操作！学生当前余额仅剩: %d pts", beforeCurrent));
             }
+            // 第 2 道防线：条件更新由数据库原子保证，updated == 0 说明期间被并发扣走了
             int rows = studentMapper.deductCurrentPoints(student.getId(), deduct);
             if (rows == 0) {
                 throw new BusinessException("扣减可用积分失败，并发冲突或余额不足");
             }
         } else if (change > 0) {
-            // 正数增加：可用积分与历史累计积分同步增加
+            // 正数增加：可用积分与历史累计积分同步增加（奖励类事件才动累计值）
             studentMapper.addCurrentPoints(student.getId(), change);
             studentMapper.addTotalPoints(student.getId(), change);
         } else {
             throw new BusinessException("调账分值不能为 0");
         }
 
+        // 变动后余额 = 读取到的快照余额 + 本次变动值，供 PointLedger 落账时反推 before_points。
+        // 说明：这里是「快照推导」而非回读数据库。调账属低频人工操作，且扣分路径已由条件更新
+        // 兜住并发穿透，因此保持当前实现；若将来要支撑高并发自动调账，再改为回读
+        // selectCurrentPoints 取原子更新后的真实值（与 rewardActivityCheckin 口径一致）。
         int afterCurrent = beforeCurrent + change;
 
-        // 写入财务级对账流水 (通过 PointLedger 统一落账)
+        // 写入财务级对账流水 (通过 PointLedger 统一落账，type=3 人工调账，change 带符号)
         String remark = dto.getReason();
         if (StringUtils.hasText(dto.getApprovalNo())) {
             remark = String.format("调账审批单【%s】: %s", dto.getApprovalNo(), remark);
@@ -337,6 +411,22 @@ public class StudentScoreServiceImpl implements StudentScoreService {
                 .build();
     }
 
+    /**
+     * 流水实体分页 -> 展示 VO 分页。
+     *
+     * <p>除字段搬运外，这里还负责生成前端要展示的三类「可读标识」，规则如下
+     * （这些编码<b>只用于展示与人工核对，不是数据库主键</b>，不要拿去反查业务表）：
+     * <ul>
+     *   <li>台账单号 recordNo = {@code PT-yyyyMMdd-流水ID(4位)}，例 {@code PT-20260921-0107}；
+     *       日期取自 create_time，取不到时兜底默认日期避免格式化 NPE。</li>
+     *   <li>业务单号 businessId：打卡 {@code ACT-参与记录ID}、兑换与退单 {@code ORD-订单ID}、
+     *       其他有关联 {@code SYS-关联ID}、无关联 {@code OA-流水ID}。</li>
+     *   <li>操作人 operatorName：operator_id &gt; 0 视为管理员操作，否则视为系统自动触发
+     *       （定时关单、MQ 延时消息等场景写入的是 0L）。</li>
+     * </ul>
+     *
+     * <p>学生信息通过一次 {@code selectBatchIds} 批量捞取后内存拼装，避免逐条流水查学生表造成 N+1。
+     */
     private Page<StudentPointRecordVO> convertToVOPage(Page<StudentPointRecord> recordPage) {
         List<StudentPointRecord> records = recordPage.getRecords();
         if (records.isEmpty()) {
@@ -355,15 +445,19 @@ public class StudentScoreServiceImpl implements StudentScoreService {
             Student s = studentMap.get(r.getStudentId());
             String typeDesc = PointRecordType.of(r.getType()).getDescription();
 
+            // 按业务归属给流水打标签供前端展示：打卡归活动域；兑换(2)与退单返还(4)都是礼品域的事；
+            // 其余（人工调账等）统一视作系统操作。注意 4 归 GIFT 而非独立类型，因为它本质是兑换的逆向流水。
             String businessType = switch (r.getType() != null ? r.getType() : 0) {
                 case 1 -> "ACTIVITY";
                 case 2, 4 -> "GIFT";
                 default -> "SYSTEM";
             };
 
+            // create_time 由库默认值填充，理论上不为空；此处兜底是为了防止历史脏数据触发 NPE
             String dateStr = r.getCreateTime() != null ? r.getCreateTime().format(dtf) : "20260908";
             String recordNo = "PT-" + dateStr + "-" + String.format("%04d", r.getId());
 
+            // 业务单号前缀取决于流水来源：打卡挂活动参与记录，兑换/退单挂礼品订单
             String businessId;
             if (r.getRefId() != null) {
                 if (r.getType() != null && r.getType() == 1) {
@@ -377,6 +471,7 @@ public class StudentScoreServiceImpl implements StudentScoreService {
                 businessId = "OA-" + String.format("%04d", r.getId());
             }
 
+            // operator_id 为 0/null 表示由系统自动触发（超时关单、MQ 消费等无人工介入的路径）
             String operatorName = r.getOperatorId() != null && r.getOperatorId() > 0 ? "管理员#" + r.getOperatorId() : "系统自动触发";
 
             return StudentPointRecordVO.builder()
