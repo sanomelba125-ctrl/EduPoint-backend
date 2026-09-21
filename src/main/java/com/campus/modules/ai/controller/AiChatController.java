@@ -113,9 +113,9 @@ public class AiChatController {
             return authenticatedStudentId;
         }
 
+        // 仅已认证的管理员身份允许在调试模拟器中指定学生身份，杜绝未登录用户越权查询
         Long adminId = AuthUtil.currentAdminIdOrNull();
-        // 若为管理员身份或未登录真实学生身份（如开发调试仿真工作台），允许模拟指定学号进行工具调试
-        if ((adminId != null || authenticatedStudentId == null) && request != null) {
+        if (adminId != null && request != null) {
             if (request.getSimulateStudentId() != null && request.getSimulateStudentId() > 0) {
                 return request.getSimulateStudentId();
             }

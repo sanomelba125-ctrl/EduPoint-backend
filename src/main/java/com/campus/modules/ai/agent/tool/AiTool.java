@@ -18,6 +18,11 @@ public interface AiTool {
     String getDescription();
 
     /**
+     * 是否为公开工具（公开工具可通过 Tool Calling 发送给外部大模型；个人工具仅在本地执行）
+     */
+    boolean isPublic();
+
+    /**
      * 获取符合 OpenAI / SenseNova 协议的 Tools JSON Schema 定义
      */
     JSONObject getToolDefinition();

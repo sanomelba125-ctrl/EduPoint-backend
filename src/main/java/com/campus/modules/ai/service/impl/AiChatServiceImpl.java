@@ -95,6 +95,8 @@ public class AiChatServiceImpl implements AiChatService {
 
     /**
      * 核心流式调度与 Agent 循环执行器 (Agent Loop，全链路落库)
+     * 个人查询（积分、订单、活动、证书）始终走本地模板，不向外部大模型发送个人数据；
+     * 公开查询（活动列表、礼品列表、知识检索）可通过大模型 Tool Calling 调度。
      */
     private void processChatStream(AiChatRequest request, Long studentId, SseEmitter emitter) {
         String rawQuestion = request != null ? request.getQuestion() : "";
@@ -103,7 +105,7 @@ public class AiChatServiceImpl implements AiChatService {
                 : "default";
 
         if (!StringUtils.hasText(rawQuestion)) {
-            sendChunk(emitter, "您好！我是校园活动小助手“小智”，请问有什么可以帮您的吗？", true, "SYSTEM", null);
+            sendChunk(emitter, "您好！我是校园活动小助手\"小智\"，请问有什么可以帮您的吗？", true, "SYSTEM", null);
             sendDone(emitter);
             return;
         }
@@ -115,21 +117,26 @@ public class AiChatServiceImpl implements AiChatService {
         // 持久化用户提问 (role: user)
         saveMessage(studentId, conversationId, "user", cleanQuestion, null, null);
 
-        // 2. 检查是否为完全无需调用工具的强置信度高频官方标准问答
+        // 2. 个人查询优先走本地模板，严禁将个人数据发送给外部大模型
         boolean personalQuery = isPersonalQuery(cleanQuestion);
-        if (!personalQuery) {
-            QaKnowledge hit = qaKnowledgeService.matchKnowledge(cleanQuestion);
-            if (hit != null) {
-                qaKnowledgeService.incrementViewCount(hit.getId());
-                streamKnowledgeAnswer(emitter, hit);
-                sendDone(emitter);
-                // 持久化官方知识库标准回复
-                saveMessage(studentId, conversationId, "assistant", "【官方知识库解答】\n\n" + hit.getAnswer(), "KNOWLEDGE_BASE", null);
-                return;
-            }
+        if (personalQuery) {
+            streamLocalAgentAnswer(emitter, cleanQuestion, studentId, conversationId);
+            sendDone(emitter);
+            return;
         }
 
-        // 3. 优先调度商汤日日新 / 通义千问 / OpenAI 兼容大模型 Function Calling 引擎
+        // 3. 检查是否为完全无需调用工具的强置信度高频官方标准问答
+        QaKnowledge hit = qaKnowledgeService.matchKnowledge(cleanQuestion);
+        if (hit != null) {
+            qaKnowledgeService.incrementViewCount(hit.getId());
+            streamKnowledgeAnswer(emitter, hit);
+            sendDone(emitter);
+            // 持久化官方知识库标准回复
+            saveMessage(studentId, conversationId, "assistant", "【官方知识库解答】\n\n" + hit.getAnswer(), "KNOWLEDGE_BASE", null);
+            return;
+        }
+
+        // 4. 公开查询优先调度大模型 Function Calling 引擎（仅提供公开工具）
         if (aiConfig.isEnabled() && StringUtils.hasText(aiConfig.getApiKey())) {
             boolean llmSuccess = runLlmAgentLoop(cleanQuestion, studentId, conversationId, emitter);
             if (llmSuccess) {
@@ -139,7 +146,7 @@ public class AiChatServiceImpl implements AiChatService {
             log.warn("外部大模型接口调用失败或网络不可达，自动无缝降级为本地智能工具引擎 (Local Agent)");
         }
 
-        // 4. 本地智能工具引擎兜底 (Local Agent Fallback: 同样支持 5 大只读工具执行与轨迹展示)
+        // 5. 本地智能工具引擎兜底 (Local Agent Fallback: 同样支持工具执行与轨迹展示)
         streamLocalAgentAnswer(emitter, cleanQuestion, studentId, conversationId);
         sendDone(emitter);
     }
@@ -182,7 +189,7 @@ public class AiChatServiceImpl implements AiChatService {
             messages.add(userMsg);
 
             round1Body.put("messages", messages);
-            round1Body.put("tools", toolRegistry.getOpenAiToolDefinitions());
+            round1Body.put("tools", toolRegistry.getPublicToolDefinitions());
             round1Body.put("tool_choice", "auto");
 
             HttpRequest round1Req = HttpRequest.newBuilder()
@@ -234,21 +241,35 @@ public class AiChatServiceImpl implements AiChatService {
             }
 
             // 情况 B: 大模型判定需要调用工具 (Function Calling)
-            log.info("【大模型决策触发 Function Calling】下发工具数量: {}", toolCalls.size());
+            int maxToolCalls = Math.min(toolCalls.size(), 3); // 一期每轮最多 3 个只读工具
+            log.info("【大模型决策触发 Function Calling】下发工具数量: {}，实际执行上限: {}", toolCalls.size(), maxToolCalls);
 
             JSONArray round2Messages = new JSONArray();
             round2Messages.addAll(messages);
             round2Messages.add(assistantMsg); // 追加包含 tool_calls 的 assistant 消息
 
             JSONObject lastExecutedToolRecord = null;
+            List<ToolExecutionRecord> executedRecords = new ArrayList<>(); // 保留已执行结果用于 Round 2 降级
 
             // 逐个执行工具并组装 tool 响应
-            for (int i = 0; i < toolCalls.size(); i++) {
+            for (int i = 0; i < maxToolCalls; i++) {
                 JSONObject tc = toolCalls.getJSONObject(i);
                 String callId = tc.getString("id");
                 JSONObject func = tc.getJSONObject("function");
                 String funcName = func != null ? func.getString("name") : "";
                 String argsStr = func != null ? func.getString("arguments") : "{}";
+
+                // 安全校验: 模型只能调用公开工具，拒绝个人工具调用
+                if (!toolRegistry.isPublicTool(funcName)) {
+                    log.warn("【安全拦截】大模型试图调用非公开工具: {}，已拒绝执行", funcName);
+                    JSONObject rejectResult = new JSONObject();
+                    rejectResult.put("role", "tool");
+                    rejectResult.put("tool_call_id", callId);
+                    rejectResult.put("name", funcName);
+                    rejectResult.put("content", "{\"success\":false,\"error\":\"该工具为个人查询工具，已由本地处理\"}");
+                    round2Messages.add(rejectResult);
+                    continue;
+                }
 
                 // 向客户端推送工具调用开始事件
                 JSONObject startEvent = new JSONObject();
@@ -260,6 +281,7 @@ public class AiChatServiceImpl implements AiChatService {
 
                 // 强制注入 studentId 安全执行工具
                 ToolExecutionRecord record = toolRegistry.executeTool(callId, funcName, argsStr, studentId);
+                executedRecords.add(record);
 
                 // 向客户端推送工具调用完成事件 (携带事实 JSON 与耗时)
                 JSONObject doneEvent = new JSONObject();
@@ -313,12 +335,19 @@ public class AiChatServiceImpl implements AiChatService {
                 round2Resp = httpClient.send(round2Req, HttpResponse.BodyHandlers.ofInputStream());
             } catch (Exception ex) {
                 log.warn("大模型 Round 2 流式连接首次超时或中断，立即发起一次快速重试: {}", ex.getMessage());
-                round2Resp = httpClient.send(round2Req, HttpResponse.BodyHandlers.ofInputStream());
+                try {
+                    round2Resp = httpClient.send(round2Req, HttpResponse.BodyHandlers.ofInputStream());
+                } catch (Exception retryEx) {
+                    log.warn("大模型 Round 2 重试仍失败，使用本地模板展示已查事实: {}", retryEx.getMessage());
+                    streamToolResultsFallback(emitter, executedRecords);
+                    return true;
+                }
             }
 
             if (round2Resp.statusCode() != 200) {
-                log.warn("大模型 Round 2 流式生成返回非200状态: status={}", round2Resp.statusCode());
-                return false;
+                log.warn("大模型 Round 2 流式生成返回非200状态: status={}，使用本地模板展示已查事实", round2Resp.statusCode());
+                streamToolResultsFallback(emitter, executedRecords);
+                return true;
             }
 
             StringBuilder fullAnswerBuilder = new StringBuilder();
@@ -429,6 +458,35 @@ public class AiChatServiceImpl implements AiChatService {
         // 持久化本地兜底回复
         String toolCallJson = toolEvent != null ? toolEvent.toJSONString() : null;
         saveMessage(studentId, conversationId, "assistant", answer, "LOCAL_AGENT", toolCallJson);
+    }
+
+    /**
+     * Round 2 降级展示: 大模型第二轮请求失败时，将已成功取得的工具查询结果用本地模板展示
+     * 规范要求: "第二次模型请求失败时已成功取得的查询结果用本地模板显示，不能丢失事实或编造状态"
+     */
+    private void streamToolResultsFallback(SseEmitter emitter, List<ToolExecutionRecord> records) {
+        if (records == null || records.isEmpty()) {
+            streamDirectText(emitter, "暂时无法组织回答，请稍后重试或联系管理员。", "LOCAL_AGENT");
+            return;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("【系统提示】AI 模型暂时无法组织语言回复，以下为已查询到的原始业务数据：\n\n");
+        for (ToolExecutionRecord record : records) {
+            if ("SUCCESS".equals(record.getStatus()) && record.getResultFactJson() != null) {
+                try {
+                    JSONObject json = JSON.parseObject(record.getResultFactJson());
+                    if (json.getBooleanValue("success")) {
+                        sb.append("📋 **").append(record.getDescription()).append("**\n");
+                        sb.append("```json\n").append(json.toJSONString()).append("\n```\n\n");
+                    }
+                } catch (Exception ignored) {
+                    sb.append("📋 ").append(record.getDescription()).append(": ").append(record.getResultFactJson()).append("\n\n");
+                }
+            }
+        }
+        sb.append("如需更详细的解读，请稍后重试。");
+        streamDirectText(emitter, sb.toString(), "LOCAL_AGENT");
     }
 
     private JSONObject toToolEvent(ToolExecutionRecord record) {
@@ -655,13 +713,14 @@ public class AiChatServiceImpl implements AiChatService {
     }
 
     private String buildSystemPrompt() {
-        return "你是【校园活动积分平台】专属智能客服助理“小智”。\n" +
-                "你的职责是热情、准确、严谨地解答学生关于校园活动、现场打卡、积分变动、礼品兑换、荣誉证书及平台规则的咨询。\n\n" +
+        return "你是【校园活动积分平台】专属智能客服助理\"小智\"。\n" +
+                "你的职责是热情、准确、严谨地解答学生关于校园活动、现场打卡、积分变动、礼品兑换及平台规则的咨询。\n\n" +
                 "【核心工具调用准则 (Function Calling)】：\n" +
-                "1. 当用户询问个人私有数据（如：“查我的积分/还有多少积分/收支明细”、“查我的礼品订单/提货码”、“查我报名的活动/打卡/候补状态”、“查我获得的荣誉证书”）时，你必须主动调用对应的工具函数（如 query_my_points, query_my_orders, query_my_activities, query_my_certificates）获取最新真实事实。\n" +
-                "2. 当需要查询通用打卡、积分、选拔或评奖规则时，可调用 search_platform_knowledge 检索官方解答。\n" +
-                "3. 获得工具返回的业务事实 JSON 数据后，必须严格以该事实为依据，组织结构清晰、温暖热情的 Markdown 答复。严禁凭空捏造私有数据。\n" +
-                "4. 若工具返回学生未登录或档案不存在，请礼貌提示用户先在【个人中心】完成账号登录。";
+                "1. 当用户询问通用规则与平台解答时，可调用知识库检索工具：search_platform_knowledge 检索官方规则知识。\n" +
+                "2. 获得工具返回的业务事实 JSON 数据后，必须严格以该事实为依据，组织结构清晰、温暖热情的 Markdown 答复。严禁凭空捏造数据。\n" +
+                "3. 工具失败或无结果时如实告知，不要编造数据。\n" +
+                "4. 当用户询问个人私有数据（如个人积分余额、兑换订单、提货码、报名记录、证书等），请回答\"个人数据查询已由系统本地安全处理，请查看上方查询结果\"。不要尝试调用个人查询工具或编造个人数据。\n" +
+                "5. 问候、感谢和能力介绍等问题通常不需要工具，直接友好回复即可。";
     }
 
     private String normalizeEndpoint(String baseUrl) {

@@ -47,6 +47,28 @@ public class ToolRegistry {
     }
 
     /**
+     * 获取仅公开工具的 OpenAI 兼容协议定义列表（仅公开工具可发送给外部大模型）
+     * 个人工具（积分、订单等）仅在本地模板执行，不向外部大模型暴露
+     */
+    public JSONArray getPublicToolDefinitions() {
+        JSONArray array = new JSONArray();
+        for (AiTool tool : toolMap.values()) {
+            if (tool.isPublic()) {
+                array.add(tool.getToolDefinition());
+            }
+        }
+        return array;
+    }
+
+    /**
+     * 判断指定工具是否为公开工具
+     */
+    public boolean isPublicTool(String name) {
+        AiTool tool = toolMap.get(name);
+        return tool != null && tool.isPublic();
+    }
+
+    /**
      * 根据函数名获取对应工具
      */
     public AiTool getTool(String name) {

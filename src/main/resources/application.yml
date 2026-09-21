@@ -53,7 +53,7 @@ ai:
     provider: ${AI_LLM_PROVIDER:sensenova} # 提供商: sensenova / openai / deepseek / local
     enabled: ${AI_LLM_ENABLED:true} # 启用大语言模型调用 (未配 Key 或网络异常时自动无缝降级为本地智能工具引擎)
     base-url: ${AI_LLM_BASE_URL:https://api.sensenova.cn/compatible-mode/v1}
-    api-key: ${SENSENOVA_API_KEY:${AI_LLM_API_KEY:sk-xLoVIzGvBKBfC2FvjyP8IItEUCCZUlGn}} # 商汤开放平台 API 密钥
+    api-key: ${SENSENOVA_API_KEY:${AI_LLM_API_KEY:}} # 商汤开放平台 API 密钥 (必须通过环境变量配置，禁止硬编码)
     model: ${AI_LLM_MODEL:SenseNova-6.8-Flash-Lite}
     temperature: ${AI_LLM_TEMPERATURE:0.2}
     timeout-seconds: 60

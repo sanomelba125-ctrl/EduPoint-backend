@@ -75,8 +75,14 @@ public class SearchKnowledgeTool implements AiTool {
     }
 
     @Override
+    public boolean isPublic() {
+        return true;
+    }
+
+    @Override
     public String execute(Long studentId, JSONObject arguments) {
-        String keyword = arguments != null ? arguments.getString("keyword") : "";
+        String rawKeyword = arguments != null ? arguments.getString("keyword") : "";
+        final String keyword = (rawKeyword != null && rawKeyword.length() > 50) ? rawKeyword.substring(0, 50) : rawKeyword;
         String category = arguments != null ? arguments.getString("category") : null;
 
         if (!StringUtils.hasText(keyword)) {

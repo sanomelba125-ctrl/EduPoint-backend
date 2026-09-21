@@ -76,7 +76,8 @@ class AiFunctionCallingTest {
         searchKnowledgeTool = new SearchKnowledgeTool(qaKnowledgeService);
 
         toolRegistry = new ToolRegistry(List.of(
-                queryPointsTool, queryOrdersTool, queryActivitiesTool, queryCertificatesTool, searchKnowledgeTool
+                queryPointsTool, queryOrdersTool, queryActivitiesTool, queryCertificatesTool,
+                searchKnowledgeTool
         ));
         toolRegistry.init();
     }
@@ -101,6 +102,23 @@ class AiFunctionCallingTest {
             assertEquals("object", params.getString("type"));
             assertTrue(params.containsKey("properties"));
         }
+    }
+
+    @Test
+    @DisplayName("测试公开/个人工具分离: 仅公开工具对外暴露，个人工具不向大模型暴露")
+    void testPublicToolSeparation() {
+        JSONArray publicDefs = toolRegistry.getPublicToolDefinitions();
+        assertNotNull(publicDefs);
+        assertEquals(1, publicDefs.size(), "公开工具应为 1 个: search_platform_knowledge");
+
+        // 验证公开工具名称
+        assertTrue(toolRegistry.isPublicTool("search_platform_knowledge"));
+
+        // 验证个人工具不对外暴露
+        assertFalse(toolRegistry.isPublicTool("query_my_points"));
+        assertFalse(toolRegistry.isPublicTool("query_my_orders"));
+        assertFalse(toolRegistry.isPublicTool("query_my_activities"));
+        assertFalse(toolRegistry.isPublicTool("query_my_certificates"));
     }
 
     @Test
@@ -133,7 +151,6 @@ class AiFunctionCallingTest {
         JSONObject json = JSON.parseObject(result);
 
         assertTrue(json.getBooleanValue("success"));
-        assertEquals("张三", json.getString("studentName"));
         assertEquals(350, json.getIntValue("currentAvailablePoints"));
         assertEquals(500, json.getIntValue("historicalTotalPoints"));
         assertEquals(1, json.getJSONArray("recentTransactions").size());

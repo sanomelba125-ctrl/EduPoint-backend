@@ -61,6 +61,11 @@ public class QueryCertificatesTool implements AiTool {
     }
 
     @Override
+    public boolean isPublic() {
+        return false;
+    }
+
+    @Override
     public String execute(Long studentId, JSONObject arguments) {
         if (studentId == null) {
             JSONObject err = new JSONObject();
@@ -74,7 +79,7 @@ public class QueryCertificatesTool implements AiTool {
             if (arguments != null && arguments.containsKey("limit")) {
                 Integer l = arguments.getInteger("limit");
                 if (l != null && l > 0) {
-                    limit = Math.min(l, 20);
+                    limit = Math.min(l, 10);
                 }
             }
 

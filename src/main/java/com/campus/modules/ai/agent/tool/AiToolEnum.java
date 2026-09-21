@@ -11,12 +11,16 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public enum AiToolEnum {
 
-    QUERY_POINTS("query_my_points", "查询当前登录学生本人的实时可用积分余额、累计总积分及最新收支流水记录"),
-    QUERY_ORDERS("query_my_orders", "查询当前登录学生本人的商城礼品兑换订单列表与提货核销码状态"),
-    QUERY_ACTIVITIES("query_my_activities", "查询学生本人已报名、已打卡或正在候补排队的校园活动列表"),
-    QUERY_CERTIFICATES("query_my_certificates", "查询学生本人获得的荣誉结项证书及唯一防伪核验编号"),
-    SEARCH_KNOWLEDGE("search_platform_knowledge", "按关键词从学校官方知识库中检索打卡、积分、选拔与评奖规则解答");
+    // 公开工具 (可通过 Tool Calling 发送给外部大模型)
+    SEARCH_KNOWLEDGE("search_platform_knowledge", "按关键词从学校官方知识库中检索打卡、积分、选拔与评奖规则解答", true),
+
+    // 个人工具 (仅限本地模板执行，不发送给外部大模型)
+    QUERY_POINTS("query_my_points", "查询当前登录学生本人的实时可用积分余额、累计总积分及最新收支流水记录", false),
+    QUERY_ORDERS("query_my_orders", "查询当前登录学生本人的商城礼品兑换订单列表与提货核销码状态", false),
+    QUERY_ACTIVITIES("query_my_activities", "查询学生本人已报名、已打卡或正在候补排队的校园活动列表", false),
+    QUERY_CERTIFICATES("query_my_certificates", "查询学生本人获得的荣誉结项证书及唯一防伪核验编号", false);
 
     private final String functionName;
     private final String description;
+    private final boolean isPublic;
 }
