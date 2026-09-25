@@ -15,6 +15,16 @@ public class SaTokenConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         // 注册 Sa-Token 路由拦截器，激活注解鉴权功能 (@SaCheckLogin, @SaCheckRole, @SaCheckPermission 等)
         registry.addInterceptor(new SaInterceptor())
-                .addPathPatterns("/**");
+                .addPathPatterns("/**")
+                .excludePathPatterns(
+                        "/doc.html",
+                        "/webjars/**",
+                        "/v3/api-docs/**",
+                        "/swagger-resources/**",
+                        "/swagger-ui/**",
+                        "/swagger-ui.html",
+                        "/favicon.ico",
+                        "/actuator/**"
+                );
     }
 }

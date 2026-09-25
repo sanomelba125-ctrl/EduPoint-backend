@@ -18,6 +18,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * <p>握手阶段由 {@link WebSocketAuthConfigurator} 完成 Origin 白名单、token 有效性、路径身份一致性三重校验，
  * 校验不通过则握手直接失败，因此 {@link #onOpen} 可以信任路径参数。</p>
+ *
+ * <p><b>架构限制说明：</b>当前连接会话表使用本地 JVM 内存 {@code static ConcurrentHashMap} 管理，
+ * 适用于单实例部署。若后续生产环境横向扩容为多实例集群，跨节点推送需接入 Redis Pub/Sub 或 RabbitMQ 广播通知通道，
+ * 避免不同节点间的长连接消息丢失。</p>
  */
 @ServerEndpoint(
         value = WebSocketConstants.ENDPOINT_PATH,
@@ -77,11 +81,14 @@ public class WebSocketServer {
     @OnClose
     public void onClose() {
         String key = buildKey(userType, userId);
-        if (webSocketMap.containsKey(key)) {
-            webSocketMap.remove(key);
+        // P5-8b: 必须使用 ConcurrentHashMap 的双参数原子 remove(key, value)，
+        // 确保只有当前断开的实例与 Map 中存储的完全一致时才移除并扣减人数，防止重连并发竞态误删已建立的新 Session
+        if (webSocketMap.remove(key, this)) {
             subOnlineCount();
+            log.info("用户正常退出连接并释放会话: {}, 当前在线人数: {}", key, getOnlineCount());
+        } else {
+            log.info("用户旧连接已断开(已被新重连会话替代，跳过移除): {}, 当前在线人数: {}", key, getOnlineCount());
         }
-        log.info("用户退出: {}, 当前在线人数: {}", key, getOnlineCount());
     }
 
     /**

@@ -27,10 +27,13 @@
         <fastjson2.version>2.0.51</fastjson2.version>
         <qiniu.version>7.15.0</qiniu.version>
         <redisson.version>3.32.0</redisson.version>
+        <zxing.version>3.5.3</zxing.version>
+        <knife4j.version>4.5.0</knife4j.version>
+        <p6spy.version>1.9.0</p6spy.version>
     </properties>
 
     <dependencies>
-        <!-- Spring Boot Web & Validation -->
+        <!-- Spring Boot Web & Validation & Actuator -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
@@ -38,6 +41,33 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+        <!-- Micrometer Prometheus 监控指标导出支持 (P3-1 生产级可观测性) -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+
+        <!-- Knife4j OpenAPI 3 在线接口文档门户 (P4-3 Spring Boot 3 Jakarta 版) -->
+        <dependency>
+            <groupId>com.github.xiaoymin</groupId>
+            <artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId>
+            <version>${knife4j.version}</version>
+        </dependency>
+
+        <!-- P6Spy JDBC 驱动层 SQL 监控与真实耗时拦截 (P3-3 性能诊断) -->
+        <dependency>
+            <groupId>com.github.gavlyukovskiy</groupId>
+            <artifactId>p6spy-spring-boot-starter</artifactId>
+            <version>${p6spy.version}</version>
         </dependency>
 
         <!-- Redis 缓存与会话支持 -->
@@ -104,6 +134,18 @@
             <groupId>com.alibaba</groupId>
             <artifactId>easyexcel</artifactId>
             <version>3.3.4</version>
+        </dependency>
+
+        <!-- Google ZXing 二维码生成工具 -->
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>core</artifactId>
+            <version>${zxing.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>javase</artifactId>
+            <version>${zxing.version}</version>
         </dependency>
 
         <!-- 数据库版本协同 Flyway -->

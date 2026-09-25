@@ -16,8 +16,20 @@ public class Result<T> implements Serializable {
 
     private Long timestamp;
 
+    /** 全链路追踪唯一标识 (P3-2 / P5-3) */
+    private String traceId;
+
     public Result() {
         this.timestamp = System.currentTimeMillis();
+        this.traceId = org.slf4j.MDC.get("traceId");
+    }
+
+    public String getTraceId() {
+        return traceId;
+    }
+
+    public void setTraceId(String traceId) {
+        this.traceId = traceId;
     }
 
     public Integer getCode() {

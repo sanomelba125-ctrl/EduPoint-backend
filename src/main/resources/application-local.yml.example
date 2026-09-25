@@ -1,23 +1,42 @@
 # ===================================================================
 # 本地私有敏感配置文件模板 (application-local.yml.example)
 #
-# 【安全核心】：
-# 本项目的 .gitignore 已自动忽略了 application-local.yml 文件！
-# 任何写在 application-local.yml 中的密码与密钥都绝对不会被 Git 提交或上传！
+# 【安全核心规约】：
+# 本项目的 .gitignore 已配置忽略 application-local.yml 文件！
+# 任何敏感凭证（云存储 AK/SK、大模型 API Key、签名密钥、生产密码）严禁入库！
 #
 # 【使用步骤】：
 # 1. 复制本文件并在当前目录粘贴，重命名为：application-local.yml
-# 2. 将下方的 your-xxx 替换为你七牛云控制台的真实真实密钥
-# 3. 运行项目，Spring Boot 会自动读取并生效，且不会污染 Git 仓库！
+# 2. 将下方的 your-xxx 替换为你本地开发调试使用的真实凭据
+# 3. 运行项目，Spring Boot 会自动合并读取并生效
 # ===================================================================
 
+# 七牛云 Kodo 对象存储私有配置
 qiniu:
-  access-key: your-real-access-key
-  secret-key: your-real-secret-key
-  bucket: your-real-bucket-name
-  domain-url: http://your-real-domain/
+  access-key: ${QINIU_ACCESS_KEY:your-real-access-key}
+  secret-key: ${QINIU_SECRET_KEY:your-real-secret-key}
+  bucket: ${QINIU_BUCKET:your-real-bucket-name}
+  domain-url: ${QINIU_DOMAIN_URL:http://your-real-domain/}
 
-# 如果你本地的 MySQL 密码不是默认的 rootpassword，也可以在这里私有覆盖：
+# 活动签到动态二维码签名私钥 (本地测试用随机安全密钥，生产请通过环境变量 ACTIVITY_QR_SIGN_SECRET 注入)
+activity:
+  qrcode:
+    sign-secret: ${ACTIVITY_QR_SIGN_SECRET:EduPoint@QrSign#2026-LocalDevOnly}
+
+# 本地私有 AI 大模型配置 (通义千问 Qwen / 商汤日日新 SenseNova，生产通过环境变量 SENSENOVA_API_KEY 注入)
+ai:
+  llm:
+    provider: qwen
+    enabled: true
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api-key: ${AI_LLM_API_KEY:your-dashscope-api-key}
+    model: qwen3.8-27b
+    temperature: 0.2
+    timeout-seconds: 60
+    reasoning-effort: none
+    max-tokens: 4096
+
+# 本地数据库私有覆盖 (按需取消注释)：
 # spring:
 #   datasource:
 #     password: your_local_password

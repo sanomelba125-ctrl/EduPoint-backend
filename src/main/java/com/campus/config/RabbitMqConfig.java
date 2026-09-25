@@ -38,12 +38,40 @@ public class RabbitMqConfig {
     public static final String GIFT_EXPIRE_QUEUE = "campus.gift.expire.queue";
     public static final String GIFT_EXPIRE_ROUTING_KEY = "gift.expire";
 
+    // ================== 3. 礼品秒杀异步削峰下单队列与业务死信队列 (P1-2 & P1-4) ==================
+    public static final String SECKILL_ORDER_EXCHANGE = "campus.mall.order.create.exchange";
+    public static final String SECKILL_ORDER_QUEUE = "campus.mall.order.create.queue";
+    public static final String SECKILL_ORDER_ROUTING_KEY = "campus.mall.order.create.key";
+
+    public static final String SECKILL_DLX_EXCHANGE = "campus.mall.dead-letter.exchange";
+    public static final String SECKILL_DLX_QUEUE = "campus.mall.dead-letter.queue";
+    public static final String SECKILL_DLX_ROUTING_KEY = "campus.mall.dead-letter.key";
+
     /**
      * 使用 JSON 序列化器传输消息实体
      */
     @Bean
     public MessageConverter messageConverter() {
         return new Jackson2JsonMessageConverter();
+    }
+
+    /**
+     * 配置 RabbitTemplate 并注入 MDC traceId 前置处理器 (P3-2 全链路透传)
+     */
+    @Bean
+    public org.springframework.amqp.rabbit.core.RabbitTemplate rabbitTemplate(
+            org.springframework.amqp.rabbit.connection.ConnectionFactory connectionFactory,
+            MessageConverter messageConverter) {
+        org.springframework.amqp.rabbit.core.RabbitTemplate template = new org.springframework.amqp.rabbit.core.RabbitTemplate(connectionFactory);
+        template.setMessageConverter(messageConverter);
+        template.setBeforePublishPostProcessors(message -> {
+            String traceId = org.slf4j.MDC.get("traceId");
+            if (org.springframework.util.StringUtils.hasText(traceId)) {
+                message.getMessageProperties().setHeader("x-trace-id", traceId);
+            }
+            return message;
+        });
+        return template;
     }
 
     // ----------------- 活动打卡削峰绑定 -----------------
@@ -114,5 +142,46 @@ public class RabbitMqConfig {
     @Bean
     public Binding giftExpireBinding(Queue giftExpireQueue, DirectExchange giftDlxExchange) {
         return BindingBuilder.bind(giftExpireQueue).to(giftDlxExchange).with(GIFT_EXPIRE_ROUTING_KEY);
+    }
+
+    // ----------------- 秒杀异步下单削峰与业务死信队列拓扑 (P1-2 & P1-4) -----------------
+    @Bean
+    public DirectExchange seckillOrderExchange() {
+        return new DirectExchange(SECKILL_ORDER_EXCHANGE, true, false);
+    }
+
+    @Bean
+    public DirectExchange seckillDlxExchange() {
+        return new DirectExchange(SECKILL_DLX_EXCHANGE, true, false);
+    }
+
+    /**
+     * 秒杀死信队列：存放消费重试耗尽或异常拒绝的毒消息，供运维排查与人工重试
+     */
+    @Bean
+    public Queue seckillDlxQueue() {
+        return QueueBuilder.durable(SECKILL_DLX_QUEUE).build();
+    }
+
+    @Bean
+    public Binding seckillDlxBinding(Queue seckillDlxQueue, DirectExchange seckillDlxExchange) {
+        return BindingBuilder.bind(seckillDlxQueue).to(seckillDlxExchange).with(SECKILL_DLX_ROUTING_KEY);
+    }
+
+    /**
+     * 秒杀下单异步消费主队列 (配置死信转发)
+     */
+    @Bean
+    public Queue seckillOrderQueue() {
+        Map<String, Object> args = new HashMap<>();
+        // 绑定死信交换机与路由键
+        args.put("x-dead-letter-exchange", SECKILL_DLX_EXCHANGE);
+        args.put("x-dead-letter-routing-key", SECKILL_DLX_ROUTING_KEY);
+        return new Queue(SECKILL_ORDER_QUEUE, true, false, false, args);
+    }
+
+    @Bean
+    public Binding seckillOrderBinding(Queue seckillOrderQueue, DirectExchange seckillOrderExchange) {
+        return BindingBuilder.bind(seckillOrderQueue).to(seckillOrderExchange).with(SECKILL_ORDER_ROUTING_KEY);
     }
 }

@@ -39,6 +39,9 @@ public class StudentPointRecord {
     /** 关联业务ID(如 student_activity.id 或 student_gift.id) */
     private Long refId;
 
+    /** 业务幂等单据号(订单号/打卡记录号/调账审批号)，与 type 共同构成 uk_biz_type 联合唯一索引 */
+    private String bizNo;
+
     /** 操作人ID(关联 sys_user.id，系统自动触发则为 0 或 NULL) */
     private Long operatorId;
 

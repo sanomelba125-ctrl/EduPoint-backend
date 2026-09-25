@@ -1034,6 +1034,25 @@
   ```
 - **说明**：状态更新为 `2`（已撤销），公开验真时将显示“已作废撤销”及原因，证书文件不可再下载。
 
+#### 8.5 管理端荣誉证书大盘聚合指标
+- **请求方式**：`GET`
+- **请求路径**：`/certificate/metrics` 或 `/admin/certificate/metrics`
+- **权限要求**：管理员 / 辅导员登录 (`@SaCheckRole`)
+- **成功响应**：
+  ```json
+  {
+    "code": 200,
+    "message": "操作成功",
+    "data": {
+      "totalCount": 128,
+      "validCount": 120,
+      "revokedCount": 5,
+      "expiredCount": 3,
+      "verifyTotal": 356
+    }
+  }
+  ```
+
 ---
 
 ### 9. AI 客服与智能问答模块 (/ai)

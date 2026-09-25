@@ -36,7 +36,7 @@ sa-token:
 activity:
   qrcode:
     valid-seconds: ${ACTIVITY_QR_VALID_SECONDS:300}
-    sign-secret: ${ACTIVITY_QR_SIGN_SECRET:EduPoint@QrSign#2026}
+    sign-secret: ${ACTIVITY_QR_SIGN_SECRET}
     checkin-base-url: ${ACTIVITY_CHECKIN_BASE_URL:http://localhost:5173/#/checkin}
 
 # WebSocket 握手鉴权配置
@@ -64,3 +64,44 @@ ai:
 campus:
   mall:
     order-timeout-ms: ${CAMPUS_MALL_ORDER_TIMEOUT_MS:86400000} # 礼品订单未提货自动关单时效 (默认 24 小时 / 86400000 毫秒)
+  cors:
+    # 受信任跨域来源白名单 (逗号分隔，P5-2 收敛泛域名安全治理)
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:3200,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:3200,http://127.0.0.1:5173}
+
+# Spring Boot Actuator 生产级可观测性与 Prometheus 指标配置 (P3-1)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+    prometheus:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      sla:
+        http.server.requests: 100ms, 300ms, 500ms, 1s, 2s
+
+# Knife4j & OpenAPI 3 接口文档配置 (P4-3)
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+
+

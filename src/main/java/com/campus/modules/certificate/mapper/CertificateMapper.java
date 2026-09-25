@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.modules.certificate.dto.CertificateAdminVO;
+import com.campus.modules.certificate.dto.CertificateMetricsVO;
 import com.campus.modules.certificate.dto.CertificateMyVO;
 import com.campus.modules.certificate.dto.CertificateVerifyVO;
 import com.campus.modules.certificate.entity.Certificate;
@@ -47,4 +48,13 @@ public interface CertificateMapper extends BaseMapper<Certificate> {
 
     @Update("UPDATE certificate SET verify_count=COALESCE(verify_count,0)+1 WHERE id=#{id} AND deleted=0")
     int incrementVerifyCount(@Param("id") Long id);
+
+    @Select("SELECT " +
+            "  COUNT(*) AS totalCount, " +
+            "  COALESCE(SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END), 0) AS validCount, " +
+            "  COALESCE(SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END), 0) AS revokedCount, " +
+            "  COALESCE(SUM(CASE WHEN status = 3 THEN 1 ELSE 0 END), 0) AS expiredCount, " +
+            "  COALESCE(SUM(verify_count), 0) AS verifyTotal " +
+            "FROM certificate WHERE deleted = 0")
+    CertificateMetricsVO selectMetrics();
 }

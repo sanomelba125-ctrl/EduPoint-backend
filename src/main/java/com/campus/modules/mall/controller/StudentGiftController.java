@@ -33,6 +33,17 @@ public class StudentGiftController {
     // ==========================================
 
     /**
+     * 学生进入礼品详情页时获取防重兑换令牌 (P2-2 治理升级)
+     * 对应 GET /gift/{id}/token, /student/gift/{id}/token, /mall/gift/{id}/token
+     */
+    @GetMapping({"/gift/{id}/token", "/student/gift/{id}/token", "/mall/gift/{id}/token"})
+    public Result<GiftExchangeTokenVO> getExchangeToken(@PathVariable("id") Long id) {
+        Long studentId = getStudentId();
+        GiftExchangeTokenVO vo = studentGiftService.getExchangeToken(id, studentId);
+        return Result.success("防重令牌获取成功", vo);
+    }
+
+    /**
      * 学生发起礼品兑换
      * 对应 API.md 5.3 POST /gift/exchange 与 /student/gift/exchange
      */
@@ -68,6 +79,17 @@ public class StudentGiftController {
         return Result.success("订单取消成功，积分已原路返还", null);
     }
 
+    /**
+     * 学生获取礼品专属动态防伪提货二维码
+     * 对应 GET /gift/orders/{id}/pickup-qrcode, /student/gift/orders/{id}/pickup-qrcode, /mall/gift/orders/{id}/pickup-qrcode
+     */
+    @GetMapping({"/gift/orders/{id}/pickup-qrcode", "/student/gift/orders/{id}/pickup-qrcode", "/mall/gift/orders/{id}/pickup-qrcode"})
+    public Result<GiftPickupQrCodeVO> getPickupQrCode(@PathVariable("id") Long id) {
+        Long studentId = getStudentId();
+        GiftPickupQrCodeVO vo = studentGiftService.getPickupQrCode(id, studentId);
+        return Result.success("动态提货二维码生成成功", vo);
+    }
+
     // ==========================================
     // 管理端接口 (Admin Endpoints)
     // ==========================================
@@ -95,7 +117,7 @@ public class StudentGiftController {
     }
 
     /**
-     * 管理端核销提货码并确认发放
+     * 管理端核销提货码并确认发放（人工手动输入 6~8 位数字提货码兜底）
      * 对应 API.md 5.5 POST /gift/deliver 或 /gift/order/confirm-delivery
      */
     @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN}, mode = SaMode.OR)
@@ -104,6 +126,18 @@ public class StudentGiftController {
         Long adminId = getAdminId();
         studentGiftService.confirmDelivery(dto, adminId);
         return Result.success("提货码核销成功，已确认发放", null);
+    }
+
+    /**
+     * 管理端/扫码枪秒级扫码核销动态提货二维码
+     * 对应 POST /gift/order/verify-pickup-qrcode, /gift/verify-pickup-qrcode, /mall/gift/verify-pickup-qrcode, /admin/gift/order/verify-pickup-qrcode
+     */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN}, mode = SaMode.OR)
+    @PostMapping({"/gift/order/verify-pickup-qrcode", "/gift/verify-pickup-qrcode", "/mall/gift/verify-pickup-qrcode", "/admin/gift/order/verify-pickup-qrcode"})
+    public Result<PickupVerifyResultVO> verifyPickupQrCode(@Valid @RequestBody PickupQrVerifyDTO dto) {
+        Long adminId = getAdminId();
+        PickupVerifyResultVO vo = studentGiftService.verifyAndDeliverByQrCode(dto, adminId);
+        return Result.success("扫码核销成功，已确认发放", vo);
     }
 
     /**

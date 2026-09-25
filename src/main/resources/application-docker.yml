@@ -8,6 +8,10 @@ spring:
       initialization-fail-timeout: 30000
       minimum-idle: 5
       maximum-pool-size: 20
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      leak-detection-threshold: 60000
   flyway:
     enabled: true
     baseline-on-migrate: true
@@ -23,6 +27,7 @@ spring:
           max-active: 16
           max-idle: 8
           min-idle: 2
+          max-wait: 3000ms
   rabbitmq:
     host: rabbitmq
     port: 5672
@@ -33,9 +38,8 @@ spring:
         acknowledge-mode: auto
         prefetch: 10
 
+# MyBatis-Plus 配置 (纯注解开发，已清理空转的 XML 扫描与实体别名配置)
 mybatis-plus:
-  mapper-locations: classpath*:/mapper/**/*.xml
-  type-aliases-package: com.campus.entity
   configuration:
     map-underscore-to-camel-case: true
     cache-enabled: false
@@ -45,6 +49,12 @@ mybatis-plus:
       logic-delete-field: deleted
       logic-delete-value: 1
       logic-not-delete-value: 0
+
+# P6Spy 数据源装饰器开关 (Docker 生产环境默认关闭，保障零性能损耗)
+decorator:
+  datasource:
+    p6spy:
+      enable-logging: ${ENABLE_P6SPY:false}
 
 logging:
   level:

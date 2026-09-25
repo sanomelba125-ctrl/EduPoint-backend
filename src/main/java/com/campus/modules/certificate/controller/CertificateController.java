@@ -6,6 +6,7 @@ import cn.dev33.satoken.annotation.SaMode;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.campus.common.auth.AuthUtil;
 import com.campus.common.constant.UserRole;
 import com.campus.common.result.Result;
 import com.campus.modules.certificate.dto.*;
@@ -75,6 +76,7 @@ public class CertificateController {
             @RequestParam(defaultValue = "10") Integer size,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Integer status) {
+        AuthUtil.requireAdminId();
         long current = Math.max(page == null ? 1 : page, 1);
         long pageSize = Math.min(Math.max(size == null ? 10 : size, 1), 100);
 
@@ -102,5 +104,15 @@ public class CertificateController {
     public Result<Void> revoke(@PathVariable Long id, @Valid @RequestBody CertificateRevokeDTO dto) {
         certificateService.revoke(id, dto.getRevokeReason());
         return Result.success("证书已撤销", null);
+    }
+
+    /**
+     * 8.5 管理端荣誉证书及防伪核验指标概览。
+     * GET /certificate/metrics 或 /admin/certificate/metrics
+     */
+    @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
+    @GetMapping({"/metrics", "/admin/metrics"})
+    public Result<CertificateMetricsVO> metrics() {
+        return Result.success(certificateService.getMetrics());
     }
 }

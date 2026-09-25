@@ -6,6 +6,12 @@ spring:
     password: rootpassword # 请根据本地实际数据库密码修改
     hikari:
       initialization-fail-timeout: -1
+      minimum-idle: 5
+      maximum-pool-size: 20
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      leak-detection-threshold: 60000
   flyway:
     enabled: true
     baseline-on-migrate: true
@@ -16,6 +22,12 @@ spring:
       port: 6379
       password: redispassword
       timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+          max-wait: 3000ms
   rabbitmq:
     host: localhost
     port: 5672
@@ -23,15 +35,16 @@ spring:
     password: guest
     listener:
       simple:
+        acknowledge-mode: auto
+        prefetch: 10
         auto-startup: ${RABBITMQ_LISTENER_AUTO_STARTUP:true}
 
-# MyBatis-Plus 配置
+# MyBatis-Plus 配置 (纯注解开发，开启 Slf4jImpl SQL 日志用于开发诊断)
 mybatis-plus:
-  mapper-locations: classpath*:/mapper/**/*.xml
-  type-aliases-package: com.campus.entity
   configuration:
     map-underscore-to-camel-case: true
     cache-enabled: false
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
   global-config:
     db-config:
       id-type: auto
@@ -39,9 +52,19 @@ mybatis-plus:
       logic-delete-value: 1
       logic-not-delete-value: 0
 
+# P6Spy 数据源装饰器开关 (开发环境默认开启，生产可通过环境变量开关)
+decorator:
+  datasource:
+    p6spy:
+      enable-logging: true
+
 logging:
   level:
     com.campus: debug
+    com.campus.modules.activity.mapper: debug
+    com.campus.modules.mall.mapper: debug
+    com.campus.modules.student.mapper: debug
+    p6spy: info
     org.springframework.web: info
 
 # 七牛云 Kodo 对象存储配置

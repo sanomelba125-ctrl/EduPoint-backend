@@ -3,6 +3,7 @@ package com.campus.modules.ai.agent.tool;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.campus.modules.mall.entity.PointRecordType;
 import com.campus.modules.mall.entity.StudentPointRecord;
 import com.campus.modules.mall.mapper.StudentPointRecordMapper;
 import com.campus.modules.student.entity.Student;
@@ -132,13 +133,9 @@ public class QueryPointsTool implements AiTool {
     }
 
     private String formatTypeName(Integer type) {
-        if (type == null) return "未知流水";
-        return switch (type) {
-            case 1 -> "活动打卡奖励(+)";
-            case 2 -> "商城兑换消费(-)";
-            case 3 -> "管理员调账(±)";
-            case 4 -> "订单取消返还(+)";
-            default -> "积分变动";
-        };
+        if (type == null) {
+            return "未知流水";
+        }
+        return PointRecordType.of(type).getDescription();
     }
 }

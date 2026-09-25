@@ -17,8 +17,8 @@ public class ActivityQrCodeProperties {
     @Min(30)
     private int validSeconds = 300;
 
-    @NotBlank
-    private String signSecret = "EduPoint@QrSign#2026";
+    @NotBlank(message = "活动签到二维码签名密钥未配置，请配置环境变量 ACTIVITY_QR_SIGN_SECRET 或在本地配置文件中指定 activity.qrcode.sign-secret")
+    private String signSecret;
 
     @NotBlank
     private String checkinBaseUrl = "http://localhost:5173/#/checkin";

@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.campus.common.exception.BusinessException;
 import com.campus.common.result.ResultCode;
 import com.campus.modules.certificate.dto.CertificateAdminVO;
+import com.campus.modules.certificate.dto.CertificateMetricsVO;
 import com.campus.modules.certificate.dto.CertificateMyVO;
 import com.campus.modules.certificate.dto.CertificateVerifyVO;
 import com.campus.modules.certificate.entity.Certificate;
@@ -86,30 +87,25 @@ public class CertificateServiceImpl extends ServiceImpl<CertificateMapper, Certi
         updateById(certificate);
     }
 
+    @Override
+    public CertificateMetricsVO getMetrics() {
+        requireAdminId();
+        CertificateMetricsVO vo = baseMapper.selectMetrics();
+        return vo != null ? vo : CertificateMetricsVO.builder()
+                .totalCount(0L)
+                .validCount(0L)
+                .revokedCount(0L)
+                .expiredCount(0L)
+                .verifyTotal(0L)
+                .build();
+    }
+
     private Long requireStudentId() {
-        StpUtil.checkLogin();
-        String loginId = StpUtil.getLoginIdAsString();
-        if (loginId == null || !loginId.startsWith("student:")) {
-            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "仅学生可查询个人证书");
-        }
-        try {
-            return Long.parseLong(loginId.substring("student:".length()));
-        } catch (NumberFormatException e) {
-            throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "登录状态无效");
-        }
+        return com.campus.common.auth.AuthUtil.requireStudentId();
     }
 
     private Long requireAdminId() {
-        StpUtil.checkLogin();
-        String loginId = StpUtil.getLoginIdAsString();
-        if (loginId == null || !loginId.startsWith("admin:")) {
-            throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "无权访问管理员证书接口");
-        }
-        try {
-            return Long.parseLong(loginId.substring("admin:".length()));
-        } catch (NumberFormatException e) {
-            throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "登录状态无效");
-        }
+        return com.campus.common.auth.AuthUtil.requireAdminId();
     }
 
     private String trim(String value) { return value == null || value.isBlank() ? null : value.trim(); }

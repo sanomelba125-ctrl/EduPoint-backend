@@ -97,7 +97,7 @@ class CertificateServiceImplTest {
 
         BusinessException ex = assertThrows(BusinessException.class, () -> service.getMyList());
         assertEquals(403, ex.getCode());
-        assertEquals("仅学生可查询个人证书", ex.getMessage());
+        assertEquals("仅限学生端账号访问", ex.getMessage());
         verify(certificateMapper, never()).selectMyList(any());
     }
 
@@ -252,7 +252,7 @@ class CertificateServiceImplTest {
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.getAdminPage(1, 10, null, null, null, null, null));
         assertEquals(403, ex.getCode());
-        assertEquals("无权访问管理员证书接口", ex.getMessage());
+        assertEquals("无权访问管理端接口", ex.getMessage());
         verify(certificateMapper, never()).selectAdminPage(any(), any(), any(), any(), any(), any());
     }
 

@@ -20,6 +20,7 @@ import com.campus.modules.activity.entity.StudentActivity;
 import com.campus.modules.activity.service.ActivityCheckinCodeService;
 import com.campus.modules.activity.service.ActivityCacheService;
 import com.campus.modules.activity.service.ActivityService;
+import com.campus.common.util.QrCodeUtil;
 import jakarta.annotation.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -254,7 +255,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
 
         // 5. 生成 HMAC-SHA256 签名：sign = HmacSHA256(activityId + ":" + nonce, SIGN_SECRET)
         String sign = hmacSha256(activityId + ":" + nonce, qrCodeProperties.getSignSecret());
-        String signToken = "SIGN_" + sign.substring(0, 18).toUpperCase();
+        String signToken = "SIGN_" + sign.toUpperCase();
 
         // 6. 计算过期时间
         int validSeconds = qrCodeProperties.getValidSeconds();
@@ -275,6 +276,9 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
                 + "&nonce=" + nonce
                 + "&sign=" + signToken;
 
+        // 9. 使用 ZXing 生成 Base64 Data URL 图片供大屏直显
+        String qrCodeBase64 = QrCodeUtil.generateQrCodeBase64(qrContent, 300, 300);
+
         return QrCodeVO.builder()
                 .activityId(activityId)
                 .nonce(nonce)
@@ -282,6 +286,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
                 .expireTime(expireTime.format(DATETIME_FMT))
                 .validSeconds(validSeconds)
                 .qrContent(qrContent)
+                .qrCodeBase64(qrCodeBase64)
                 .build();
     }
 

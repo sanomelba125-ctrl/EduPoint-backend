@@ -561,10 +561,12 @@ class ActivityServiceImplTest {
         assertTrue(vo.getNonce().startsWith("NONCE_"), "nonce 前缀应为 NONCE_");
         assertEquals("NONCE_".length() + 14, vo.getNonce().length(), "nonce 应为 14 位去横线 UUID");
         assertTrue(vo.getSign().startsWith("SIGN_"), "签名字段前缀应为 SIGN_");
+        assertNotNull(vo.getQrCodeBase64(), "应包含二维码 Base64 Data URL 图片");
+        assertTrue(vo.getQrCodeBase64().startsWith("data:image/png;base64,"), "Base64 应为标准 PNG Data URL");
 
-        // 3. 签名算法可被独立复算：sign = Base64Url(HMAC-SHA256(activityId + ":" + nonce, secret))[:18]
+        // 3. 签名算法可被独立复算：sign = Base64Url(HMAC-SHA256(activityId + ":" + nonce, secret)) 全量防篡改签名
         String expected = hmacSha256(9L + ":" + vo.getNonce(), SIGN_SECRET);
-        assertEquals("SIGN_" + expected.substring(0, 18).toUpperCase(), vo.getSign());
+        assertEquals("SIGN_" + expected.toUpperCase(), vo.getSign());
 
         // 4. 有效期与过期时间
         LocalDateTime expireTime = LocalDateTime.parse(vo.getExpireTime(), DATETIME_FMT);

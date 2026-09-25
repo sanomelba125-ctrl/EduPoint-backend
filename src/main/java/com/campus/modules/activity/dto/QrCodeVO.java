@@ -37,4 +37,10 @@ public class QrCodeVO {
      * 学生端扫码后解析此 URL 并携带当前 GPS 坐标提交打卡请求。
      */
     private String qrContent;
+
+    /**
+     * 二维码图片 Base64 Data URL (data:image/png;base64,...)
+     * 大屏端直接使用 <img :src="qrCodeBase64" /> 渲染，无需前端额外引入二维码生成库
+     */
+    private String qrCodeBase64;
 }

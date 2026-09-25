@@ -60,6 +60,9 @@ public class StudentPointRecordVO implements Serializable {
     /** 关联业务 ID (活动参与ID / 兑换订单ID) */
     private Long refId;
 
+    /** 业务幂等单据号 (例: GIFT-20260908-01 或 ACT-CHK-1001) */
+    private String bizNo;
+
     /** 业务单据标识 (例: ACT-2026-001 或 ORD-20260908-01) */
     private String businessId;
 

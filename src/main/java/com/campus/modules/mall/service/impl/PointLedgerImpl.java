@@ -5,7 +5,11 @@ import com.campus.modules.mall.mapper.StudentPointRecordMapper;
 import com.campus.modules.mall.service.PointLedger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+
+import java.util.UUID;
 
 /**
  * 积分流水账本统一实现类。
@@ -15,8 +19,8 @@ import org.springframework.stereotype.Service;
  * <ul>
  *   <li><b>不改余额</b> —— 余额由调用方通过 StudentMapper 的原子 SQL 变更，本类只负责记账，
  *       避免「改余额」与「记流水」出现两套口径；</li>
- *   <li><b>不做幂等判断</b> —— 幂等由业务侧负责（打卡记录唯一约束、订单状态守卫条件更新等），
- *       账本层再判断一次会与业务状态机重复，且很难始终保持一致；</li>
+ *   <li><b>物理唯一键兜底幂等</b> —— 依靠 uk_biz_type (biz_no, type) 联合唯一键，
+ *       并发或重试插入重复流水时抛出 DuplicateKeyException 促使外层事务回滚，杜绝重复记账；</li>
  *   <li><b>只 insert，不 update / delete</b> —— 流水是财务凭证，记错只能追加一笔冲正流水，不允许篡改历史。</li>
  * </ul>
  *
@@ -37,6 +41,12 @@ public class PointLedgerImpl implements PointLedger {
     @Override
     public void record(Long studentId, int type, int change, int afterPoints,
                        String description, Long refId, Long operatorId) {
+        record(studentId, type, change, afterPoints, description, null, refId, operatorId);
+    }
+
+    @Override
+    public void record(Long studentId, int type, int change, int afterPoints,
+                       String description, String bizNo, Long refId, Long operatorId) {
         StudentPointRecord record = new StudentPointRecord();
         record.setStudentId(studentId);
         record.setType(type);
@@ -47,8 +57,31 @@ public class PointLedgerImpl implements PointLedger {
         record.setDescription(description != null ? description.trim() : "");
         record.setRefId(refId);
         record.setOperatorId(operatorId == null ? 0L : operatorId);
-        pointRecordMapper.insert(record);
-        log.info("积分账本入账成功: studentId={}, type={}, change={}, before={}, after={}, refId={}",
-                studentId, type, change, record.getBeforePoints(), afterPoints, refId);
+
+        // 如果未显式传入 bizNo，则按业务类型与 refId 兜底派生，保证唯一键不为空
+        String resolvedBizNo = bizNo;
+        if (!StringUtils.hasText(resolvedBizNo)) {
+            if (refId != null) {
+                resolvedBizNo = switch (type) {
+                    case 1 -> "ACT-CHK-" + refId;
+                    case 2 -> "GIFT-ORD-" + refId;
+                    case 4 -> "GIFT-REF-" + refId;
+                    default -> "SYS-REF-" + refId;
+                };
+            } else {
+                resolvedBizNo = "BIZ-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+            }
+        }
+        record.setBizNo(resolvedBizNo.trim());
+
+        try {
+            pointRecordMapper.insert(record);
+            log.info("积分账本入账成功: studentId={}, type={}, change={}, before={}, after={}, bizNo={}, refId={}",
+                    studentId, type, change, record.getBeforePoints(), afterPoints, record.getBizNo(), refId);
+        } catch (DuplicateKeyException e) {
+            log.warn("积分账本入账命中 uk_biz_type 唯一约束冲突(重复记账被拦截): studentId={}, type={}, bizNo={}, error={}",
+                    studentId, type, record.getBizNo(), e.getMessage());
+            throw e;
+        }
     }
 }

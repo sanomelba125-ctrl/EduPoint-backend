@@ -98,24 +98,32 @@ public class GlobalExceptionHandler {
     }
 
     // ==========================================
-    // 5. 数据持久层异常
+    // 5. 数据持久层异常 (P5-3 异常脱敏防 SQL 泄漏)
     // ==========================================
 
     @ExceptionHandler(DuplicateKeyException.class)
     public Result<?> handleDuplicateKeyException(DuplicateKeyException e) {
-        log.warn("数据库唯一约束冲突: {}", e.getMessage());
-        return Result.error(ResultCode.BAD_REQUEST.getCode(), "数据已存在或已被历史归档占用，请勿重复提交");
+        String traceId = com.campus.common.util.TraceUtil.getOrCreateTraceId();
+        log.warn("[TraceId: {}] 数据库唯一约束冲突: {}", traceId, e.getMessage());
+        return Result.error(ResultCode.BAD_REQUEST.getCode(), "数据已存在或已被占用，请勿重复提交");
+    }
+
+    @ExceptionHandler(org.springframework.dao.DataAccessException.class)
+    public Result<?> handleDataAccessException(org.springframework.dao.DataAccessException e) {
+        String traceId = com.campus.common.util.TraceUtil.getOrCreateTraceId();
+        log.error("[TraceId: {}] 数据库底层操作异常: ", traceId, e);
+        return Result.error(ResultCode.ERROR.getCode(), "数据处理异常，请核对参数后重试 [traceId: " + traceId + "]");
     }
 
     // ==========================================
-    // 6. 系统未捕获未知异常兜底
+    // 6. 系统未捕获未知异常兜底 (P5-3 全局脱敏)
     // ==========================================
 
     @ExceptionHandler(Exception.class)
     public Result<?> handleException(Exception e) {
-        log.error("全局未捕获异常 [{}]: ", e.getClass().getName(), e);
-        String detailMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-        return Result.error(ResultCode.ERROR.getCode(), "系统繁忙，请稍后重试: " + detailMsg);
+        String traceId = com.campus.common.util.TraceUtil.getOrCreateTraceId();
+        log.error("[TraceId: {}] 全局未捕获异常 [{}]: ", traceId, e.getClass().getName(), e);
+        return Result.error(ResultCode.ERROR.getCode(), "系统繁忙，请稍后重试 [traceId: " + traceId + "]");
     }
 }
 

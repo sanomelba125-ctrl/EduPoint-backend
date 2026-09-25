@@ -10,10 +10,17 @@ import com.campus.modules.student.entity.Student;
 import com.campus.modules.student.mapper.StudentMapper;
 import com.campus.modules.student.service.impl.StudentScoreServiceImpl;
 import com.campus.modules.system.service.SysNoticeService;
+import com.campus.modules.student.strategy.PointStrategyContext;
+import com.campus.modules.student.strategy.impl.AdminAdjustStrategy;
+import com.campus.modules.student.strategy.impl.CheckinRewardStrategy;
+import com.campus.modules.student.strategy.impl.MallExchangeDeductStrategy;
+import com.campus.modules.student.strategy.impl.OrderCancelRefundStrategy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -28,7 +35,6 @@ class StudentScoreAdjustTest {
     private StudentPointRecordMapper pointRecordMapper;
     private PointLedger pointLedger;
     private SysNoticeService sysNoticeService;
-
     private StudentScoreServiceImpl studentScoreService;
 
     @BeforeEach
@@ -40,11 +46,19 @@ class StudentScoreAdjustTest {
         // 使用真实的 PointLedgerImpl 组装，以便直接验证最终落库到 student_point_record 的审计字段
         pointLedger = new PointLedgerImpl(pointRecordMapper);
 
+        PointStrategyContext pointStrategyContext = new PointStrategyContext(List.of(
+                new CheckinRewardStrategy(),
+                new MallExchangeDeductStrategy(),
+                new AdminAdjustStrategy(),
+                new OrderCancelRefundStrategy()
+        ));
+
         studentScoreService = new StudentScoreServiceImpl(
                 studentMapper,
                 pointRecordMapper,
                 pointLedger,
-                sysNoticeService
+                sysNoticeService,
+                pointStrategyContext
         );
     }
 
@@ -63,6 +77,7 @@ class StudentScoreAdjustTest {
         when(studentMapper.selectById(studentId)).thenReturn(student);
         when(studentMapper.addCurrentPoints(eq(studentId), eq(100))).thenReturn(1);
         when(studentMapper.addTotalPoints(eq(studentId), eq(100))).thenReturn(1);
+        when(studentMapper.selectCurrentPoints(studentId)).thenReturn(150);
 
         PointAdjustDTO dto = new PointAdjustDTO();
         dto.setStudentId(studentId);
@@ -88,6 +103,7 @@ class StudentScoreAdjustTest {
         assertEquals(100, record.getChangePoints(), "变动分值应为 +100");
         assertEquals(50, record.getBeforePoints(), "变动前积分应为 50");
         assertEquals(150, record.getAfterPoints(), "变动后积分应为 150");
+        assertEquals("SP-2026-001", record.getBizNo(), "业务幂等单号必须与审批单号严格一致");
         assertTrue(record.getDescription().contains("SP-2026-001"));
         assertTrue(record.getDescription().contains("参加校庆志愿服务突出奖励"));
     }
@@ -137,6 +153,7 @@ class StudentScoreAdjustTest {
 
         when(studentMapper.selectById(studentId)).thenReturn(student);
         when(studentMapper.deductCurrentPoints(eq(studentId), eq(30))).thenReturn(1);
+        when(studentMapper.selectCurrentPoints(studentId)).thenReturn(70);
 
         PointAdjustDTO dto = new PointAdjustDTO();
         dto.setStudentId(studentId);
@@ -176,6 +193,7 @@ class StudentScoreAdjustTest {
         when(studentMapper.selectById(studentId)).thenReturn(student);
         when(studentMapper.addCurrentPoints(eq(studentId), eq(20))).thenReturn(1);
         when(studentMapper.addTotalPoints(eq(studentId), eq(20))).thenReturn(1);
+        when(studentMapper.selectCurrentPoints(studentId)).thenReturn(100);
 
         PointAdjustDTO dto = new PointAdjustDTO();
         dto.setStudentId(studentId);

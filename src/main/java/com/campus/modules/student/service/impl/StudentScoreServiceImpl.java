@@ -57,6 +57,14 @@ import java.util.stream.Collectors;
  * @see com.campus.modules.mall.service.PointLedger
  * @see com.campus.modules.mall.entity.PointRecordType
  */
+import com.campus.modules.student.strategy.PointCalculationResult;
+import com.campus.modules.student.strategy.PointContext;
+import com.campus.modules.student.strategy.PointStrategyContext;
+import lombok.RequiredArgsConstructor;
+
+/**
+ * 积分与学分账户服务实现
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -66,6 +74,7 @@ public class StudentScoreServiceImpl implements StudentScoreService {
     private final StudentPointRecordMapper pointRecordMapper;
     private final PointLedger pointLedger;
     private final SysNoticeService sysNoticeService;
+    private final PointStrategyContext pointStrategyContext;
 
     @Override
     public StudentScoreBalanceVO getBalance(Long studentId) {
@@ -253,39 +262,31 @@ public class StudentScoreServiceImpl implements StudentScoreService {
         }
 
         int beforeCurrent = student.getCurrentPoints() != null ? student.getCurrentPoints() : 0;
-        int change = dto.getPoints();
+        PointContext context = new PointContext(student.getId(), beforeCurrent, dto.getPoints(), dto.getApprovalNo(), null, adminId, dto.getReason());
+        PointCalculationResult calc = pointStrategyContext.execute(3, context);
 
-        // 负数扣除强防穿透校验（第 1 道防线：Java 侧预校验，负责给出可读原因）
+        int change = calc.pointChange();
         if (change < 0) {
             int deduct = Math.abs(change);
-            if (beforeCurrent < deduct) {
-                throw new BusinessException(String.format("扣减后可用积分将变负数，系统拦截操作！学生当前余额仅剩: %d pts", beforeCurrent));
-            }
-            // 第 2 道防线：条件更新由数据库原子保证，updated == 0 说明期间被并发扣走了
             int rows = studentMapper.deductCurrentPoints(student.getId(), deduct);
             if (rows == 0) {
                 throw new BusinessException("扣减可用积分失败，并发冲突或余额不足");
             }
         } else if (change > 0) {
-            // 正数增加：可用积分与历史累计积分同步增加（奖励类事件才动累计值）
             studentMapper.addCurrentPoints(student.getId(), change);
-            studentMapper.addTotalPoints(student.getId(), change);
-        } else {
-            throw new BusinessException("调账分值不能为 0");
+            if (calc.addTotalPoints()) {
+                studentMapper.addTotalPoints(student.getId(), change);
+            }
         }
 
-        // 变动后余额 = 读取到的快照余额 + 本次变动值，供 PointLedger 落账时反推 before_points。
-        // 说明：这里是「快照推导」而非回读数据库。调账属低频人工操作，且扣分路径已由条件更新
-        // 兜住并发穿透，因此保持当前实现；若将来要支撑高并发自动调账，再改为回读
-        // selectCurrentPoints 取原子更新后的真实值（与 rewardActivityCheckin 口径一致）。
-        int afterCurrent = beforeCurrent + change;
-
-        // 写入财务级对账流水 (通过 PointLedger 统一落账，type=3 人工调账，change 带符号)
-        String remark = dto.getReason();
+        // 原子 SQL 变更后从数据库回读真实余额，确保记账流水与账户余额平账
+        Integer currentDb = studentMapper.selectCurrentPoints(student.getId());
+        int afterCurrent = currentDb != null ? currentDb : calc.afterPoints();
+        String remark = calc.remark();
         if (StringUtils.hasText(dto.getApprovalNo())) {
-            remark = String.format("调账审批单【%s】: %s", dto.getApprovalNo(), remark);
+            remark = String.format("调账审批单【%s】: %s", dto.getApprovalNo().trim(), remark);
         }
-        pointLedger.record(student.getId(), 3, change, afterCurrent, remark, null, adminId);
+        pointLedger.record(student.getId(), 3, change, afterCurrent, remark, calc.bizNo(), null, adminId);
 
         // 保存系统通知并触发 WebSocket 实时推送
         try {
@@ -362,17 +363,24 @@ public class StudentScoreServiceImpl implements StudentScoreService {
             return beforeCurrent;
         }
 
-        // 1. 原子增加可用积分与历史累计积分
-        studentMapper.addCurrentPoints(studentId, pointsAwarded);
-        studentMapper.addTotalPoints(studentId, pointsAwarded);
+        String actTitle = StringUtils.hasText(activityTitle) ? activityTitle.trim() : "校园活动";
+        String defaultRemark = String.format("参与活动打卡奖励【%s】", actTitle);
+        PointContext context = new PointContext(studentId, beforeCurrent, pointsAwarded, "ACT-CHK-" + studentActivityId, studentActivityId, 0L, defaultRemark);
+        PointCalculationResult calc = pointStrategyContext.execute(1, context);
 
+        // 1. 原子增加可用积分与历史累计积分
+        studentMapper.addCurrentPoints(studentId, calc.pointChange());
+        if (calc.addTotalPoints()) {
+            studentMapper.addTotalPoints(studentId, calc.pointChange());
+        }
+
+        // 原子 SQL 变更后从数据库回读真实余额，确保记账流水与账户余额平账
         Integer currentDb = studentMapper.selectCurrentPoints(studentId);
-        int afterCurrent = currentDb != null ? currentDb : (beforeCurrent + pointsAwarded);
+        int afterCurrent = currentDb != null ? currentDb : calc.afterPoints();
 
         // 2. 写入财务级对账流水 (通过 PointLedger 统一落账)
-        String actTitle = StringUtils.hasText(activityTitle) ? activityTitle.trim() : "校园活动";
-        pointLedger.record(studentId, 1, pointsAwarded, afterCurrent,
-                String.format("参与活动打卡奖励【%s】", actTitle), studentActivityId, 0L);
+        pointLedger.record(studentId, 1, calc.pointChange(), afterCurrent,
+                calc.remark(), calc.bizNo(), studentActivityId, 0L);
 
         // 3. 保存系统通知并触发 WebSocket 实时推送
         try {
@@ -474,6 +482,8 @@ public class StudentScoreServiceImpl implements StudentScoreService {
             // operator_id 为 0/null 表示由系统自动触发（超时关单、MQ 消费等无人工介入的路径）
             String operatorName = r.getOperatorId() != null && r.getOperatorId() > 0 ? "管理员#" + r.getOperatorId() : "系统自动触发";
 
+            String resolvedBizNo = StringUtils.hasText(r.getBizNo()) ? r.getBizNo() : businessId;
+
             return StudentPointRecordVO.builder()
                     .id(r.getId())
                     .recordNo(recordNo)
@@ -489,6 +499,7 @@ public class StudentScoreServiceImpl implements StudentScoreService {
                     .afterPoints(r.getAfterPoints())
                     .description(r.getDescription())
                     .refId(r.getRefId())
+                    .bizNo(resolvedBizNo)
                     .businessType(businessType)
                     .businessId(businessId)
                     .operatorId(r.getOperatorId())

@@ -12,11 +12,10 @@ import com.campus.modules.mall.entity.Gift;
 import com.campus.modules.mall.entity.StudentGift;
 import com.campus.modules.mall.mapper.GiftMapper;
 import com.campus.modules.mall.mapper.StudentGiftMapper;
-import com.campus.modules.mall.service.GiftService;
 import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -24,19 +23,36 @@ import org.springframework.util.StringUtils;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import com.campus.modules.mall.service.GiftService;
+import com.campus.modules.mall.service.GiftStockRedisService;
+import com.campus.modules.mall.service.GiftCacheService;
+
 /**
  * 礼品管理业务实现
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements GiftService {
-
-    private static final Logger log = LoggerFactory.getLogger(GiftServiceImpl.class);
 
     /** 单次补货上限，防误操作输入天文数字 */
     private static final int MAX_RESTOCK_QUANTITY = 100000;
 
     private final StudentGiftMapper studentGiftMapper;
+
+    @Autowired(required = false)
+    private GiftStockRedisService giftStockRedisService;
+
+    @Autowired(required = false)
+    private GiftCacheService giftCacheService;
+
+    public void setGiftStockRedisService(GiftStockRedisService giftStockRedisService) {
+        this.giftStockRedisService = giftStockRedisService;
+    }
+
+    public void setGiftCacheService(GiftCacheService giftCacheService) {
+        this.giftCacheService = giftCacheService;
+    }
 
     @Override
     public Page<GiftVO> getGiftPage(GiftQueryDTO queryDTO) {
@@ -78,6 +94,14 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
         gift.setCreatedBy(adminId);
 
         this.save(gift);
+
+        if (giftStockRedisService != null) {
+            giftStockRedisService.warmupStock(gift.getId(), gift.getStock() != null ? gift.getStock() : 0);
+        }
+        if (giftCacheService != null) {
+            giftCacheService.addGiftToBloom(gift.getId());
+        }
+
         return convertToVO(gift);
     }
 
@@ -89,46 +113,29 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
             throw new BusinessException("要修改的礼品不存在");
         }
 
-        if (StringUtils.hasText(updateDTO.getName())) {
-            gift.setName(updateDTO.getName());
-        }
-        if (updateDTO.getDescription() != null) {
-            gift.setDescription(updateDTO.getDescription());
-        }
-        if (StringUtils.hasText(updateDTO.getImage())) {
-            gift.setImage(updateDTO.getImage());
-        }
-        if (updateDTO.getPointsRequired() != null) {
-            gift.setPointsRequired(updateDTO.getPointsRequired());
-        }
-        // 注意：Gift 实体的 stock / totalStock 标注了 updateStrategy = FieldStrategy.NEVER，
-        // 这里 updateById 生成的 SQL 不会带这两列，所以改名称/图片/积分不会冲掉并发兑换已扣减的实时库存。
-        // 库存变更只走 GiftMapper 上的原子 SQL（补货 restock / 兑换 reduceStockWithOptimisticLock / 退单 increaseStock）。
-        if (updateDTO.getStatus() != null) {
-            gift.setStatus(updateDTO.getStatus());
-        }
-        if (gift.getVersion() == null) {
-            gift.setVersion(0);
-        }
-        gift.setUpdatedBy(adminId);
+        applyUpdateDto(gift, updateDTO, adminId);
 
         boolean updated = this.updateById(gift);
+        GiftVO resultVO;
         if (!updated) {
             // 乐观锁重试兜底
             Gift fresh = this.getById(updateDTO.getId());
             if (fresh != null) {
-                if (StringUtils.hasText(updateDTO.getName())) fresh.setName(updateDTO.getName());
-                if (updateDTO.getDescription() != null) fresh.setDescription(updateDTO.getDescription());
-                if (StringUtils.hasText(updateDTO.getImage())) fresh.setImage(updateDTO.getImage());
-                if (updateDTO.getPointsRequired() != null) fresh.setPointsRequired(updateDTO.getPointsRequired());
-                if (updateDTO.getStatus() != null) fresh.setStatus(updateDTO.getStatus());
-                if (fresh.getVersion() == null) fresh.setVersion(0);
-                fresh.setUpdatedBy(adminId);
+                applyUpdateDto(fresh, updateDTO, adminId);
                 this.updateById(fresh);
-                return convertToVO(fresh);
+                resultVO = convertToVO(fresh);
+            } else {
+                resultVO = convertToVO(gift);
             }
+        } else {
+            resultVO = convertToVO(gift);
         }
-        return convertToVO(gift);
+
+        if (giftStockRedisService != null) {
+            giftStockRedisService.evictGiftCacheWithDoubleDelete(updateDTO.getId());
+        }
+
+        return resultVO;
     }
 
     @Override
@@ -177,7 +184,13 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
                     id, gift.getName(), absQuantity, beforeStock, beforeTotal, adminId);
         }
 
-        return convertToVO(this.getById(id));
+        Gift fresh = this.getById(id);
+        if (giftStockRedisService != null && fresh != null) {
+            giftStockRedisService.evictGiftCacheWithDoubleDelete(id);
+            giftStockRedisService.warmupStock(id, fresh.getStock() != null ? fresh.getStock() : 0);
+        }
+
+        return convertToVO(fresh != null ? fresh : gift);
     }
 
     @Override
@@ -186,6 +199,10 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
         Gift gift = this.getById(id);
         if (gift == null) {
             return "礼品不存在";
+        }
+
+        if (giftStockRedisService != null) {
+            giftStockRedisService.evictGiftCacheWithDoubleDelete(id);
         }
 
         // 检查是否已有学生兑换订单
@@ -222,6 +239,9 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
         if (gift == null) {
             throw new BusinessException("礼品不存在");
         }
+        if (giftStockRedisService != null) {
+            giftStockRedisService.evictGiftCacheWithDoubleDelete(id);
+        }
         gift.setStatus(status);
         if (gift.getVersion() == null) {
             gift.setVersion(0);
@@ -233,6 +253,31 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
                     .set(Gift::getStatus, status)
                     .eq(Gift::getId, id));
         }
+    }
+
+    private void applyUpdateDto(Gift gift, GiftUpdateDTO updateDTO, Long adminId) {
+        if (StringUtils.hasText(updateDTO.getName())) {
+            gift.setName(updateDTO.getName());
+        }
+        if (updateDTO.getDescription() != null) {
+            gift.setDescription(updateDTO.getDescription());
+        }
+        if (StringUtils.hasText(updateDTO.getImage())) {
+            gift.setImage(updateDTO.getImage());
+        }
+        if (updateDTO.getPointsRequired() != null) {
+            gift.setPointsRequired(updateDTO.getPointsRequired());
+        }
+        // 注意：Gift 实体的 stock / totalStock 标注了 updateStrategy = FieldStrategy.NEVER，
+        // 这里 updateById 生成的 SQL 不会带这两列，所以改名称/图片/积分不会冲掉并发兑换已扣减的实时库存。
+        // 库存变更只走 GiftMapper 上的原子 SQL（补货 restock / 兑换 reduceStockWithOptimisticLock / 退单 increaseStock）。
+        if (updateDTO.getStatus() != null) {
+            gift.setStatus(updateDTO.getStatus());
+        }
+        if (gift.getVersion() == null) {
+            gift.setVersion(0);
+        }
+        gift.setUpdatedBy(adminId);
     }
 
     private GiftVO convertToVO(Gift gift) {

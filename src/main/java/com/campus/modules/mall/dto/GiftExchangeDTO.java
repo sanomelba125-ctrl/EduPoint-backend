@@ -22,6 +22,14 @@ public class GiftExchangeDTO {
     @Size(max = 64, message = "请求幂等标识长度不能超过 64 位")
     private String requestId;
 
+    /**
+     * 服务端下发的防重兑换令牌 (P2-2 治理升级)。
+     * 进入商品详情页由 GET /gift/{id}/token 动态下发，存入 Redis，TTL 10min；
+     * 提交兑换时由服务端执行 Lua 脚本原子核验并销毁（一次性 Token 桶），防重进页面重复下单与重放攻击。
+     */
+    @Size(max = 128, message = "防重兑换令牌长度不能超过 128 位")
+    private String exchangeToken;
+
     @NotNull(message = "礼品ID不能为空")
     private Long giftId;
 

@@ -22,6 +22,12 @@ import com.campus.modules.activity.mapper.ActivityWaitlistMapper;
 import com.campus.modules.activity.mapper.StudentActivityMapper;
 import com.campus.modules.activity.service.ActivityCacheService;
 import com.campus.modules.activity.service.impl.StudentActivityServiceImpl;
+import com.campus.modules.activity.chain.ActivityStatusCheckinHandler;
+import com.campus.modules.activity.chain.CheckinChainPipeline;
+import com.campus.modules.activity.chain.DuplicateCheckinHandler;
+import com.campus.modules.activity.chain.EnrollmentCheckinHandler;
+import com.campus.modules.activity.chain.GeoFenceCheckinHandler;
+import com.campus.modules.activity.chain.QrCodeHmacCheckinHandler;
 import com.campus.modules.certificate.entity.Certificate;
 import com.campus.modules.certificate.service.CertificateService;
 import com.campus.modules.student.service.StudentScoreService;
@@ -139,9 +145,17 @@ class StudentActivityServiceImplTest {
             TransactionSynchronizationManager.initSynchronization();
         }
 
+        CheckinChainPipeline pipeline = new CheckinChainPipeline(List.of(
+                new ActivityStatusCheckinHandler(activityMapper),
+                new EnrollmentCheckinHandler(studentActivityMapper),
+                new DuplicateCheckinHandler(),
+                new QrCodeHmacCheckinHandler(codeMapper),
+                new GeoFenceCheckinHandler()
+        ));
+
         service = new StudentActivityServiceImpl(activityMapper, waitlistMapper, codeMapper,
                 studentScoreService, redissonClient, rabbitTemplate, certificateService,
-                activityCacheService, transactionTemplate);
+                activityCacheService, transactionTemplate, pipeline);
         ReflectionTestUtils.setField(service, "baseMapper", studentActivityMapper);
     }
 
@@ -393,7 +407,7 @@ class StudentActivityServiceImplTest {
     @DisplayName("取消报名：释放名额并把候补队首自动递补为正式报名")
     void cancel_shouldFreeSeatAndPromoteFirstWaiter() {
         StudentActivity own = record(31L, STUDENT_ID, ACTIVITY_ID, 1);
-        when(studentActivityMapper.selectOne(any(), anyBoolean())).thenReturn(own, null);
+        when(studentActivityMapper.selectOne(any(), anyBoolean())).thenReturn(own, (StudentActivity) null);
         when(studentActivityMapper.updateById(any(StudentActivity.class))).thenReturn(1);
         when(studentActivityMapper.insert(any(StudentActivity.class))).thenAnswer(invocation -> {
             StudentActivity entity = invocation.getArgument(0);
@@ -490,7 +504,7 @@ class StudentActivityServiceImplTest {
         when(studentActivityMapper.updateById(any(StudentActivity.class))).thenReturn(1);
 
         when(codeMapper.selectOne(any())).thenReturn(checkinCode(400L, LocalDateTime.now().plusSeconds(60)));
-        when(codeMapper.consume(400L, STUDENT_ID)).thenReturn(1);
+        when(codeMapper.markUsed(400L, STUDENT_ID)).thenReturn(1);
         when(studentScoreService.rewardActivityCheckin(STUDENT_ID, 31L, "青年AI与新质生产力前沿讲座", 15))
                 .thenReturn(195);
         when(certificateService.save(any(Certificate.class))).thenAnswer(invocation -> {
@@ -544,7 +558,7 @@ class StudentActivityServiceImplTest {
         when(studentActivityMapper.selectOne(any(), anyBoolean()))
                 .thenReturn(record(31L, STUDENT_ID, ACTIVITY_ID, 1));
         when(codeMapper.selectOne(any())).thenReturn(checkinCode(400L, LocalDateTime.now().plusSeconds(60)));
-        when(codeMapper.consume(400L, STUDENT_ID)).thenReturn(1);
+        when(codeMapper.markUsed(400L, STUDENT_ID)).thenReturn(1);
         when(studentScoreService.rewardActivityCheckin(any(), any(), any(), any())).thenReturn(150);
 
         ActivityCheckinVO result = service.checkin(checkinRequest(ACTIVITY_ID, NONCE, SIGN, null, null));
@@ -563,7 +577,7 @@ class StudentActivityServiceImplTest {
         when(studentActivityMapper.selectOne(any(), anyBoolean()))
                 .thenReturn(record(31L, STUDENT_ID, ACTIVITY_ID, 1));
         when(codeMapper.selectOne(any())).thenReturn(checkinCode(400L, LocalDateTime.now().plusSeconds(60)));
-        when(codeMapper.consume(400L, STUDENT_ID)).thenReturn(1);
+        when(codeMapper.markUsed(400L, STUDENT_ID)).thenReturn(1);
         when(studentScoreService.rewardActivityCheckin(any(), any(), any(), any())).thenReturn(110);
 
         service.checkin(checkinRequest(ACTIVITY_ID, NONCE, SIGN, null, null));
@@ -584,7 +598,7 @@ class StudentActivityServiceImplTest {
                 () -> service.checkin(checkinRequest(ACTIVITY_ID, NONCE, SIGN, null, null)));
         assertEquals(503, ex.getCode());
         assertEquals("活动未开始或已结束", ex.getMessage());
-        verify(codeMapper, never()).consume(any(), any());
+        verify(codeMapper, never()).markUsed(any(), any());
     }
 
     @Test
@@ -619,24 +633,20 @@ class StudentActivityServiceImplTest {
     }
 
     @Test
-    @DisplayName("打卡：签到码已被核销时，原子核销影响行数为 0，不写回状态也不发积分")
-    void checkin_shouldRejectWhenCodeAlreadyConsumed() {
+    @DisplayName("打卡：学生已完成签到（status=2）时拒绝重复打卡，且广播码不会被标记消耗")
+    void checkin_shouldRejectDuplicateCheckin() {
         Activity activity = activity(ACTIVITY_ID, 1, 0);
         activity.setPoints(15);
         when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(activity);
-        StudentActivity own = record(31L, STUDENT_ID, ACTIVITY_ID, 1);
+        StudentActivity own = record(31L, STUDENT_ID, ACTIVITY_ID, 2);
         when(studentActivityMapper.selectOne(any(), anyBoolean())).thenReturn(own);
-        when(codeMapper.selectOne(any())).thenReturn(checkinCode(400L, LocalDateTime.now().plusSeconds(60)));
-        when(codeMapper.consume(400L, STUDENT_ID)).thenReturn(0);
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.checkin(checkinRequest(ACTIVITY_ID, NONCE, SIGN, null, null)));
         assertEquals(400, ex.getCode());
-        assertEquals("签到码已被使用或已过期", ex.getMessage());
+        assertEquals("您已完成签到，请勿重复打卡", ex.getMessage());
 
-        assertEquals(1, own.getStatus(), "核销失败后参与记录必须仍停留在已报名");
-        assertNull(own.getQrNonceUsed());
-        verify(studentActivityMapper, never()).updateById(any(StudentActivity.class));
+        verify(codeMapper, never()).markUsed(anyLong(), anyLong());
         verify(studentScoreService, never()).rewardActivityCheckin(any(), any(), any(), any());
     }
 
@@ -652,7 +662,7 @@ class StudentActivityServiceImplTest {
                 () -> service.checkin(checkinRequest(ACTIVITY_ID, NONCE, SIGN, null, null)));
         assertEquals(400, ex.getCode());
         assertEquals("请提供定位信息", ex.getMessage());
-        verify(codeMapper, never()).consume(any(), any());
+        verify(codeMapper, never()).markUsed(any(), any());
     }
 
     @Test
@@ -684,7 +694,7 @@ class StudentActivityServiceImplTest {
                         new BigDecimal("30.623412"), new BigDecimal("114.362145"))));
         assertEquals(400, ex.getCode());
         assertEquals("超出活动签到范围", ex.getMessage());
-        verify(codeMapper, never()).consume(any(), any());
+        verify(codeMapper, never()).markUsed(any(), any());
     }
 
     @Test
@@ -697,7 +707,7 @@ class StudentActivityServiceImplTest {
         StudentActivity own = record(31L, STUDENT_ID, ACTIVITY_ID, 1);
         when(studentActivityMapper.selectOne(any(), anyBoolean())).thenReturn(own);
         when(codeMapper.selectOne(any())).thenReturn(checkinCode(400L, LocalDateTime.now().plusSeconds(60)));
-        when(codeMapper.consume(400L, STUDENT_ID)).thenReturn(1);
+        when(codeMapper.markUsed(400L, STUDENT_ID)).thenReturn(1);
         when(studentScoreService.rewardActivityCheckin(any(), any(), any(), any())).thenReturn(120);
 
         // 纬度 +0.0015 度 ≈ 167 米，落在 300 米围栏内

@@ -21,6 +21,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
+import com.campus.modules.activity.chain.CheckinChainPipeline;
+import com.campus.modules.activity.chain.CheckinContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -32,7 +35,7 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
-@Slf4j @Service @RequiredArgsConstructor
+@Slf4j @Service
 public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMapper, StudentActivity> implements StudentActivityService {
     private final ActivityMapper activityMapper;
     private final ActivityWaitlistMapper waitlistMapper;
@@ -43,7 +46,31 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
     private final CertificateService certificateService;
     private final ActivityCacheService activityCacheService;
     private final TransactionTemplate transactionTemplate;
+    private final CheckinChainPipeline checkinChainPipeline;
     private static final long LOCK_WAIT_SECONDS = 5L;
+
+    @Autowired
+    public StudentActivityServiceImpl(ActivityMapper activityMapper,
+                                      ActivityWaitlistMapper waitlistMapper,
+                                      ActivityCheckinCodeMapper codeMapper,
+                                      StudentScoreService studentScoreService,
+                                      RedissonClient redissonClient,
+                                      RabbitTemplate rabbitTemplate,
+                                      CertificateService certificateService,
+                                      ActivityCacheService activityCacheService,
+                                      TransactionTemplate transactionTemplate,
+                                      CheckinChainPipeline checkinChainPipeline) {
+        this.activityMapper = activityMapper;
+        this.waitlistMapper = waitlistMapper;
+        this.codeMapper = codeMapper;
+        this.studentScoreService = studentScoreService;
+        this.redissonClient = redissonClient;
+        this.rabbitTemplate = rabbitTemplate;
+        this.certificateService = certificateService;
+        this.activityCacheService = activityCacheService;
+        this.transactionTemplate = transactionTemplate;
+        this.checkinChainPipeline = Objects.requireNonNull(checkinChainPipeline, "checkinChainPipeline must not be null");
+    }
 
     @PostConstruct
     void configurePublisherCallbacks() {
@@ -206,46 +233,16 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
         Long sid = currentStudentId();
         Long aid = dto.getActivityId();
         return withLock("activity:checkin:" + aid, () -> withLock("student:points:" + sid, () -> transactionTemplate.execute(status -> {
-            Activity a = activityMapper.selectById(aid);
-            if (a == null || a.getStatus() == null || a.getStatus() != 1) {
-                throw new BusinessException(ResultCode.ACTIVITY_EXPIRED.getCode(), "活动未开始或已结束");
-            }
-            StudentActivity rec = getOne(new LambdaQueryWrapper<StudentActivity>()
-                    .eq(StudentActivity::getStudentId, sid)
-                    .eq(StudentActivity::getActivityId, aid)
-                    .eq(StudentActivity::getStatus, 1));
-            if (rec == null) {
-                throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "请先报名活动");
-            }
-            ActivityCheckinCode code = codeMapper.selectOne(new LambdaQueryWrapper<ActivityCheckinCode>()
-                    .eq(ActivityCheckinCode::getActivityId, aid)
-                    .eq(ActivityCheckinCode::getNonce, dto.getNonce())
-                    .eq(ActivityCheckinCode::getSign, dto.getSign())
-                    .eq(ActivityCheckinCode::getStatus, 0));
-            if (code == null || code.getExpireTime() == null || code.getExpireTime().isBefore(LocalDateTime.now())) {
-                throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "签到码无效或已过期");
-            }
-            if (Objects.equals(a.getLocationCheckEnabled(), 1)) {
-                if (dto.getCheckinLatitude() == null || dto.getCheckinLongitude() == null) {
-                    throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "请提供定位信息");
-                }
-                if (!isValidCoordinate(a.getLatitude(), a.getLongitude())
-                        || !isValidCoordinate(dto.getCheckinLatitude(), dto.getCheckinLongitude())) {
-                    throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "定位信息无效");
-                }
-                int radius = a.getLocationRadius() == null ? 300 : a.getLocationRadius();
-                if (radius <= 0) {
-                    throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "活动签到范围配置无效");
-                }
-                int dist = distance(a.getLatitude(), a.getLongitude(), dto.getCheckinLatitude(), dto.getCheckinLongitude());
-                if (dist > radius) {
-                    throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "超出活动签到范围");
-                }
-                rec.setCheckinDistance(dist);
-            }
-            if (codeMapper.consume(code.getId(), sid) == 0) {
-                throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "签到码已被使用或已过期");
-            }
+            CheckinContext context = CheckinContext.builder()
+                    .studentId(sid)
+                    .dto(dto)
+                    .build();
+
+            checkinChainPipeline.execute(context);
+
+            Activity a = context.getActivity();
+            StudentActivity rec = context.getStudentActivity();
+
             int points = a.getPoints() == null ? 0 : a.getPoints();
             LocalDateTime now = LocalDateTime.now();
             rec.setStatus(2);
@@ -254,7 +251,15 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             rec.setCheckinLongitude(dto.getCheckinLongitude());
             rec.setQrNonceUsed(dto.getNonce());
             rec.setPointsAwarded(points);
+            if (context.getCheckinDistance() != null) {
+                rec.setCheckinDistance(context.getCheckinDistance());
+            }
             updateById(rec);
+
+            // 签到核验全链路通过后，记录签到码使用记录
+            if (context.getCheckinCode() != null) {
+                codeMapper.markUsed(context.getCheckinCode().getId(), sid);
+            }
 
             // 统一调用 StudentScoreService 进行积分原子入账、记账流水与 WebSocket 通知
             int currentPoints = studentScoreService.rewardActivityCheckin(sid, rec.getId(), a.getTitle(), points);
@@ -284,6 +289,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
         })));
     }
 
+
     @Override
     public IPage<MyActivityVO> myList(Integer page, Integer size, Integer status) {
         Long studentId = currentStudentId();
@@ -291,25 +297,42 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
         long pageSize = Math.min(Math.max(size == null ? 10 : size, 1), 100);
         List<MyActivityVO> records = new ArrayList<>();
 
+        List<StudentActivity> ownRecords = Collections.emptyList();
         if (status == null || status != 4) {
-            List<StudentActivity> ownRecords = list(new LambdaQueryWrapper<StudentActivity>()
+            ownRecords = list(new LambdaQueryWrapper<StudentActivity>()
                     .eq(StudentActivity::getStudentId, studentId)
                     .eq(status != null, StudentActivity::getStatus, status)
                     .orderByDesc(StudentActivity::getSignupTime));
-            ownRecords.forEach(record -> records.add(toMyActivityVO(record, null)));
         }
+
+        List<ActivityWaitlist> waitlists = Collections.emptyList();
         if (status == null || status == 4) {
-            List<ActivityWaitlist> waitlists = waitlistMapper.selectList(new LambdaQueryWrapper<ActivityWaitlist>()
+            waitlists = waitlistMapper.selectList(new LambdaQueryWrapper<ActivityWaitlist>()
                     .eq(ActivityWaitlist::getStudentId, studentId)
                     .eq(ActivityWaitlist::getStatus, 1)
                     .eq(ActivityWaitlist::getDeleted, 0)
                     .orderByDesc(ActivityWaitlist::getWaitTime));
-            waitlists.forEach(waitlist -> {
-                Activity activity = activityMapper.selectById(waitlist.getActivityId());
-                if (activity != null && !Objects.equals(activity.getDeleted(), 1)) {
-                    records.add(toMyActivityVO(null, waitlist, activity));
-                }
-            });
+        }
+
+        // 收集活动 ID 批量回表，彻底消除循环内 selectById 的 N+1 查询隐患
+        Set<Long> activityIds = new HashSet<>();
+        for (StudentActivity r : ownRecords) {
+            if (r.getActivityId() != null) activityIds.add(r.getActivityId());
+        }
+        for (ActivityWaitlist w : waitlists) {
+            if (w.getActivityId() != null) activityIds.add(w.getActivityId());
+        }
+
+        Map<Long, Activity> activityMap = getActivitiesByIds(activityIds);
+
+        for (StudentActivity record : ownRecords) {
+            records.add(toMyActivityVO(record, null, activityMap.get(record.getActivityId())));
+        }
+        for (ActivityWaitlist waitlist : waitlists) {
+            Activity activity = activityMap.get(waitlist.getActivityId());
+            if (activity != null && !Objects.equals(activity.getDeleted(), 1)) {
+                records.add(toMyActivityVO(null, waitlist, activity));
+            }
         }
 
         records.sort(Comparator.comparing(this::activityRecordTime, Comparator.nullsLast(Comparator.reverseOrder())));
@@ -319,6 +342,30 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
         Page<MyActivityVO> result = new Page<>(current, pageSize, total);
         result.setRecords(records.subList(from, to));
         return result;
+    }
+
+    private Map<Long, Activity> getActivitiesByIds(Set<Long> activityIds) {
+        if (activityIds == null || activityIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        try {
+            List<Activity> list = activityMapper.selectBatchIds(activityIds);
+            if (list != null && !list.isEmpty()) {
+                return list.stream().filter(Objects::nonNull)
+                        .collect(java.util.stream.Collectors.toMap(Activity::getId, java.util.function.Function.identity(), (a, b) -> a));
+            }
+        } catch (Exception e) {
+            log.warn("批量查询活动详情异常，降级为单条回表: {}", e.getMessage());
+        }
+        // 兼容单测未 mock selectBatchIds 而是 mock 了 selectById 的场景
+        Map<Long, Activity> fallback = new HashMap<>();
+        for (Long id : activityIds) {
+            Activity a = activityMapper.selectById(id);
+            if (a != null) {
+                fallback.put(id, a);
+            }
+        }
+        return fallback;
     }
 
     private LocalDateTime activityRecordTime(MyActivityVO record) {
@@ -388,6 +435,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
     }
     @Override
     public IPage<ActivityRecordVO> adminList(Integer page, Integer size, String studentName, String studentNo, String activityTitle, Integer status) {
+        AuthUtil.requireAdminId();
         long current = Math.max(page == null ? 1 : page, 1);
         long pageSize = Math.min(Math.max(size == null ? 10 : size, 1), 100);
         return baseMapper.selectAdminPage(new Page<>(current, pageSize), trim(studentName), trim(studentNo), trim(activityTitle), status);
@@ -455,26 +503,6 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
         });
     }
 
-    private int distance(BigDecimal lat1, BigDecimal lon1, BigDecimal lat2, BigDecimal lon2) {
-        if (!isValidCoordinate(lat1, lon1) || !isValidCoordinate(lat2, lon2)) {
-            return Integer.MAX_VALUE;
-        }
-        double r = 6371000;
-        double p = Math.PI / 180;
-        double dLat = lat2.subtract(lat1).doubleValue() * p;
-        double dLon = lon2.subtract(lon1).doubleValue() * p;
-        double x = Math.sin(dLat / 2) * Math.sin(dLat / 2)
-                + Math.cos(lat1.doubleValue() * p) * Math.cos(lat2.doubleValue() * p) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-        return (int) Math.round(2 * r * Math.asin(Math.sqrt(Math.min(1d, Math.max(0d, x)))));
-    }
-
-    private boolean isValidCoordinate(BigDecimal latitude, BigDecimal longitude) {
-        return latitude != null && longitude != null
-                && latitude.compareTo(BigDecimal.valueOf(-90)) >= 0
-                && latitude.compareTo(BigDecimal.valueOf(90)) <= 0
-                && longitude.compareTo(BigDecimal.valueOf(-180)) >= 0
-                && longitude.compareTo(BigDecimal.valueOf(180)) <= 0;
-    }
     private <T> T withLock(String key, java.util.function.Supplier<T> action) {
         RLock lock = redissonClient.getLock(key);
         boolean acquired;

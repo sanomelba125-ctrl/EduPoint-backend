@@ -41,6 +41,7 @@ class StudentGiftExchangeTest {
     private RabbitTemplate rabbitTemplate;
     private StringRedisTemplate redis;
     private ValueOperations<String, String> valueOperations;
+    private com.campus.modules.mall.service.GiftIdempotentService giftIdempotentService;
 
     private StudentGiftServiceImpl studentGiftService;
 
@@ -55,9 +56,12 @@ class StudentGiftExchangeTest {
         rabbitTemplate = mock(RabbitTemplate.class);
         redis = mock(StringRedisTemplate.class);
         valueOperations = mock(ValueOperations.class);
+        giftIdempotentService = mock(com.campus.modules.mall.service.GiftIdempotentService.class);
 
         when(redis.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(true);
+        when(giftIdempotentService.tryAcquireSlot(anyLong(), anyString())).thenReturn(true);
+        when(giftIdempotentService.verifyAndConsumeToken(anyLong(), anyLong(), anyString())).thenReturn(true);
 
         studentGiftService = new StudentGiftServiceImpl(
                 giftMapper,
@@ -65,7 +69,10 @@ class StudentGiftExchangeTest {
                 pointLedger,
                 sysNoticeService,
                 rabbitTemplate,
-                redis
+                redis,
+                null,
+                null,
+                giftIdempotentService
         );
         ReflectionTestUtils.setField(studentGiftService, "baseMapper", studentGiftMapper);
     }
@@ -107,7 +114,7 @@ class StudentGiftExchangeTest {
         verify(giftMapper, never()).reduceStockWithOptimisticLock(anyLong(), anyInt(), anyInt());
         verify(studentMapper, never()).deductCurrentPoints(anyLong(), anyInt());
         verify(studentGiftMapper, never()).insert(any(StudentGift.class));
-        verify(pointLedger, never()).record(anyLong(), anyInt(), anyInt(), anyInt(), anyString(), any(), any());
+        verifyNoInteractions(pointLedger);
     }
 
     @Test
@@ -255,7 +262,7 @@ class StudentGiftExchangeTest {
         verify(studentMapper, times(1)).deductCurrentPoints(eq(studentId), eq(80));
         verify(studentGiftMapper, times(1)).insert(any(StudentGift.class));
         verify(pointLedger, times(1)).record(
-                eq(studentId), eq(2), eq(-80), eq(20), anyString(), eq(8888L), isNull()
+                eq(studentId), eq(2), eq(-80), eq(20), anyString(), anyString(), eq(8888L), isNull()
         );
     }
 
@@ -298,7 +305,7 @@ class StudentGiftExchangeTest {
         verify(studentMapper, times(1)).addCurrentPoints(eq(studentId), eq(80));
         // 验证记录退分流水台账
         verify(pointLedger, times(1)).record(
-                eq(studentId), eq(4), eq(80), eq(100), anyString(), eq(orderId), isNull()
+                eq(studentId), eq(4), eq(80), eq(100), anyString(), eq("ORD202609180005"), eq(orderId), isNull()
         );
     }
 
@@ -345,7 +352,7 @@ class StudentGiftExchangeTest {
         verify(studentMapper, times(1)).addCurrentPoints(eq(studentId), eq(160));
         // 验证记录退分流水台账
         verify(pointLedger, times(1)).record(
-                eq(studentId), eq(4), eq(160), eq(210), anyString(), eq(orderId), eq(adminId)
+                eq(studentId), eq(4), eq(160), eq(210), anyString(), eq("ORD202609180006"), eq(orderId), eq(adminId)
         );
     }
 
@@ -369,5 +376,140 @@ class StudentGiftExchangeTest {
         assertTrue(ex.getMessage().contains("仅处于【待发放/待提货】状态"));
         verify(giftMapper, never()).increaseStock(anyLong(), anyInt());
         verify(studentMapper, never()).addCurrentPoints(anyLong(), anyInt());
+    }
+
+    @Test
+    @DisplayName("测试获取兑换防重令牌：验证学籍与礼品状态正常时成功签发 Token")
+    void testGetExchangeToken_Success() {
+        Long studentId = 108L;
+        Long giftId = 8L;
+
+        Student student = new Student();
+        student.setId(studentId);
+        student.setStatus(1);
+        when(studentMapper.selectById(studentId)).thenReturn(student);
+
+        Gift gift = new Gift();
+        gift.setId(giftId);
+        gift.setStatus(1);
+        gift.setDeleted(0);
+        when(giftMapper.selectById(giftId)).thenReturn(gift);
+
+        com.campus.modules.mall.dto.GiftExchangeTokenVO expectedVo = com.campus.modules.mall.dto.GiftExchangeTokenVO.builder()
+                .token("EXT-testtoken123")
+                .giftId(giftId)
+                .expireSeconds(600L)
+                .build();
+        when(giftIdempotentService.generateExchangeToken(studentId, giftId)).thenReturn(expectedVo);
+
+        com.campus.modules.mall.dto.GiftExchangeTokenVO result = studentGiftService.getExchangeToken(giftId, studentId);
+
+        assertNotNull(result);
+        assertEquals("EXT-testtoken123", result.getToken());
+        assertEquals(giftId, result.getGiftId());
+        verify(giftIdempotentService, times(1)).generateExchangeToken(studentId, giftId);
+    }
+
+    @Test
+    @DisplayName("测试被冻结学生获取防重令牌被拦截")
+    void testGetExchangeToken_FrozenStudent_ShouldThrowException() {
+        Long studentId = 109L;
+        Long giftId = 8L;
+
+        Student student = new Student();
+        student.setId(studentId);
+        student.setStatus(0); // 冻结
+        when(studentMapper.selectById(studentId)).thenReturn(student);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> {
+            studentGiftService.getExchangeToken(giftId, studentId);
+        });
+
+        assertTrue(ex.getMessage().contains("冻结"));
+        verify(giftIdempotentService, never()).generateExchangeToken(anyLong(), anyLong());
+    }
+
+    @Test
+    @DisplayName("测试兑换时防重 Token 失效拦截：验证抛出“兑换令牌已失效”异常")
+    void testExchangeGift_InvalidToken_ShouldThrowException() {
+        Long studentId = 110L;
+        Long giftId = 9L;
+
+        when(giftIdempotentService.verifyAndConsumeToken(eq(studentId), eq(giftId), eq("EXT-expired"))).thenReturn(false);
+
+        GiftExchangeDTO dto = new GiftExchangeDTO();
+        dto.setGiftId(giftId);
+        dto.setQuantity(1);
+        dto.setExchangeToken("EXT-expired");
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> {
+            studentGiftService.exchangeGift(dto, studentId);
+        });
+
+        assertTrue(ex.getMessage().contains("兑换令牌已失效或已被使用"));
+        verify(giftMapper, never()).reduceStockWithOptimisticLock(anyLong(), anyInt(), anyInt());
+        verify(studentMapper, never()).deductCurrentPoints(anyLong(), anyInt());
+    }
+
+    @Test
+    @DisplayName("测试命中既有订单快路径：弱网重发直接返回历史订单，不重复扣分与扣库")
+    void testExchangeGift_ExistingOrder_FastPathReturnsDirectly() {
+        Long studentId = 111L;
+        Long giftId = 10L;
+        String requestId = "REQ-EXISTING-001";
+
+        StudentGift existingOrder = new StudentGift();
+        existingOrder.setId(666L);
+        existingOrder.setOrderNo("ORD20260923000666");
+        existingOrder.setStudentId(studentId);
+        existingOrder.setGiftId(giftId);
+        existingOrder.setQuantity(1);
+        existingOrder.setPointsCost(100);
+        existingOrder.setPickupCode("PK999988");
+        existingOrder.setRequestId(requestId);
+
+        when(giftIdempotentService.findExistingOrder(studentId, requestId)).thenReturn(existingOrder);
+        when(studentMapper.selectCurrentPoints(studentId)).thenReturn(50);
+
+        Gift gift = new Gift();
+        gift.setId(giftId);
+        gift.setName("既有礼品");
+        when(giftMapper.selectById(giftId)).thenReturn(gift);
+
+        GiftExchangeDTO dto = new GiftExchangeDTO();
+        dto.setGiftId(giftId);
+        dto.setRequestId(requestId);
+
+        GiftExchangeVO vo = studentGiftService.exchangeGift(dto, studentId);
+
+        assertNotNull(vo);
+        assertEquals("ORD20260923000666", vo.getOrderNo());
+        assertEquals("PK999988", vo.getPickupCode());
+        assertEquals(100, vo.getPointsCost());
+        // 验证不会走扣减与落库
+        verify(giftMapper, never()).reduceStockWithOptimisticLock(anyLong(), anyInt(), anyInt());
+        verify(studentMapper, never()).deductCurrentPoints(anyLong(), anyInt());
+        verify(studentGiftMapper, never()).insert(any(StudentGift.class));
+    }
+
+    @Test
+    @DisplayName("测试并发重复点击拦截：SETNX 槽位申请失败抛出“正在处理中”")
+    void testExchangeGift_ConcurrentConflict_ShouldThrowException() {
+        Long studentId = 112L;
+        Long giftId = 11L;
+        String requestId = "REQ-CONCURRENT-001";
+
+        when(giftIdempotentService.tryAcquireSlot(studentId, requestId)).thenReturn(false);
+
+        GiftExchangeDTO dto = new GiftExchangeDTO();
+        dto.setGiftId(giftId);
+        dto.setRequestId(requestId);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> {
+            studentGiftService.exchangeGift(dto, studentId);
+        });
+
+        assertTrue(ex.getMessage().contains("兑换请求正在处理中，请勿重复提交"));
+        verify(giftMapper, never()).reduceStockWithOptimisticLock(anyLong(), anyInt(), anyInt());
     }
 }

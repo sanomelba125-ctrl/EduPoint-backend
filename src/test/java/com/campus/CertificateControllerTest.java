@@ -12,6 +12,7 @@ import com.campus.common.exception.BusinessException;
 import com.campus.common.exception.GlobalExceptionHandler;
 import com.campus.modules.certificate.controller.CertificateController;
 import com.campus.modules.certificate.dto.CertificateAdminVO;
+import com.campus.modules.certificate.dto.CertificateMetricsVO;
 import com.campus.modules.certificate.dto.CertificateMyVO;
 import com.campus.modules.certificate.dto.CertificateVerifyVO;
 import com.campus.modules.certificate.entity.Certificate;
@@ -338,5 +339,61 @@ class CertificateControllerTest {
                 "空关键字不应产生 LIKE 通配参数，实际参数：" + boundParams);
 
         authUtil.verify(AuthUtil::requireAdminId);
+    }
+
+    // ────────────────────────── 荣誉证书大盘指标 ──────────────────────────
+
+    @Test
+    @DisplayName("GET /certificate/metrics：成功返回荣誉证书大盘聚合指标")
+    void metrics_shouldReturnMetricsData() throws Exception {
+        CertificateMetricsVO metricsVO = CertificateMetricsVO.builder()
+                .totalCount(128L)
+                .validCount(120L)
+                .revokedCount(5L)
+                .expiredCount(3L)
+                .verifyTotal(356L)
+                .build();
+        when(certificateService.getMetrics()).thenReturn(metricsVO);
+
+        mockMvc.perform(get("/certificate/metrics"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.totalCount").value(128))
+                .andExpect(jsonPath("$.data.validCount").value(120))
+                .andExpect(jsonPath("$.data.revokedCount").value(5))
+                .andExpect(jsonPath("$.data.expiredCount").value(3))
+                .andExpect(jsonPath("$.data.verifyTotal").value(356));
+
+        verify(certificateService).getMetrics();
+    }
+
+    @Test
+    @DisplayName("GET /admin/certificate/metrics：管理端别名路径同样可用")
+    void adminAliasMetrics_shouldWork() throws Exception {
+        CertificateMetricsVO metricsVO = CertificateMetricsVO.builder()
+                .totalCount(10L)
+                .validCount(8L)
+                .revokedCount(1L)
+                .expiredCount(1L)
+                .verifyTotal(25L)
+                .build();
+        when(certificateService.getMetrics()).thenReturn(metricsVO);
+
+        mockMvc.perform(get("/admin/certificate/metrics"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.totalCount").value(10));
+    }
+
+    @Test
+    @DisplayName("GET /certificate/metrics：未授权或非管理员角色透传 code=403")
+    void metrics_shouldPropagateForbiddenWhenNonAdmin() throws Exception {
+        when(certificateService.getMetrics())
+                .thenThrow(new BusinessException(403, "无权访问管理员证书接口"));
+
+        mockMvc.perform(get("/certificate/metrics"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(403))
+                .andExpect(jsonPath("$.message").value("无权访问管理员证书接口"));
     }
 }
