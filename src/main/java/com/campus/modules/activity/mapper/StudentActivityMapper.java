@@ -45,4 +45,18 @@ public interface StudentActivityMapper extends BaseMapper<StudentActivity> {
             "JOIN activity a ON a.id = sa.activity_id AND a.deleted = 0 " +
             "WHERE sa.deleted = 0")
     com.campus.modules.activity.dto.ActivityRecordMetricsVO selectRecordMetrics();
+
+    /**
+     * P2-11: 查询学生已有效报名且未结束的活动列表（用于时间冲突重叠检测）
+     */
+    @Select("SELECT a.* FROM student_activity sa " +
+            "JOIN activity a ON sa.activity_id = a.id " +
+            "WHERE sa.student_id = #{studentId} " +
+            "  AND sa.status IN (1, 2) " +
+            "  AND sa.deleted = 0 " +
+            "  AND a.deleted = 0 " +
+            "  AND a.status != 2 " +
+            "  AND a.id != #{excludeActivityId}")
+    java.util.List<com.campus.modules.activity.entity.Activity> selectActiveEnrolledActivities(@Param("studentId") Long studentId,
+                                                                                                @Param("excludeActivityId") Long excludeActivityId);
 }

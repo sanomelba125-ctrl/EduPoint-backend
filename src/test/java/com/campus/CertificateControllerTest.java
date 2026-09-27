@@ -17,6 +17,7 @@ import com.campus.modules.certificate.dto.CertificateMyVO;
 import com.campus.modules.certificate.dto.CertificateVerifyVO;
 import com.campus.modules.certificate.entity.Certificate;
 import com.campus.modules.certificate.service.CertificateService;
+import com.campus.modules.certificate.service.CertificateRenderService;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -47,6 +48,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -61,6 +64,9 @@ class CertificateControllerTest {
 
     @Mock
     private CertificateService certificateService;
+
+    @Mock
+    private CertificateRenderService certificateRenderService;
 
     private AutoCloseable mocks;
     private MockedStatic<AuthUtil> authUtil;
@@ -83,7 +89,7 @@ class CertificateControllerTest {
     void setUp() throws Exception {
         mocks = MockitoAnnotations.openMocks(this);
         authUtil = mockStatic(AuthUtil.class);
-        mockMvc = MockMvcBuilders.standaloneSetup(new CertificateController(certificateService))
+        mockMvc = MockMvcBuilders.standaloneSetup(new CertificateController(certificateService, certificateRenderService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
@@ -395,5 +401,43 @@ class CertificateControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(403))
                 .andExpect(jsonPath("$.message").value("无权访问管理员证书接口"));
+    }
+
+    // ────────────────────────── 电子荣誉证书图片流直链预览与下载 ──────────────────────────
+
+    @Test
+    @DisplayName("GET /certificate/file/{certificateNo}.png：存在时以 image/png 流形式返回，且包含缓存头")
+    void getCertificateImage_withPngExtension_shouldReturnImageStream() throws Exception {
+        byte[] fakePng = new byte[]{(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+        when(certificateRenderService.renderToPngBytesByNo("CERT-2026-001")).thenReturn(fakePng);
+
+        mockMvc.perform(get("/certificate/file/CERT-2026-001.png"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.IMAGE_PNG))
+                .andExpect(header().string("Cache-Control", "public, max-age=86400"))
+                .andExpect(content().bytes(fakePng));
+
+        verify(certificateRenderService).renderToPngBytesByNo("CERT-2026-001");
+    }
+
+    @Test
+    @DisplayName("GET /certificate/{certificateNo}/image：别名路由正常工作")
+    void getCertificateImage_aliasRoute_shouldReturnImageStream() throws Exception {
+        byte[] fakePng = new byte[]{(byte) 0x89, 'P', 'N', 'G'};
+        when(certificateRenderService.renderToPngBytesByNo("CERT-2026-888")).thenReturn(fakePng);
+
+        mockMvc.perform(get("/certificate/CERT-2026-888/image"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.IMAGE_PNG))
+                .andExpect(content().bytes(fakePng));
+    }
+
+    @Test
+    @DisplayName("GET /certificate/file/{certificateNo}.png：不存在时返回 404")
+    void getCertificateImage_notFound_shouldReturn404() throws Exception {
+        when(certificateRenderService.renderToPngBytesByNo("NOT-EXIST")).thenReturn(null);
+
+        mockMvc.perform(get("/certificate/file/NOT-EXIST.png"))
+                .andExpect(status().isNotFound());
     }
 }

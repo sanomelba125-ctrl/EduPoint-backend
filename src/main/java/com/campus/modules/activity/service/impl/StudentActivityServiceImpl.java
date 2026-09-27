@@ -17,6 +17,8 @@ import com.campus.modules.activity.service.ActivityCacheService;
 import com.campus.modules.student.service.StudentScoreService;
 import com.campus.modules.certificate.entity.Certificate;
 import com.campus.modules.certificate.service.CertificateService;
+import com.campus.modules.certificate.service.CertificateRenderService;
+import com.campus.modules.system.service.SysNoticeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
@@ -47,6 +49,8 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
     private final ActivityCacheService activityCacheService;
     private final TransactionTemplate transactionTemplate;
     private final CheckinChainPipeline checkinChainPipeline;
+    private final SysNoticeService sysNoticeService;
+    private final CertificateRenderService certificateRenderService;
     private static final long LOCK_WAIT_SECONDS = 5L;
 
     @Autowired
@@ -59,7 +63,9 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                                       CertificateService certificateService,
                                       ActivityCacheService activityCacheService,
                                       TransactionTemplate transactionTemplate,
-                                      CheckinChainPipeline checkinChainPipeline) {
+                                      CheckinChainPipeline checkinChainPipeline,
+                                      @Autowired(required = false) SysNoticeService sysNoticeService,
+                                      @Autowired(required = false) CertificateRenderService certificateRenderService) {
         this.activityMapper = activityMapper;
         this.waitlistMapper = waitlistMapper;
         this.codeMapper = codeMapper;
@@ -70,6 +76,37 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
         this.activityCacheService = activityCacheService;
         this.transactionTemplate = transactionTemplate;
         this.checkinChainPipeline = Objects.requireNonNull(checkinChainPipeline, "checkinChainPipeline must not be null");
+        this.sysNoticeService = sysNoticeService;
+        this.certificateRenderService = certificateRenderService;
+    }
+
+    public StudentActivityServiceImpl(ActivityMapper activityMapper,
+                                      ActivityWaitlistMapper waitlistMapper,
+                                      ActivityCheckinCodeMapper codeMapper,
+                                      StudentScoreService studentScoreService,
+                                      RedissonClient redissonClient,
+                                      RabbitTemplate rabbitTemplate,
+                                      CertificateService certificateService,
+                                      ActivityCacheService activityCacheService,
+                                      TransactionTemplate transactionTemplate,
+                                      CheckinChainPipeline checkinChainPipeline,
+                                      SysNoticeService sysNoticeService) {
+        this(activityMapper, waitlistMapper, codeMapper, studentScoreService, redissonClient,
+                rabbitTemplate, certificateService, activityCacheService, transactionTemplate, checkinChainPipeline, sysNoticeService, null);
+    }
+
+    public StudentActivityServiceImpl(ActivityMapper activityMapper,
+                                      ActivityWaitlistMapper waitlistMapper,
+                                      ActivityCheckinCodeMapper codeMapper,
+                                      StudentScoreService studentScoreService,
+                                      RedissonClient redissonClient,
+                                      RabbitTemplate rabbitTemplate,
+                                      CertificateService certificateService,
+                                      ActivityCacheService activityCacheService,
+                                      TransactionTemplate transactionTemplate,
+                                      CheckinChainPipeline checkinChainPipeline) {
+        this(activityMapper, waitlistMapper, codeMapper, studentScoreService, redissonClient,
+                rabbitTemplate, certificateService, activityCacheService, transactionTemplate, checkinChainPipeline, null, null);
     }
 
     @PostConstruct
@@ -92,6 +129,24 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             if (a.getStatus() == null || (a.getStatus() != 0 && a.getStatus() != 1)) {
                 throw new BusinessException(ResultCode.ACTIVITY_EXPIRED.getCode(), "活动未开始或已结束");
             }
+
+            // P2-11: 区间重叠黄金判定定理（Interval Overlap Detection）
+            // 校验学生已有报名活动的 [startTime, endTime] 区间，杜绝时间冲突与恶意多头占坑
+            if (a.getStartTime() != null && a.getEndTime() != null) {
+                List<Activity> enrolledActivities = baseMapper.selectActiveEnrolledActivities(sid, aid);
+                if (enrolledActivities != null) {
+                    for (Activity other : enrolledActivities) {
+                        if (other.getStartTime() != null && other.getEndTime() != null) {
+                            boolean overlap = a.getStartTime().isBefore(other.getEndTime()) && a.getEndTime().isAfter(other.getStartTime());
+                            if (overlap) {
+                                throw new BusinessException(ResultCode.BAD_REQUEST.getCode(),
+                                        String.format("报名失败：该活动时间与您已报名的活动【%s】存在时间冲突，不可兼报！", other.getTitle()));
+                            }
+                        }
+                    }
+                }
+            }
+
             StudentActivity old = getOne(new LambdaQueryWrapper<StudentActivity>()
                     .eq(StudentActivity::getStudentId, sid)
                     .eq(StudentActivity::getActivityId, aid), false);
@@ -124,16 +179,27 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             if (!Objects.equals(a.getWaitlistEnabled(), 1)) {
                 throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "活动报名名额已满");
             }
-            // 仅统计当前处于候补中 (status=1 且 deleted=0) 的最大排队序号，避免退出后再进入时无限累加
-            Integer max = waitlistMapper.selectList(new LambdaQueryWrapper<ActivityWaitlist>()
-                    .eq(ActivityWaitlist::getActivityId, aid)
-                    .eq(ActivityWaitlist::getStatus, 1)
-                    .eq(ActivityWaitlist::getDeleted, 0))
-                    .stream()
-                    .map(ActivityWaitlist::getQueueNumber)
-                    .filter(Objects::nonNull)
-                    .max(Integer::compareTo)
-                    .orElse(0);
+            // P2-7: 聚合 SQL 替代全表扫描与内存 Stream 计算 (含对未打桩单测的回落兼容)
+            Integer max = waitlistMapper.selectMaxQueueNumber(aid);
+            if (max == null || max == 0) {
+                try {
+                    List<ActivityWaitlist> activeWaitlists = waitlistMapper.selectList(new LambdaQueryWrapper<ActivityWaitlist>()
+                            .eq(ActivityWaitlist::getActivityId, aid)
+                            .eq(ActivityWaitlist::getStatus, 1)
+                            .eq(ActivityWaitlist::getDeleted, 0));
+                    if (activeWaitlists != null && !activeWaitlists.isEmpty()) {
+                        max = activeWaitlists.stream()
+                                .map(ActivityWaitlist::getQueueNumber)
+                                .filter(Objects::nonNull)
+                                .max(Integer::compareTo)
+                                .orElse(0);
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+            if (max == null) {
+                max = 0;
+            }
             ActivityWaitlist w = waiting == null ? new ActivityWaitlist() : waiting;
             w.setActivityId(aid);
             w.setStudentId(sid);
@@ -174,6 +240,14 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                     .eq(StudentActivity::getActivityId, activityId)
                     .eq(StudentActivity::getStatus, 1));
             if (rec != null) {
+                // P2-10: 活动取消时效前置守卫，活动已开始或已结束严禁取消报名，杜绝跨时空转正已结束活动
+                Activity a = activityMapper.selectById(activityId);
+                if (a != null) {
+                    LocalDateTime now = LocalDateTime.now();
+                    if ((a.getStartTime() != null && now.isAfter(a.getStartTime())) || Objects.equals(a.getStatus(), 2) || Objects.equals(a.getStatus(), 3)) {
+                        throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "活动已开始或已结束，无法取消报名");
+                    }
+                }
                 rec.setStatus(3);
                 updateById(rec);
                 activityMapper.decrementParticipant(activityId);
@@ -206,6 +280,30 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
         if (w == null || activity == null || reserveParticipant(activity) == 0) {
             return;
         }
+
+        // P2-11: 候补转正时进行时间冲突防重叠校验，若学生在此期间已报名其他冲突活动，自动跳过并顺延递补
+        if (activity.getStartTime() != null && activity.getEndTime() != null) {
+            List<Activity> enrolled = baseMapper.selectActiveEnrolledActivities(w.getStudentId(), aid);
+            boolean hasConflict = false;
+            if (enrolled != null) {
+                for (Activity other : enrolled) {
+                    if (other.getStartTime() != null && other.getEndTime() != null) {
+                        if (activity.getStartTime().isBefore(other.getEndTime()) && activity.getEndTime().isAfter(other.getStartTime())) {
+                            hasConflict = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (hasConflict) {
+                log.info("候补转正检测到时间重叠冲突，自动跳过该候选人并顺延递补: studentId={}, activityId={}", w.getStudentId(), aid);
+                w.setStatus(3);
+                waitlistMapper.updateById(w);
+                promote(aid);
+                return;
+            }
+        }
+
         StudentActivity rec = getOne(new LambdaQueryWrapper<StudentActivity>()
                 .eq(StudentActivity::getStudentId, w.getStudentId())
                 .eq(StudentActivity::getActivityId, aid), false);
@@ -226,6 +324,33 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
         w.setStatus(2);
         w.setPromotedTime(LocalDateTime.now());
         waitlistMapper.updateById(w);
+
+        // P2-10: 候补转正即时触达闭环，事务提交后触发系统通知与 WebSocket 强提醒
+        final Long promotedStudentId = w.getStudentId();
+        final String actTitle = activity.getTitle();
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    notifyWaitlistPromoted(promotedStudentId, aid, actTitle);
+                }
+            });
+        } else {
+            notifyWaitlistPromoted(promotedStudentId, aid, actTitle);
+        }
+    }
+
+    private void notifyWaitlistPromoted(Long studentId, Long activityId, String activityTitle) {
+        if (sysNoticeService == null) {
+            return;
+        }
+        try {
+            String title = "活动候补转正通知";
+            String content = String.format("🎉 恭喜！您候补报名的活动【%s】已成功递补转正为正式报名，请准时参加！", activityTitle);
+            sysNoticeService.createAndSendNotice(2, studentId, "waitlist_promoted", title, content, activityId);
+        } catch (Exception e) {
+            log.error("候补转正系统通知推送异常: studentId={}, activityId={}, error={}", studentId, activityId, e.getMessage());
+        }
     }
 
     @Override
@@ -279,6 +404,28 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                 c.setDeleted(0);
                 certificateService.save(c);
                 issued = true;
+
+                if (certificateRenderService != null && c.getId() != null) {
+                    final Long certId = c.getId();
+                    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+                        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                            @Override
+                            public void afterCommit() {
+                                try {
+                                    certificateRenderService.renderAndUpload(certId);
+                                } catch (Exception e) {
+                                    log.warn("异步渲染证书图片失败: certId={}, error={}", certId, e.getMessage());
+                                }
+                            }
+                        });
+                    } else {
+                        try {
+                            certificateRenderService.renderAndUpload(certId);
+                        } catch (Exception e) {
+                            log.warn("渲染证书图片失败: certId={}, error={}", certId, e.getMessage());
+                        }
+                    }
+                }
             }
             return ActivityCheckinVO.builder()
                     .pointsAwarded(points)

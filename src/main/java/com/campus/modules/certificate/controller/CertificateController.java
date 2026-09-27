@@ -12,8 +12,12 @@ import com.campus.common.result.Result;
 import com.campus.modules.certificate.dto.*;
 import com.campus.modules.certificate.entity.Certificate;
 import com.campus.modules.certificate.service.CertificateService;
+import com.campus.modules.certificate.service.CertificateRenderService;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -24,10 +28,21 @@ import java.util.List;
  */
 @RestController
 @RequestMapping({"/certificate", "/admin/certificate"})
-@RequiredArgsConstructor
 public class CertificateController {
 
     private final CertificateService certificateService;
+    private final CertificateRenderService certificateRenderService;
+
+    @Autowired
+    public CertificateController(CertificateService certificateService,
+                                 @Autowired(required = false) CertificateRenderService certificateRenderService) {
+        this.certificateService = certificateService;
+        this.certificateRenderService = certificateRenderService;
+    }
+
+    public CertificateController(CertificateService certificateService) {
+        this(certificateService, null);
+    }
 
     /**
      * 8.1 学生查询自己的电子证书列表。
@@ -114,5 +129,31 @@ public class CertificateController {
     @GetMapping({"/metrics", "/admin/metrics"})
     public Result<CertificateMetricsVO> metrics() {
         return Result.success(certificateService.getMetrics());
+    }
+
+    /**
+     * 8.6 电子荣誉证书高清图片预览与下载流（P2-12：支持扫码即看、直链预览与长按保存）
+     * GET /certificate/file/{certificateNo}.png 或 GET /certificate/{certificateNo}/image
+     */
+    @GetMapping(value = {"/file/{certificateNo}.png", "/file/{certificateNo}", "/{certificateNo}/image"}, produces = MediaType.IMAGE_PNG_VALUE)
+    public ResponseEntity<byte[]> getCertificateImage(@PathVariable("certificateNo") String certificateNo) {
+        if (certificateRenderService == null) {
+            return ResponseEntity.notFound().build();
+        }
+        if (certificateNo == null || certificateNo.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
+        String cleanNo = certificateNo.trim();
+        if (cleanNo.toLowerCase().endsWith(".png")) {
+            cleanNo = cleanNo.substring(0, cleanNo.length() - 4);
+        }
+        byte[] bytes = certificateRenderService.renderToPngBytesByNo(cleanNo);
+        if (bytes == null || bytes.length == 0) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.IMAGE_PNG_VALUE)
+                .header(HttpHeaders.CACHE_CONTROL, "public, max-age=86400")
+                .body(bytes);
     }
 }

@@ -27,7 +27,15 @@ public class CertificateServiceImpl extends ServiceImpl<CertificateMapper, Certi
     @Override
     public List<CertificateMyVO> getMyList() {
         Long studentId = requireStudentId();
-        return baseMapper.selectMyList(studentId);
+        List<CertificateMyVO> list = baseMapper.selectMyList(studentId);
+        if (list != null) {
+            for (CertificateMyVO vo : list) {
+                if (vo.getFileUrl() == null || vo.getFileUrl().isBlank()) {
+                    vo.setFileUrl("/api/certificate/file/" + vo.getCertificateNo() + ".png");
+                }
+            }
+        }
+        return list;
     }
 
     @Override
@@ -46,6 +54,9 @@ public class CertificateServiceImpl extends ServiceImpl<CertificateMapper, Certi
         // 验真接口保持公开，但只返回脱敏姓名；撤销/过期证书禁止下载文件。
         if (result.getStatus() != null && result.getStatus() == 1) {
             result.setStatusText("有效");
+            if (result.getFileUrl() == null || result.getFileUrl().isBlank()) {
+                result.setFileUrl("/api/certificate/file/" + result.getCertificateNo() + ".png");
+            }
         } else if (result.getStatus() != null && result.getStatus() == 2) {
             result.setStatusText("已作废撤销");
             result.setFileUrl(null);
@@ -64,8 +75,16 @@ public class CertificateServiceImpl extends ServiceImpl<CertificateMapper, Certi
         requireAdminId();
         long current = Math.max(page == null ? 1 : page, 1);
         long pageSize = Math.min(Math.max(size == null ? 10 : size, 1), 100);
-        return baseMapper.selectAdminPage(new Page<>(current, pageSize), trim(certificateNo), trim(studentName),
+        IPage<CertificateAdminVO> voPage = baseMapper.selectAdminPage(new Page<>(current, pageSize), trim(certificateNo), trim(studentName),
                 trim(studentNo), trim(activityTitle), status);
+        if (voPage != null && voPage.getRecords() != null) {
+            for (CertificateAdminVO vo : voPage.getRecords()) {
+                if (vo.getFileUrl() == null || vo.getFileUrl().isBlank()) {
+                    vo.setFileUrl("/api/certificate/file/" + vo.getCertificateNo() + ".png");
+                }
+            }
+        }
+        return voPage;
     }
 
     @Override

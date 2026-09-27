@@ -2,7 +2,6 @@ package com.campus.modules.system.service.impl;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.alibaba.fastjson2.JSONObject;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -15,57 +14,50 @@ import com.campus.modules.system.dto.NoticePageQuery;
 import com.campus.modules.system.dto.SysNoticeVO;
 import com.campus.modules.system.entity.SysNotice;
 import com.campus.modules.system.mapper.SysNoticeMapper;
+import com.campus.modules.system.mapper.SysNoticeReadMapper;
 import com.campus.modules.system.service.SysNoticeService;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * SysNotice 系统通知服务实现类
+ * 落地 P2-9：全校广播通知读写分离治理，解耦个人私信与全校广播
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class SysNoticeServiceImpl extends ServiceImpl<SysNoticeMapper, SysNotice> implements SysNoticeService {
+
+    private final SysNoticeReadMapper sysNoticeReadMapper;
 
     @Override
     public IPage<SysNoticeVO> getMyNotices(NoticePageQuery query) {
         UserIdentity identity = getCurrentUserIdentity();
-        Page<SysNotice> page = new Page<>(query.getPage(), query.getSize());
+        if (query == null) {
+            query = new NoticePageQuery();
+        }
+        long current = query.getPage() < 1 ? 1 : query.getPage();
+        long size = query.getSize() < 1 ? 10 : Math.min(query.getSize(), 100);
+        Page<SysNoticeVO> page = new Page<>(current, size);
 
-        LambdaQueryWrapper<SysNotice> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(SysNotice::getReceiverType, identity.receiverType)
-                .and(w -> w.eq(SysNotice::getReceiverId, identity.receiverId).or().eq(SysNotice::getReceiverId, 0L))
-                .eq(query.getIsRead() != null, SysNotice::getIsRead, query.getIsRead())
-                .and(StringUtils.hasText(query.getKeyword()), w ->
-                        w.like(SysNotice::getTitle, query.getKeyword())
-                                .or()
-                                .like(SysNotice::getContent, query.getKeyword())
-                )
-                .orderByDesc(SysNotice::getCreateTime);
-
-        this.page(page, wrapper);
-
-        Page<SysNoticeVO> voPage = new Page<>(page.getCurrent(), page.getSize(), page.getTotal());
-        List<SysNoticeVO> voList = page.getRecords().stream()
-                .map(this::convertToVO)
-                .collect(Collectors.toList());
-        voPage.setRecords(voList);
+        IPage<SysNoticeVO> voPage = baseMapper.selectUserNoticePage(page, identity.receiverId, identity.receiverType, query);
+        if (voPage != null && voPage.getRecords() != null) {
+            for (SysNoticeVO vo : voPage.getRecords()) {
+                vo.setTypeName(resolveTypeName(vo.getType()));
+            }
+        }
         return voPage;
     }
 
     @Override
     public Long getMyUnreadCount() {
         UserIdentity identity = getCurrentUserIdentity();
-        LambdaQueryWrapper<SysNotice> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(SysNotice::getReceiverType, identity.receiverType)
-                .and(w -> w.eq(SysNotice::getReceiverId, identity.receiverId).or().eq(SysNotice::getReceiverId, 0L))
-                .eq(SysNotice::getIsRead, 0);
-        return this.count(wrapper);
+        Long count = baseMapper.countUserUnread(identity.receiverId, identity.receiverType);
+        return count != null ? count : 0L;
     }
 
     @Override
@@ -76,7 +68,12 @@ public class SysNoticeServiceImpl extends ServiceImpl<SysNoticeMapper, SysNotice
             return false;
         }
         Long recId = notice.getReceiverId() != null ? notice.getReceiverId() : 0L;
-        if (recId != 0L && !recId.equals(identity.receiverId)) {
+        if (recId.equals(0L)) {
+            // 全校公共广播：仅向 sys_notice_read 记录当前用户已读，不污染主表，不影响其他用户
+            sysNoticeReadMapper.upsertReadRecord(id, identity.receiverId, identity.receiverType);
+            return true;
+        }
+        if (!recId.equals(identity.receiverId)) {
             return false;
         }
         if (Integer.valueOf(1).equals(notice.getIsRead())) {
@@ -89,15 +86,22 @@ public class SysNoticeServiceImpl extends ServiceImpl<SysNoticeMapper, SysNotice
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public boolean markAllAsRead() {
         UserIdentity identity = getCurrentUserIdentity();
+
+        // 1. 批量标记当前用户的个人私信为已读
         LambdaUpdateWrapper<SysNotice> updateWrapper = new LambdaUpdateWrapper<>();
         updateWrapper.eq(SysNotice::getReceiverType, identity.receiverType)
-                .and(w -> w.eq(SysNotice::getReceiverId, identity.receiverId).or().eq(SysNotice::getReceiverId, 0L))
+                .eq(SysNotice::getReceiverId, identity.receiverId)
                 .eq(SysNotice::getIsRead, 0)
                 .set(SysNotice::getIsRead, 1)
                 .set(SysNotice::getReadTime, LocalDateTime.now());
-        return this.update(updateWrapper);
+        this.update(updateWrapper);
+
+        // 2. 批量将当前用户未读的公共广播关联写入 sys_notice_read
+        sysNoticeReadMapper.markAllBroadcastAsRead(identity.receiverId, identity.receiverType);
+        return true;
     }
 
     @Override
@@ -108,7 +112,12 @@ public class SysNoticeServiceImpl extends ServiceImpl<SysNoticeMapper, SysNotice
             return false;
         }
         Long recId = notice.getReceiverId() != null ? notice.getReceiverId() : 0L;
-        if (recId != 0L && !recId.equals(identity.receiverId)) {
+        if (recId.equals(0L)) {
+            // 全校公共广播：普通用户删除仅在 sys_notice_read 中软隐藏，杜绝全校公告被删空
+            sysNoticeReadMapper.upsertDeletedRecord(id, identity.receiverId, identity.receiverType);
+            return true;
+        }
+        if (!recId.equals(identity.receiverId)) {
             return false;
         }
         return this.removeById(id);
@@ -156,22 +165,6 @@ public class SysNoticeServiceImpl extends ServiceImpl<SysNoticeMapper, SysNotice
         } catch (Exception e) {
             log.warn("WebSocket 推送系统通知失败: {}", e.getMessage());
         }
-    }
-
-    private SysNoticeVO convertToVO(SysNotice notice) {
-        return SysNoticeVO.builder()
-                .id(notice.getId())
-                .receiverType(notice.getReceiverType())
-                .receiverId(notice.getReceiverId())
-                .type(notice.getType())
-                .typeName(resolveTypeName(notice.getType()))
-                .title(notice.getTitle())
-                .content(notice.getContent())
-                .bizId(notice.getBizId())
-                .isRead(notice.getIsRead())
-                .readTime(notice.getReadTime())
-                .createTime(notice.getCreateTime())
-                .build();
     }
 
     private String resolveTypeName(String type) {

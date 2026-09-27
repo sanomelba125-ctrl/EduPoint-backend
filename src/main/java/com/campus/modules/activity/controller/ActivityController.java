@@ -7,6 +7,7 @@ import com.campus.common.constant.UserRole;
 import com.campus.common.result.Result;
 import com.campus.modules.activity.dto.ActivityPageQuery;
 import com.campus.modules.activity.dto.ActivitySaveDTO;
+import com.campus.modules.activity.dto.ActivityVO;
 import com.campus.modules.activity.dto.QrCodeVO;
 import com.campus.modules.activity.entity.Activity;
 import com.campus.modules.activity.service.ActivityService;
@@ -34,14 +35,14 @@ public class ActivityController {
 
     @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     @PostMapping("/create")
-    public Result<Activity> create(@Valid @RequestBody ActivitySaveDTO dto) {
-        return Result.success("活动创建成功", activityService.create(dto));
+    public Result<ActivityVO> create(@Valid @RequestBody ActivitySaveDTO dto) {
+        return Result.success("活动创建成功", ActivityVO.fromEntity(activityService.create(dto)));
     }
 
     @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
     @PutMapping("/update")
-    public Result<Activity> update(@Valid @RequestBody ActivitySaveDTO dto) {
-        return Result.success("活动修改成功", activityService.update(dto));
+    public Result<ActivityVO> update(@Valid @RequestBody ActivitySaveDTO dto) {
+        return Result.success("活动修改成功", ActivityVO.fromEntity(activityService.update(dto)));
     }
 
     @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
@@ -52,13 +53,14 @@ public class ActivityController {
     }
 
     @GetMapping("/{id}")
-    public Result<Activity> detail(@PathVariable Long id) {
-        return Result.success(activityService.detail(id));
+    public Result<ActivityVO> detail(@PathVariable Long id) {
+        return Result.success(ActivityVO.fromEntity(activityService.detail(id)));
     }
 
     @GetMapping("/page")
-    public Result<IPage<Activity>> page(ActivityPageQuery query) {
-        return Result.success(activityService.page(query));
+    public Result<IPage<ActivityVO>> page(ActivityPageQuery query) {
+        IPage<Activity> page = activityService.page(query);
+        return Result.success(page == null ? null : page.convert(ActivityVO::fromEntity));
     }
 
     /**

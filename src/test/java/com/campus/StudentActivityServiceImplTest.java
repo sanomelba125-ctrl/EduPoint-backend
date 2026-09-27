@@ -114,6 +114,8 @@ class StudentActivityServiceImplTest {
     @Mock
     private ActivityCacheService activityCacheService;
     @Mock
+    private com.campus.modules.system.service.SysNoticeService sysNoticeService;
+    @Mock
     private TransactionTemplate transactionTemplate;
     @Mock
     private RLock lock;
@@ -155,7 +157,7 @@ class StudentActivityServiceImplTest {
 
         service = new StudentActivityServiceImpl(activityMapper, waitlistMapper, codeMapper,
                 studentScoreService, redissonClient, rabbitTemplate, certificateService,
-                activityCacheService, transactionTemplate, pipeline);
+                activityCacheService, transactionTemplate, pipeline, sysNoticeService);
         ReflectionTestUtils.setField(service, "baseMapper", studentActivityMapper);
     }
 
@@ -440,6 +442,8 @@ class StudentActivityServiceImplTest {
 
         triggerAfterCommit();
         verify(activityCacheService).requestRefresh(ACTIVITY_ID);
+        verify(sysNoticeService).createAndSendNotice(eq(2), eq(201L), eq("waitlist_promoted"),
+                ArgumentMatchers.contains("候补转正"), ArgumentMatchers.contains("已成功递补转正"), eq(ACTIVITY_ID));
     }
 
     @Test
@@ -898,6 +902,57 @@ class StudentActivityServiceImplTest {
         assertEquals(120L, result.getTotalRecords());
         assertEquals(90L, result.getCompletedCount());
         assertEquals(1800L, result.getPointsDistributed());
+    }
+
+    @Test
+    @DisplayName("P2-10 取消报名：活动物理时间已开始时拒绝取消")
+    void cancel_shouldRejectWhenActivityAlreadyStarted() {
+        StudentActivity own = record(31L, STUDENT_ID, ACTIVITY_ID, 1);
+        when(studentActivityMapper.selectOne(any(), anyBoolean())).thenReturn(own);
+
+        Activity startedActivity = activity(ACTIVITY_ID, 0, 0);
+        startedActivity.setStartTime(LocalDateTime.now().minusHours(1));
+        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(startedActivity);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.cancelSignup(ACTIVITY_ID));
+        assertEquals(400, ex.getCode());
+        assertEquals("活动已开始或已结束，无法取消报名", ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("P2-10 取消报名：活动状态已为结束/归档时拒绝取消")
+    void cancel_shouldRejectWhenActivityFinished() {
+        StudentActivity own = record(31L, STUDENT_ID, ACTIVITY_ID, 1);
+        when(studentActivityMapper.selectOne(any(), anyBoolean())).thenReturn(own);
+
+        Activity finishedActivity = activity(ACTIVITY_ID, 2, 0);
+        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(finishedActivity);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.cancelSignup(ACTIVITY_ID));
+        assertEquals(400, ex.getCode());
+        assertEquals("活动已开始或已结束，无法取消报名", ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("P2-11 活动报名时间冲突防重叠：存在时间交叠时拒绝兼报")
+    void signup_shouldRejectWhenTimeConflictDetected() {
+        LocalDateTime now = LocalDateTime.now();
+        Activity newActivity = activity(ACTIVITY_ID, 0, 0);
+        newActivity.setStartTime(now.plusDays(1).withHour(14).withMinute(0));
+        newActivity.setEndTime(now.plusDays(1).withHour(16).withMinute(0));
+        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(newActivity);
+
+        Activity existingActivity = activity(88L, 0, 0);
+        existingActivity.setTitle("人工智能研讨讲座");
+        existingActivity.setStartTime(now.plusDays(1).withHour(15).withMinute(0)); // 15:00-17:00 交叠
+        existingActivity.setEndTime(now.plusDays(1).withHour(17).withMinute(0));
+
+        when(studentActivityMapper.selectActiveEnrolledActivities(eq(STUDENT_ID), eq(ACTIVITY_ID)))
+                .thenReturn(List.of(existingActivity));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.signup(signupRequest(ACTIVITY_ID)));
+        assertEquals(400, ex.getCode());
+        assertTrue(ex.getMessage().contains("时间冲突，不可兼报"), "实际提示: " + ex.getMessage());
     }
 
     // ────────────────────────── 测试辅助 ──────────────────────────
