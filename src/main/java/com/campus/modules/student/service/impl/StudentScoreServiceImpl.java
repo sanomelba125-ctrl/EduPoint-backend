@@ -13,6 +13,9 @@ import com.campus.modules.student.entity.Student;
 import com.campus.modules.student.mapper.StudentMapper;
 import com.campus.modules.student.service.StudentScoreService;
 import com.campus.modules.system.service.SysNoticeService;
+import com.campus.modules.student.strategy.PointCalculationResult;
+import com.campus.modules.student.strategy.PointContext;
+import com.campus.modules.student.strategy.PointStrategyContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -56,14 +59,6 @@ import java.util.stream.Collectors;
  *
  * @see com.campus.modules.mall.service.PointLedger
  * @see com.campus.modules.mall.entity.PointRecordType
- */
-import com.campus.modules.student.strategy.PointCalculationResult;
-import com.campus.modules.student.strategy.PointContext;
-import com.campus.modules.student.strategy.PointStrategyContext;
-import lombok.RequiredArgsConstructor;
-
-/**
- * 积分与学分账户服务实现
  */
 @Slf4j
 @Service

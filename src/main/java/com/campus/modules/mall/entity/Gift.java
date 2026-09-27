@@ -57,15 +57,19 @@ public class Gift {
     private Integer status;
 
     /** 创建管理员ID */
+    @TableField(fill = com.baomidou.mybatisplus.annotation.FieldFill.INSERT)
     private Long createdBy;
 
     /** 修改管理员ID */
+    @TableField(fill = com.baomidou.mybatisplus.annotation.FieldFill.INSERT_UPDATE)
     private Long updatedBy;
 
     /** 创建时间 */
+    @TableField(fill = com.baomidou.mybatisplus.annotation.FieldFill.INSERT)
     private LocalDateTime createTime;
 
     /** 更新时间 */
+    @TableField(fill = com.baomidou.mybatisplus.annotation.FieldFill.INSERT_UPDATE)
     private LocalDateTime updateTime;
 
     /** 逻辑删除标记: 0-正常 1-已删除 */

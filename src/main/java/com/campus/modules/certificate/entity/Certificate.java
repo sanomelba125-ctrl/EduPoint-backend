@@ -2,6 +2,7 @@ package com.campus.modules.certificate.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
@@ -55,9 +56,11 @@ public class Certificate {
     private Integer verifyCount;
 
     /** 生成时间 */
+    @TableField(fill = com.baomidou.mybatisplus.annotation.FieldFill.INSERT)
     private LocalDateTime createTime;
 
     /** 更新时间 */
+    @TableField(fill = com.baomidou.mybatisplus.annotation.FieldFill.INSERT_UPDATE)
     private LocalDateTime updateTime;
 
     /** 逻辑删除标记 */

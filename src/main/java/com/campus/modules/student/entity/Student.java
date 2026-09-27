@@ -41,7 +41,9 @@ public class Student {
     private Integer totalPoints;
     private Integer currentPoints;
     private Integer status;
+    @TableField(fill = com.baomidou.mybatisplus.annotation.FieldFill.INSERT)
     private LocalDateTime createTime;
+    @TableField(fill = com.baomidou.mybatisplus.annotation.FieldFill.INSERT_UPDATE)
     private LocalDateTime updateTime;
     private Integer deleted;
 }
