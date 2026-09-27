@@ -75,6 +75,7 @@ public class Gift {
     /** 逻辑删除标记: 0-正常 1-已删除 */
     private Integer deleted;
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public com.campus.modules.mall.enums.GiftStatus getStatusEnum() {
         return com.campus.modules.mall.enums.GiftStatus.of(this.status);
     }
@@ -83,7 +84,12 @@ public class Gift {
         this.status = status;
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public void setStatus(com.campus.modules.mall.enums.GiftStatus status) {
         this.status = status != null ? status.getCode() : null;
+    }
+
+    public void setStatusEnum(com.campus.modules.mall.enums.GiftStatus status) {
+        setStatus(status);
     }
 }

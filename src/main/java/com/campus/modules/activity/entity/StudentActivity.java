@@ -61,6 +61,7 @@ public class StudentActivity {
     /** 逻辑删除标记 */
     private Integer deleted;
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public com.campus.modules.activity.enums.StudentActivityStatus getStatusEnum() {
         return com.campus.modules.activity.enums.StudentActivityStatus.of(this.status);
     }
@@ -69,7 +70,12 @@ public class StudentActivity {
         this.status = status;
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public void setStatus(com.campus.modules.activity.enums.StudentActivityStatus status) {
         this.status = status != null ? status.getCode() : null;
+    }
+
+    public void setStatusEnum(com.campus.modules.activity.enums.StudentActivityStatus status) {
+        setStatus(status);
     }
 }

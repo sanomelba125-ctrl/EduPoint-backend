@@ -117,6 +117,7 @@ public class Activity {
     @TableField(exist = false)
     private Integer myQueueNumber;
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public com.campus.modules.activity.enums.ActivityStatus getStatusEnum() {
         return com.campus.modules.activity.enums.ActivityStatus.of(this.status);
     }
@@ -125,7 +126,12 @@ public class Activity {
         this.status = status;
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public void setStatus(com.campus.modules.activity.enums.ActivityStatus status) {
         this.status = status != null ? status.getCode() : null;
+    }
+
+    public void setStatusEnum(com.campus.modules.activity.enums.ActivityStatus status) {
+        setStatus(status);
     }
 }

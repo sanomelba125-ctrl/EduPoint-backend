@@ -66,6 +66,7 @@ public class Certificate {
     /** 逻辑删除标记 */
     private Integer deleted;
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public com.campus.modules.certificate.enums.CertificateStatus getStatusEnum() {
         return com.campus.modules.certificate.enums.CertificateStatus.of(this.status);
     }
@@ -74,7 +75,12 @@ public class Certificate {
         this.status = status;
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public void setStatus(com.campus.modules.certificate.enums.CertificateStatus status) {
         this.status = status != null ? status.getCode() : null;
+    }
+
+    public void setStatusEnum(com.campus.modules.certificate.enums.CertificateStatus status) {
+        setStatus(status);
     }
 }

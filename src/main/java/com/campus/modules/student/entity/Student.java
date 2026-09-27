@@ -47,6 +47,7 @@ public class Student {
     private LocalDateTime updateTime;
     private Integer deleted;
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public com.campus.modules.student.enums.StudentStatus getStatusEnum() {
         return com.campus.modules.student.enums.StudentStatus.of(this.status);
     }
@@ -55,7 +56,12 @@ public class Student {
         this.status = status;
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public void setStatus(com.campus.modules.student.enums.StudentStatus status) {
         this.status = status != null ? status.getCode() : null;
+    }
+
+    public void setStatusEnum(com.campus.modules.student.enums.StudentStatus status) {
+        setStatus(status);
     }
 }

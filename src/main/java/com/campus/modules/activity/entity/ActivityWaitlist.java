@@ -45,6 +45,7 @@ public class ActivityWaitlist {
     /** 逻辑删除标记 */
     private Integer deleted;
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public com.campus.modules.activity.enums.ActivityWaitlistStatus getStatusEnum() {
         return com.campus.modules.activity.enums.ActivityWaitlistStatus.of(this.status);
     }
@@ -53,7 +54,12 @@ public class ActivityWaitlist {
         this.status = status;
     }
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public void setStatus(com.campus.modules.activity.enums.ActivityWaitlistStatus status) {
         this.status = status != null ? status.getCode() : null;
+    }
+
+    public void setStatusEnum(com.campus.modules.activity.enums.ActivityWaitlistStatus status) {
+        setStatus(status);
     }
 }
