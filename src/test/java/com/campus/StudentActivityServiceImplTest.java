@@ -227,13 +227,13 @@ class StudentActivityServiceImplTest {
     }
 
     @Test
-    @DisplayName("报名：活动未开始或已结束时返回 503")
+    @DisplayName("报名：活动未开始或已结束时返回业务异常")
     void signup_shouldRejectActivityNotOpen() {
         when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(activity(ACTIVITY_ID, 2, 0));
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.signup(signupRequest(ACTIVITY_ID)));
-        assertEquals(503, ex.getCode());
+        assertEquals(com.campus.common.result.ResultCode.ACTIVITY_EXPIRED.getCode(), ex.getCode());
         assertEquals("活动未开始或已结束", ex.getMessage());
         verify(activityMapper, never()).incrementParticipant(any(), any());
     }
@@ -573,7 +573,7 @@ class StudentActivityServiceImplTest {
     }
 
     @Test
-    @DisplayName("打卡：同时持有「活动打卡锁」与「学生积分锁」，避免跨活动积分竞争")
+    @DisplayName("打卡：持有「学生与活动联合锁」，避免串行阻塞全场与其他活动并发竞争")
     void checkin_shouldAcquireBothActivityAndStudentLocks() {
         Activity activity = activity(ACTIVITY_ID, 1, 0);
         activity.setPoints(10);
@@ -593,13 +593,13 @@ class StudentActivityServiceImplTest {
     // ────────────────────────── 打卡：校验链失败分支 ──────────────────────────
 
     @Test
-    @DisplayName("打卡：活动未处于进行中时返回 503")
+    @DisplayName("打卡：活动未处于进行中时返回业务异常")
     void checkin_shouldRejectActivityNotOngoing() {
         when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(activity(ACTIVITY_ID, 0, 0));
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.checkin(checkinRequest(ACTIVITY_ID, NONCE, SIGN, null, null)));
-        assertEquals(503, ex.getCode());
+        assertEquals(com.campus.common.result.ResultCode.ACTIVITY_EXPIRED.getCode(), ex.getCode());
         assertEquals("活动未开始或已结束", ex.getMessage());
         verify(codeMapper, never()).markUsed(any(), any());
     }

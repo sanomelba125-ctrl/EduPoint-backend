@@ -42,11 +42,29 @@ class CommonResultTest {
     }
 
     @Test
-    @DisplayName("测试ResultCode枚举状态码映射")
+    @DisplayName("测试ResultCode枚举状态码映射与分段规范")
     void testResultCodeEnum() {
+        // HTTP 基础映射
         assertEquals(200, ResultCode.SUCCESS.getCode());
-        assertEquals(500, ResultCode.ERROR.getCode());
+        assertEquals(400, ResultCode.BAD_REQUEST.getCode());
         assertEquals(401, ResultCode.UNAUTHORIZED.getCode());
         assertEquals(403, ResultCode.FORBIDDEN.getCode());
+        assertEquals(404, ResultCode.NOT_FOUND.getCode());
+        assertEquals(409, ResultCode.CONFLICT.getCode());
+        assertEquals(500, ResultCode.ERROR.getCode());
+
+        // 领域分段错误码 (2xxxx: 用户域, 3xxxx: 活动域, 4xxxx: 积分与商城域)
+        assertEquals(20001, ResultCode.USER_NOT_EXIST.getCode());
+        assertEquals(20002, ResultCode.PASSWORD_ERROR.getCode());
+        assertEquals(30001, ResultCode.ACTIVITY_EXPIRED.getCode());
+        assertEquals(30002, ResultCode.ALREADY_CHECKED_IN.getCode());
+        assertEquals(40001, ResultCode.POINTS_NOT_ENOUGH.getCode());
+        assertEquals(40002, ResultCode.GIFT_STOCK_EMPTY.getCode());
+
+        // 工厂方法与防御
+        assertEquals(ResultCode.SUCCESS, ResultCode.of(200));
+        assertEquals(ResultCode.ACTIVITY_EXPIRED, ResultCode.of(30001));
+        assertEquals(ResultCode.ERROR, ResultCode.of(999999));
+        assertEquals(ResultCode.ERROR, ResultCode.of(null));
     }
 }

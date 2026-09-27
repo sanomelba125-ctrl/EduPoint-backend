@@ -315,14 +315,14 @@ class ActivityControllerTest {
     }
 
     @Test
-    @DisplayName("GET /activity/{id}/qrcode：活动已结束时透传 code=503 业务码")
+    @DisplayName("GET /activity/{id}/qrcode：活动已结束时透传业务码")
     void getQrCode_shouldPropagateExpiredActivityCode() throws Exception {
         when(activityService.generateQrCode(anyLong()))
-                .thenThrow(new BusinessException(503, "已结束或已归档的活动不能生成签到码"));
+                .thenThrow(new BusinessException(com.campus.common.result.ResultCode.ACTIVITY_EXPIRED.getCode(), "已结束或已归档的活动不能生成签到码"));
 
         mockMvc.perform(get("/activity/{id}/qrcode", 9L))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(503))
+                .andExpect(jsonPath("$.code").value(com.campus.common.result.ResultCode.ACTIVITY_EXPIRED.getCode()))
                 .andExpect(jsonPath("$.message").value("已结束或已归档的活动不能生成签到码"));
     }
 

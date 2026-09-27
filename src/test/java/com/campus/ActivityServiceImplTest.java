@@ -532,16 +532,16 @@ class ActivityServiceImplTest {
     }
 
     @Test
-    @DisplayName("生成二维码：已结束/已归档活动应返回 503")
+    @DisplayName("生成二维码：已结束/已归档活动应返回业务异常")
     void generateQrCode_shouldRejectEndedOrArchivedActivity() {
         when(activityMapper.selectById(9L)).thenReturn(activity(9L, 2, 0));
         BusinessException ended = assertThrows(BusinessException.class, () -> service.generateQrCode(9L));
-        assertEquals(503, ended.getCode());
+        assertEquals(com.campus.common.result.ResultCode.ACTIVITY_EXPIRED.getCode(), ended.getCode());
         assertEquals("已结束或已归档的活动不能生成签到码", ended.getMessage());
 
         when(activityMapper.selectById(10L)).thenReturn(activity(10L, 3, 0));
         BusinessException archived = assertThrows(BusinessException.class, () -> service.generateQrCode(10L));
-        assertEquals(503, archived.getCode());
+        assertEquals(com.campus.common.result.ResultCode.ACTIVITY_EXPIRED.getCode(), archived.getCode());
     }
 
     @Test

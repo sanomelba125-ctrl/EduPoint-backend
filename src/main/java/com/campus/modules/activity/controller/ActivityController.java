@@ -34,13 +34,13 @@ public class ActivityController {
     private ActivityService activityService;
 
     @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
-    @PostMapping("/create")
+    @PostMapping({"", "/create"})
     public Result<ActivityVO> create(@Valid @RequestBody ActivitySaveDTO dto) {
         return Result.success("活动创建成功", ActivityVO.fromEntity(activityService.create(dto)));
     }
 
     @SaCheckRole(value = {UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.COUNSELOR}, mode = SaMode.OR)
-    @PutMapping("/update")
+    @PutMapping({"", "/update"})
     public Result<ActivityVO> update(@Valid @RequestBody ActivitySaveDTO dto) {
         return Result.success("活动修改成功", ActivityVO.fromEntity(activityService.update(dto)));
     }
