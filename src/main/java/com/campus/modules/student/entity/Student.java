@@ -46,4 +46,16 @@ public class Student {
     @TableField(fill = com.baomidou.mybatisplus.annotation.FieldFill.INSERT_UPDATE)
     private LocalDateTime updateTime;
     private Integer deleted;
+
+    public com.campus.modules.student.enums.StudentStatus getStatusEnum() {
+        return com.campus.modules.student.enums.StudentStatus.of(this.status);
+    }
+
+    public void setStatus(Integer status) {
+        this.status = status;
+    }
+
+    public void setStatus(com.campus.modules.student.enums.StudentStatus status) {
+        this.status = status != null ? status.getCode() : null;
+    }
 }

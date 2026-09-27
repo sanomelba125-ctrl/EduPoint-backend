@@ -21,9 +21,10 @@ import com.campus.config.RabbitMqConfig;
 import com.campus.modules.mall.dto.*;
 
 import com.campus.modules.mall.entity.Gift;
-
 import com.campus.modules.mall.entity.StudentGift;
-
+import com.campus.modules.mall.enums.GiftStatus;
+import com.campus.modules.mall.enums.OrderStatus;
+import com.campus.modules.student.enums.StudentStatus;
 import com.campus.modules.mall.mapper.GiftMapper;
 
 import com.campus.modules.mall.mapper.StudentGiftMapper;
@@ -317,24 +318,17 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
 
         }
 
-        if (student.getStatus() != null && student.getStatus() == 0) {
-
+        if (student.getStatus() != null && student.getStatus() == StudentStatus.DISABLED.getCode()) {
             throw new BusinessException("您的学籍账号已被系统冻结，暂不可参与商城兑换，请联系学工管理员！");
-
         }
 
         Gift gift = giftMapper.selectById(giftId);
-
         if (gift == null || (gift.getDeleted() != null && gift.getDeleted() == 1)) {
-
             throw new BusinessException("您选择的礼品不存在");
-
         }
 
-        if (gift.getStatus() == null || gift.getStatus() != 1) {
-
+        if (gift.getStatus() == null || gift.getStatus() != GiftStatus.ON_SHELF.getCode()) {
             throw new BusinessException("该礼品已暂时下架");
-
         }
 
         return giftIdempotentService.generateExchangeToken(studentId, giftId);
@@ -463,74 +457,60 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
 
         }
 
-        if (student.getStatus() != null && student.getStatus() == 0) {
-
+        if (student.getStatus() != null && student.getStatus() == StudentStatus.DISABLED.getCode()) {
             throw new BusinessException("您的学籍账号已被系统冻结，暂不可参与商城兑换，请联系学工管理员！");
-
         }
-
-
 
         // 2. 查询并校验礼品状态
-
         Gift gift = giftMapper.selectById(dto.getGiftId());
-
         if (gift == null || (gift.getDeleted() != null && gift.getDeleted() == 1)) {
-
             throw new BusinessException("您选择的礼品不存在");
-
         }
 
-        if (gift.getStatus() == null || gift.getStatus() != 1) {
-
+        if (gift.getStatus() == null || gift.getStatus() != GiftStatus.ON_SHELF.getCode()) {
             throw new BusinessException("该礼品已暂时下架");
-
         }
-
-
 
         int quantity = (dto.getQuantity() != null && dto.getQuantity() > 0) ? dto.getQuantity() : 1;
-
         int totalPointsCost = gift.getPointsRequired() * quantity;
 
-
-
         // 5. 校验学生可用积分余额
-
         int currentBalance = student.getCurrentPoints() != null ? student.getCurrentPoints() : 0;
-
         if (currentBalance < totalPointsCost) {
-
             throw new BusinessException(String.format("可用积分不足！当前余额: %d pts，本次兑换需要: %d pts", currentBalance, totalPointsCost));
-
         }
 
-
-
-        // 6. 校验库存并执行原子乐观锁扣减（防高并发超卖）
-
+        // 6. 校验库存并执行原子乐观锁扣减（P1-7: 统一乐观锁冲突重试策略，最大重试 3 次 + 指数退避）
         if (gift.getStock() == null || gift.getStock() < quantity) {
-
             if (gift.getStock() != null && gift.getStock() <= 0) {
-
                 throw new BusinessException("礼品库存已被抢光！");
-
             }
-
             throw new BusinessException(String.format("礼品可用库存不足！当前仅剩 %d 件", gift.getStock() != null ? gift.getStock() : 0));
-
         }
 
-
-
-        int updatedStock = giftMapper.reduceStockWithOptimisticLock(gift.getId(), quantity, gift.getVersion());
+        int updatedStock = 0;
+        Gift candidateGift = gift;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            updatedStock = giftMapper.reduceStockWithOptimisticLock(candidateGift.getId(), quantity, candidateGift.getVersion());
+            if (updatedStock > 0) {
+                break;
+            }
+            log.warn("礼品兑换触发乐观锁冲突重试, attempt: {}, giftId: {}, version: {}", attempt + 1, candidateGift.getId(), candidateGift.getVersion());
+            candidateGift = giftMapper.selectById(candidateGift.getId());
+            if (candidateGift == null || candidateGift.getStock() == null || candidateGift.getStock() < quantity) {
+                break;
+            }
+            try {
+                Thread.sleep(50L * (attempt + 1));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
 
         if (updatedStock == 0) {
-
-            log.warn("礼品兑换触发乐观锁冲突, giftId: {}, version: {}", gift.getId(), gift.getVersion());
-
+            log.warn("礼品兑换触发乐观锁冲突重试耗尽, giftId: {}, version: {}", gift.getId(), gift.getVersion());
             throw new BusinessException("当前抢兑人数较多导致冲突，请刷新后重试！");
-
         }
 
 
@@ -598,30 +578,18 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         order.setReceiverAddress(rAddress);
 
         order.setPickupCode(pickupCode);
-
-        order.setStatus(1); // 1-待发放/待提货
-
+        order.setStatus(OrderStatus.PENDING);
         order.setRefundPointsStatus(0);
-
         try {
-
             this.save(order);
-
         } catch (DuplicateKeyException e) {
-
             log.warn("礼品兑换订单落库命中联合唯一键冲突(重复提交或订单号碰撞): studentId={}, requestId={}, error={}",
-
                     studentId, requestId, e.getMessage());
-
             throw new BusinessException("兑换请求已提交，请勿重复提交！如未生成订单请稍后重试");
-
         }
 
-
-
         // 10. 记录财务级积分对账台账 (由 PointLedger 统一推导 before/after 并落账)
-
-        pointLedger.record(studentId, 2, -totalPointsCost, afterPoints,
+        pointLedger.record(studentId, com.campus.modules.mall.entity.PointRecordType.GIFT_EXCHANGE.getCode(), -totalPointsCost, afterPoints,
 
                 String.format("商城兑换礼品【%s】x %d 件 (提货码: %s)", gift.getName(), quantity, pickupCode),
 
@@ -917,10 +885,8 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
 
 
 
-        if (order.getStatus() != 1) {
-
+        if (order.getStatus() != OrderStatus.PENDING.getCode()) {
             throw new BusinessException("仅处于【待发放/待提货】状态的订单支持自主取消！");
-
         }
 
 
@@ -1067,38 +1033,22 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
 
 
 
-        if (order.getStatus() != 1) {
-
-            if (order.getStatus() != null && order.getStatus() == 2) {
-
+        if (order.getStatus() != OrderStatus.PENDING.getCode()) {
+            if (order.getStatus() != null && order.getStatus() == OrderStatus.DELIVERED.getCode()) {
                 throw new BusinessException("该订单已核销，不可重复提货");
-
             }
-
             throw new BusinessException("该订单状态不是待核销状态，不可重复操作");
-
         }
-
-
 
         // 严格比对提货码（忽略前后空格与横杠）
-
         String cleanInput = dto.getPickupCode().replaceAll("[\\s-]", "").toUpperCase();
-
         String cleanTarget = order.getPickupCode().replaceAll("[\\s-]", "").toUpperCase();
-
         if (!cleanInput.equals(cleanTarget)) {
-
             throw new BusinessException("提货码核销校验不匹配，核销失败！");
-
         }
 
-
-
         // 状态守卫的条件更新（status 1 -> 2）：并发下只有一方能把订单核销掉
-
-        int changed = this.baseMapper.confirmDeliveryWithStatusGuard(order.getId(), 1, LocalDateTime.now(),
-
+        int changed = this.baseMapper.confirmDeliveryWithStatusGuard(order.getId(), OrderStatus.PENDING.getCode(), LocalDateTime.now(),
                 adminId, StringUtils.hasText(dto.getRemark()) ? dto.getRemark() : null);
 
         if (changed == 0) {
@@ -1155,142 +1105,73 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
 
         }
 
-        if (order.getStatus() != 1) {
-
+        if (order.getStatus() != OrderStatus.PENDING.getCode()) {
             throw new BusinessException("仅【待发放】订单允许取消退单");
-
         }
-
-
 
         boolean refund = dto.getRefundPoints() == null || dto.getRefundPoints();
-
         if (!doCancelOrder(order, dto.getCancelReason(), refund, adminId)) {
-
             throw new BusinessException("仅【待发放】订单允许取消退单");
-
         }
-
-
 
         runAfterCommit(() -> {
-
             try {
-
                 String stuTitle = "📢 礼品兑换订单已被管理员取消";
-
                 String reason = StringUtils.hasText(dto.getCancelReason()) ? "原因：" + dto.getCancelReason() : "如有疑问请联系学工管理员。";
-
                 String refundTxt = refund ? String.format("，消耗的 %d 积分已全额退还您的账户", order.getPointsCost()) : "";
-
                 String stuContent = String.format("您的礼品订单【%s】已被管理员取消%s。%s", order.getOrderNo(), refundTxt, reason);
-
                 sysNoticeService.createAndSendNotice(2, order.getStudentId(), "gift_cancel", stuTitle, stuContent, order.getId());
-
             } catch (Exception e) {
-
                 log.warn("向学生发送管理员取消订单通知异常: {}", e.getMessage());
-
             }
-
         });
-
     }
 
-
-
     /**
-
      * 取消订单的共用实现：状态守卫条件更新 + 成功后的库存/积分副作用。
-
      * 必须在已开启事务的 public 方法内调用（学生自主取消、管理员驳回取消、延时关单共用同一路径）。
-
      *
-
      * @return true 表示本次调用真正完成了状态流转；false 表示订单已被并发操作流转，未执行任何副作用
-
      */
-
     private boolean doCancelOrder(StudentGift order, String cancelReason, boolean refund, Long operatorId) {
-
         String reason = cancelReason != null ? cancelReason : "管理员审核驳回取消";
-
-        int changed = this.baseMapper.cancelOrderWithStatusGuard(order.getId(), 1, refund ? 1 : 0,
-
+        int changed = this.baseMapper.cancelOrderWithStatusGuard(order.getId(), OrderStatus.PENDING.getCode(), refund ? 1 : 0,
                 LocalDateTime.now(), reason, operatorId);
-
         if (changed == 0) {
-
             log.warn("订单状态已被并发操作流转，本次取消未生效: orderId={}, orderNo={}", order.getId(), order.getOrderNo());
-
             return false;
-
         }
-
-
 
         // 1. 原路恢复礼品可用库存并检查受影响行数（防静默失败）
-
         int stockRows = giftMapper.increaseStock(order.getGiftId(), order.getQuantity());
-
         if (stockRows <= 0) {
-
             log.warn("[取消订单/库存回补告警] 礼品库存回补未生效(受影响行数为0): orderId={}, orderNo={}, giftId={}, quantity={}",
-
                     order.getId(), order.getOrderNo(), order.getGiftId(), order.getQuantity());
-
         }
 
-
-
         // 2. 返还积分并记录流水台账
-
         if (refund) {
-
             // 退分前先判学生是否存在（拦截已注销/不存在的学生，避免 null 拆箱引发 NPE 导致 RabbitMQ 消息无限重投死循环）
-
             Student student = studentMapper.selectById(order.getStudentId());
-
             if (student == null || (student.getDeleted() != null && student.getDeleted() == 1)) {
-
                 log.warn("[取消订单/退分告警] 学生不存在或已被注销，跳过退分及台账: studentId={}, orderId={}, orderNo={}, pointsCost={}",
-
                         order.getStudentId(), order.getId(), order.getOrderNo(), order.getPointsCost());
-
             } else {
-
                 studentMapper.addCurrentPoints(order.getStudentId(), order.getPointsCost());
-
                 Integer curPoints = studentMapper.selectCurrentPoints(order.getStudentId());
-
                 int afterPoints = curPoints != null ? curPoints : 0;
 
-
-
                 String remark;
-
                 if (operatorId != null && operatorId == 0L) {
-
                     remark = String.format("订单【%s】超时未提货，系统自动取消并退还积分", order.getOrderNo());
-
                 } else if (operatorId == null) {
-
                     remark = String.format("兑换订单【%s】取消，原路返还积分", order.getOrderNo());
-
                 } else {
-
                     remark = String.format("管理员取消订单【%s】，全额退还积分", order.getOrderNo());
-
                 }
 
-
-
-                pointLedger.record(order.getStudentId(), 4, order.getPointsCost(), afterPoints,
-
-                        remark,
-
-                        order.getOrderNo(), order.getId(), operatorId);
-
+                pointLedger.record(order.getStudentId(), com.campus.modules.mall.entity.PointRecordType.ORDER_REFUND.getCode(), order.getPointsCost(), afterPoints,
+                        remark, order.getOrderNo(), order.getId(), operatorId);
             }
 
         }
@@ -1317,14 +1198,10 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
 
         }
 
-        // 严格幂等防线：只有待提货状态(status == 1)才执行超时自动关单
-
-        if (order.getStatus() == null || order.getStatus() != 1) {
-
+        // 严格幂等防线：只有待提货状态才执行超时自动关单
+        if (order.getStatus() == null || order.getStatus() != OrderStatus.PENDING.getCode()) {
             log.info("[延时关单] 订单已非待提货状态(status={})，幂等退出: orderId={}", order.getStatus(), orderId);
-
             return;
-
         }
 
 
@@ -1537,142 +1414,74 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
 
         }
 
-        if (Objects.equals(order.getStatus(), 2)) {
-
+        if (Objects.equals(order.getStatus(), OrderStatus.DELIVERED.getCode())) {
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "该订单已完成核销提货");
-
         }
-
-        if (Objects.equals(order.getStatus(), 3)) {
-
+        if (Objects.equals(order.getStatus(), OrderStatus.CANCELLED.getCode())) {
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "该订单已被取消");
-
         }
-
-        if (!Objects.equals(order.getStatus(), 1)) {
-
+        if (!Objects.equals(order.getStatus(), OrderStatus.PENDING.getCode())) {
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "订单状态不支持生成提货二维码");
-
         }
-
-
 
         long now = System.currentTimeMillis();
-
         int validSeconds = mallPickupProperties.getValidSeconds();
-
         String token = pickupTokenService.generateToken(order.getOrderNo(), order.getPickupCode(), now);
-
         String qrCodeBase64 = QrCodeUtil.generateQrCodeBase64(token, 300, 300);
-
-
 
         LocalDateTime expireTime = LocalDateTime.now().plusSeconds(validSeconds);
 
-
-
         Gift gift = giftMapper.selectById(order.getGiftId());
-
         String giftName = gift != null ? gift.getName() : "兑换礼品";
 
-
-
         return GiftPickupQrCodeVO.builder()
-
                 .orderId(order.getId())
-
                 .orderNo(order.getOrderNo())
-
                 .giftName(giftName)
-
                 .pickupCode(order.getPickupCode())
-
                 .pickupToken(token)
-
                 .qrCodeBase64(qrCodeBase64)
-
                 .expireTime(expireTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")))
-
                 .validSeconds(validSeconds)
-
                 .build();
-
     }
 
-
-
     @Override
-
     @Transactional(rollbackFor = Exception.class)
-
     public PickupVerifyResultVO verifyAndDeliverByQrCode(PickupQrVerifyDTO dto, Long adminId) {
-
         if (dto == null || !StringUtils.hasText(dto.getQrToken())) {
-
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "提货二维码内容不能为空");
-
         }
-
-
 
         // 1. 解码并校验动态防伪 Token（HMAC-SHA256 与有效时长校验）
-
         PickupTokenService.PickupTokenPayload payload = pickupTokenService.verifyAndParseToken(dto.getQrToken());
 
-
-
         // 2. 根据订单号查询订单实体
-
         StudentGift order = this.baseMapper.selectOne(new LambdaQueryWrapper<StudentGift>()
-
                 .eq(StudentGift::getOrderNo, payload.getOrderNo())
-
                 .eq(StudentGift::getDeleted, 0));
-
         if (order == null) {
-
             throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "提货订单不存在");
-
         }
-
-
 
         // 3. 校验订单状态
-
-        if (!Objects.equals(order.getStatus(), 1)) {
-
-            if (Objects.equals(order.getStatus(), 2)) {
-
+        if (!Objects.equals(order.getStatus(), OrderStatus.PENDING.getCode())) {
+            if (Objects.equals(order.getStatus(), OrderStatus.DELIVERED.getCode())) {
                 throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "该订单已完成核销，请勿重复操作");
-
             }
-
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "该订单状态不是待核销状态，不可提货");
-
         }
-
-
 
         // 4. 校验提货码是否匹配
-
         String cleanInput = payload.getPickupCode().replaceAll("[\\s-]", "").toUpperCase();
-
         String cleanTarget = order.getPickupCode().replaceAll("[\\s-]", "").toUpperCase();
-
         if (!cleanInput.equals(cleanTarget)) {
-
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "提货码核销校验不匹配，核销失败！");
-
         }
 
-
-
         // 5. 状态守卫原子更新（status 1 -> 2）
-
         LocalDateTime deliveryTime = LocalDateTime.now();
-
-        int changed = this.baseMapper.confirmDeliveryWithStatusGuard(order.getId(), 1, deliveryTime,
-
+        int changed = this.baseMapper.confirmDeliveryWithStatusGuard(order.getId(), OrderStatus.PENDING.getCode(), deliveryTime,
                 adminId, StringUtils.hasText(dto.getRemark()) ? dto.getRemark() : "扫码枪秒级核销");
 
         if (changed == 0) {
@@ -1834,37 +1643,21 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
 
 
         // 4. 学生状态校验
-
         Student student = studentMapper.selectById(studentId);
-
         if (student == null) {
-
             throw new BusinessException("学生学籍档案不存在");
-
         }
-
-        if (student.getStatus() != null && student.getStatus() == 0) {
-
+        if (student.getStatus() != null && student.getStatus() == StudentStatus.DISABLED.getCode()) {
             throw new BusinessException("您的学籍账号已被系统冻结，暂不可参与商城兑换！");
-
         }
-
-
 
         // 5. 礼品校验 (走缓存或查库)
-
         Gift gift = giftCacheService != null ? giftCacheService.getGiftDetail(dto.getGiftId()) : giftMapper.selectById(dto.getGiftId());
-
         if (gift == null || (gift.getDeleted() != null && gift.getDeleted() == 1)) {
-
             throw new BusinessException("您选择的礼品不存在");
-
         }
-
-        if (gift.getStatus() == null || gift.getStatus() != 1) {
-
+        if (gift.getStatus() == null || gift.getStatus() != GiftStatus.ON_SHELF.getCode()) {
             throw new BusinessException("该礼品已暂时下架");
-
         }
 
 
@@ -2032,121 +1825,63 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
 
 
         Student student = studentMapper.selectById(msg.studentId());
-
-        if (student == null || (student.getStatus() != null && student.getStatus() == 0)) {
-
+        if (student == null || (student.getStatus() != null && student.getStatus() == StudentStatus.DISABLED.getCode())) {
             log.warn("[异步落库] 学生账号异常或冻结: studentId={}", msg.studentId());
-
             return false;
-
         }
-
-
 
         Gift gift = giftMapper.selectById(msg.giftId());
-
         if (gift == null || (gift.getDeleted() != null && gift.getDeleted() == 1)) {
-
             log.warn("[异步落库] 礼品不存在: giftId={}", msg.giftId());
-
             return false;
-
         }
-
-
 
         int totalPointsCost = gift.getPointsRequired() * msg.quantity();
-
         int currentBalance = student.getCurrentPoints() != null ? student.getCurrentPoints() : 0;
-
         if (currentBalance < totalPointsCost) {
-
             log.warn("[异步落库] 可用积分不足: currentBalance={}, cost={}", currentBalance, totalPointsCost);
-
             return false;
-
         }
-
-
 
         // 条件乐观锁扣减 MySQL 库存 (重试 3 次)
-
         int updatedStock = 0;
-
         for (int attempt = 0; attempt < 3; attempt++) {
-
             updatedStock = giftMapper.reduceStockWithOptimisticLock(gift.getId(), msg.quantity(), gift.getVersion());
-
             if (updatedStock > 0) break;
-
             gift = giftMapper.selectById(msg.giftId());
-
             if (gift == null || gift.getStock() < msg.quantity()) break;
-
         }
-
-
 
         if (updatedStock == 0) {
-
             log.warn("[异步落库] 乐观锁更新数据库库存失败: giftId={}", msg.giftId());
-
             return false;
-
         }
-
-
 
         int updatedPoints = studentMapper.deductCurrentPoints(student.getId(), totalPointsCost);
-
         if (updatedPoints == 0) {
-
             throw new BusinessException("可用积分扣减失败，余额不足");
-
         }
-
         int afterPoints = studentMapper.selectCurrentPoints(student.getId());
 
-
-
         String pickupCode = generateUniquePickupCode();
-
         StudentGift order = new StudentGift();
-
         order.setOrderNo(generateOrderNo());
-
         order.setStudentId(msg.studentId());
-
         order.setGiftId(gift.getId());
-
         order.setQuantity(msg.quantity());
-
         order.setPointsCost(totalPointsCost);
-
         order.setRequestId(msg.requestId());
-
         order.setReceiverName(msg.receiverName());
-
         order.setReceiverPhone(msg.receiverPhone());
-
         order.setReceiverAddress(msg.receiverAddress());
-
         order.setPickupCode(pickupCode);
-
-        order.setStatus(1); // 1-待发放
-
+        order.setStatus(OrderStatus.PENDING);
         order.setRefundPointsStatus(0);
-
         this.save(order);
 
-
-
         pointLedger.record(
-
                 student.getId(),
-
-                2,
-
+                com.campus.modules.mall.entity.PointRecordType.GIFT_EXCHANGE.getCode(),
                 -totalPointsCost,
 
                 afterPoints,

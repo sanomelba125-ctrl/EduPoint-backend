@@ -11,6 +11,10 @@ import com.campus.common.result.ResultCode;
 import com.campus.config.RabbitMqConfig;
 import com.campus.modules.activity.dto.*;
 import com.campus.modules.activity.entity.*;
+import com.campus.modules.activity.enums.ActivityStatus;
+import com.campus.modules.activity.enums.ActivityWaitlistStatus;
+import com.campus.modules.activity.enums.StudentActivityStatus;
+import com.campus.modules.certificate.enums.CertificateStatus;
 import com.campus.modules.activity.mapper.*;
 import com.campus.modules.activity.service.StudentActivityService;
 import com.campus.modules.activity.service.ActivityCacheService;
@@ -121,12 +125,12 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
     public ActivitySignupVO signup(ActivitySignupDTO dto) {
         Long sid = currentStudentId();
         Long aid = dto.getActivityId();
-        return withLock("activity:signup:" + aid, () -> transactionTemplate.execute(status -> {
+        return withLock("student:signup:" + sid, () -> transactionTemplate.execute(status -> {
             Activity a = activityMapper.selectById(aid);
             if (a == null || Objects.equals(a.getDeleted(), 1)) {
                 throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "活动不存在");
             }
-            if (a.getStatus() == null || (a.getStatus() != 0 && a.getStatus() != 1)) {
+            if (a.getStatus() == null || (a.getStatus() != ActivityStatus.NOT_STARTED.getCode() && a.getStatus() != ActivityStatus.IN_PROGRESS.getCode())) {
                 throw new BusinessException(ResultCode.ACTIVITY_EXPIRED.getCode(), "活动未开始或已结束");
             }
 
@@ -150,13 +154,13 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             StudentActivity old = getOne(new LambdaQueryWrapper<StudentActivity>()
                     .eq(StudentActivity::getStudentId, sid)
                     .eq(StudentActivity::getActivityId, aid), false);
-            if (old != null && old.getStatus() != 3) {
+            if (old != null && old.getStatus() != StudentActivityStatus.CANCELLED.getCode()) {
                 throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "您已报名该活动");
             }
             ActivityWaitlist waiting = waitlistMapper.selectOne(new LambdaQueryWrapper<ActivityWaitlist>()
                     .eq(ActivityWaitlist::getStudentId, sid)
                     .eq(ActivityWaitlist::getActivityId, aid));
-            if (waiting != null && Objects.equals(waiting.getStatus(), 1)) {
+            if (waiting != null && Objects.equals(waiting.getStatus(), ActivityWaitlistStatus.WAITING.getCode())) {
                 throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "您已在候补队列中");
             }
             int reserved = reserveParticipant(a);
@@ -165,7 +169,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                 rec.setStudentId(sid);
                 rec.setActivityId(aid);
                 rec.setSignupTime(LocalDateTime.now());
-                rec.setStatus(1);
+                rec.setStatus(StudentActivityStatus.REGISTERED);
                 rec.setPointsAwarded(0);
                 rec.setDeleted(0);
                 if (rec.getId() == null) {
@@ -185,7 +189,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                 try {
                     List<ActivityWaitlist> activeWaitlists = waitlistMapper.selectList(new LambdaQueryWrapper<ActivityWaitlist>()
                             .eq(ActivityWaitlist::getActivityId, aid)
-                            .eq(ActivityWaitlist::getStatus, 1)
+                            .eq(ActivityWaitlist::getStatus, ActivityWaitlistStatus.WAITING.getCode())
                             .eq(ActivityWaitlist::getDeleted, 0));
                     if (activeWaitlists != null && !activeWaitlists.isEmpty()) {
                         max = activeWaitlists.stream()
@@ -204,7 +208,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             w.setActivityId(aid);
             w.setStudentId(sid);
             w.setQueueNumber(max + 1);
-            w.setStatus(1);
+            w.setStatus(ActivityWaitlistStatus.WAITING);
             w.setWaitTime(LocalDateTime.now());
             w.setPromotedTime(null);
             w.setDeleted(0);
@@ -217,7 +221,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             // 动态计算当前排位顺位
             Long currentRank = waitlistMapper.selectCount(new LambdaQueryWrapper<ActivityWaitlist>()
                     .eq(ActivityWaitlist::getActivityId, aid)
-                    .eq(ActivityWaitlist::getStatus, 1)
+                    .eq(ActivityWaitlist::getStatus, ActivityWaitlistStatus.WAITING.getCode())
                     .eq(ActivityWaitlist::getDeleted, 0)
                     .le(ActivityWaitlist::getQueueNumber, w.getQueueNumber()));
             int rank = currentRank != null && currentRank > 0 ? currentRank.intValue() : 1;
@@ -234,21 +238,23 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
     @Override
     public String cancelSignup(Long activityId) {
         Long sid = currentStudentId();
-        return withLock("activity:signup:" + activityId, () -> transactionTemplate.execute(status -> {
+        return withLock("student:signup:" + sid, () -> transactionTemplate.execute(status -> {
             StudentActivity rec = getOne(new LambdaQueryWrapper<StudentActivity>()
                     .eq(StudentActivity::getStudentId, sid)
                     .eq(StudentActivity::getActivityId, activityId)
-                    .eq(StudentActivity::getStatus, 1));
+                    .eq(StudentActivity::getStatus, StudentActivityStatus.REGISTERED.getCode()));
             if (rec != null) {
                 // P2-10: 活动取消时效前置守卫，活动已开始或已结束严禁取消报名，杜绝跨时空转正已结束活动
                 Activity a = activityMapper.selectById(activityId);
                 if (a != null) {
                     LocalDateTime now = LocalDateTime.now();
-                    if ((a.getStartTime() != null && now.isAfter(a.getStartTime())) || Objects.equals(a.getStatus(), 2) || Objects.equals(a.getStatus(), 3)) {
+                    if ((a.getStartTime() != null && now.isAfter(a.getStartTime()))
+                            || Objects.equals(a.getStatus(), ActivityStatus.ENDED.getCode())
+                            || Objects.equals(a.getStatus(), ActivityStatus.CLOSED.getCode())) {
                         throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "活动已开始或已结束，无法取消报名");
                     }
                 }
-                rec.setStatus(3);
+                rec.setStatus(StudentActivityStatus.CANCELLED);
                 updateById(rec);
                 activityMapper.decrementParticipant(activityId);
                 promote(activityId);
@@ -258,10 +264,10 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             ActivityWaitlist w = waitlistMapper.selectOne(new LambdaQueryWrapper<ActivityWaitlist>()
                     .eq(ActivityWaitlist::getStudentId, sid)
                     .eq(ActivityWaitlist::getActivityId, activityId)
-                    .eq(ActivityWaitlist::getStatus, 1)
+                    .eq(ActivityWaitlist::getStatus, ActivityWaitlistStatus.WAITING.getCode())
                     .eq(ActivityWaitlist::getDeleted, 0));
             if (w != null) {
-                w.setStatus(3);
+                w.setStatus(ActivityWaitlistStatus.CANCELLED);
                 waitlistMapper.updateById(w);
                 refreshActivityCacheAfterCommit(activityId);
                 return "已退出候补队列";
@@ -271,73 +277,76 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
     }
 
     private void promote(Long aid) {
-        ActivityWaitlist w = waitlistMapper.selectOne(new LambdaQueryWrapper<ActivityWaitlist>()
-                .eq(ActivityWaitlist::getActivityId, aid)
-                .eq(ActivityWaitlist::getStatus, 1)
-                .orderByAsc(ActivityWaitlist::getQueueNumber)
-                .last("LIMIT 1"));
-        Activity activity = activityMapper.selectById(aid);
-        if (w == null || activity == null || reserveParticipant(activity) == 0) {
-            return;
-        }
+        withLock("activity:waitlist:promote:" + aid, () -> {
+            ActivityWaitlist w = waitlistMapper.selectOne(new LambdaQueryWrapper<ActivityWaitlist>()
+                    .eq(ActivityWaitlist::getActivityId, aid)
+                    .eq(ActivityWaitlist::getStatus, ActivityWaitlistStatus.WAITING.getCode())
+                    .orderByAsc(ActivityWaitlist::getQueueNumber)
+                    .last("LIMIT 1"));
+            Activity activity = activityMapper.selectById(aid);
+            if (w == null || activity == null || reserveParticipant(activity) == 0) {
+                return null;
+            }
 
-        // P2-11: 候补转正时进行时间冲突防重叠校验，若学生在此期间已报名其他冲突活动，自动跳过并顺延递补
-        if (activity.getStartTime() != null && activity.getEndTime() != null) {
-            List<Activity> enrolled = baseMapper.selectActiveEnrolledActivities(w.getStudentId(), aid);
-            boolean hasConflict = false;
-            if (enrolled != null) {
-                for (Activity other : enrolled) {
-                    if (other.getStartTime() != null && other.getEndTime() != null) {
-                        if (activity.getStartTime().isBefore(other.getEndTime()) && activity.getEndTime().isAfter(other.getStartTime())) {
-                            hasConflict = true;
-                            break;
+            // P2-11: 候补转正时进行时间冲突防重叠校验，若学生在此期间已报名其他冲突活动，自动跳过并顺延递补
+            if (activity.getStartTime() != null && activity.getEndTime() != null) {
+                List<Activity> enrolled = baseMapper.selectActiveEnrolledActivities(w.getStudentId(), aid);
+                boolean hasConflict = false;
+                if (enrolled != null) {
+                    for (Activity other : enrolled) {
+                        if (other.getStartTime() != null && other.getEndTime() != null) {
+                            if (activity.getStartTime().isBefore(other.getEndTime()) && activity.getEndTime().isAfter(other.getStartTime())) {
+                                hasConflict = true;
+                                break;
+                            }
                         }
                     }
                 }
-            }
-            if (hasConflict) {
-                log.info("候补转正检测到时间重叠冲突，自动跳过该候选人并顺延递补: studentId={}, activityId={}", w.getStudentId(), aid);
-                w.setStatus(3);
-                waitlistMapper.updateById(w);
-                promote(aid);
-                return;
-            }
-        }
-
-        StudentActivity rec = getOne(new LambdaQueryWrapper<StudentActivity>()
-                .eq(StudentActivity::getStudentId, w.getStudentId())
-                .eq(StudentActivity::getActivityId, aid), false);
-        if (rec == null) {
-            rec = new StudentActivity();
-        }
-        rec.setStudentId(w.getStudentId());
-        rec.setActivityId(aid);
-        rec.setSignupTime(LocalDateTime.now());
-        rec.setStatus(1);
-        rec.setPointsAwarded(0);
-        rec.setDeleted(0);
-        if (rec.getId() == null) {
-            save(rec);
-        } else {
-            updateById(rec);
-        }
-        w.setStatus(2);
-        w.setPromotedTime(LocalDateTime.now());
-        waitlistMapper.updateById(w);
-
-        // P2-10: 候补转正即时触达闭环，事务提交后触发系统通知与 WebSocket 强提醒
-        final Long promotedStudentId = w.getStudentId();
-        final String actTitle = activity.getTitle();
-        if (TransactionSynchronizationManager.isActualTransactionActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    notifyWaitlistPromoted(promotedStudentId, aid, actTitle);
+                if (hasConflict) {
+                    log.info("候补转正检测到时间重叠冲突，自动跳过该候选人并顺延递补: studentId={}, activityId={}", w.getStudentId(), aid);
+                    w.setStatus(ActivityWaitlistStatus.CANCELLED);
+                    waitlistMapper.updateById(w);
+                    promote(aid);
+                    return null;
                 }
-            });
-        } else {
-            notifyWaitlistPromoted(promotedStudentId, aid, actTitle);
-        }
+            }
+
+            StudentActivity rec = getOne(new LambdaQueryWrapper<StudentActivity>()
+                    .eq(StudentActivity::getStudentId, w.getStudentId())
+                    .eq(StudentActivity::getActivityId, aid), false);
+            if (rec == null) {
+                rec = new StudentActivity();
+            }
+            rec.setStudentId(w.getStudentId());
+            rec.setActivityId(aid);
+            rec.setSignupTime(LocalDateTime.now());
+            rec.setStatus(StudentActivityStatus.REGISTERED);
+            rec.setPointsAwarded(0);
+            rec.setDeleted(0);
+            if (rec.getId() == null) {
+                save(rec);
+            } else {
+                updateById(rec);
+            }
+            w.setStatus(ActivityWaitlistStatus.PROMOTED);
+            w.setPromotedTime(LocalDateTime.now());
+            waitlistMapper.updateById(w);
+
+            // P2-10: 候补转正即时触达闭环，事务提交后触发系统通知与 WebSocket 强提醒
+            final Long promotedStudentId = w.getStudentId();
+            final String actTitle = activity.getTitle();
+            if (TransactionSynchronizationManager.isActualTransactionActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        notifyWaitlistPromoted(promotedStudentId, aid, actTitle);
+                    }
+                });
+            } else {
+                notifyWaitlistPromoted(promotedStudentId, aid, actTitle);
+            }
+            return null;
+        });
     }
 
     private void notifyWaitlistPromoted(Long studentId, Long activityId, String activityTitle) {
@@ -357,7 +366,8 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
     public ActivityCheckinVO checkin(ActivityCheckinDTO dto) {
         Long sid = currentStudentId();
         Long aid = dto.getActivityId();
-        return withLock("activity:checkin:" + aid, () -> withLock("student:points:" + sid, () -> transactionTemplate.execute(status -> {
+        // P1-7: 细化锁粒度至学生打卡维度 student:checkin:{sid}:{aid}，彻底拆解双重嵌套锁与活动级全局串行化阻断
+        return withLock("student:checkin:" + sid + ":" + aid, () -> transactionTemplate.execute(status -> {
             CheckinContext context = CheckinContext.builder()
                     .studentId(sid)
                     .dto(dto)
@@ -370,7 +380,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
 
             int points = a.getPoints() == null ? 0 : a.getPoints();
             LocalDateTime now = LocalDateTime.now();
-            rec.setStatus(2);
+            rec.setStatus(StudentActivityStatus.COMPLETED);
             rec.setCheckinTime(now);
             rec.setCheckinLatitude(dto.getCheckinLatitude());
             rec.setCheckinLongitude(dto.getCheckinLongitude());
@@ -399,7 +409,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                 c.setTitle(a.getCertificateTitle());
                 c.setIssuer(a.getCertificateIssuer());
                 c.setIssueTime(now);
-                c.setStatus(1);
+                c.setStatus(CertificateStatus.VALID);
                 c.setVerifyCount(0);
                 c.setDeleted(0);
                 certificateService.save(c);
@@ -433,7 +443,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                     .certificateIssued(issued)
                     .checkinTime(now)
                     .build();
-        })));
+        }));
     }
 
 
@@ -456,7 +466,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
         if (status == null || status == 4) {
             waitlists = waitlistMapper.selectList(new LambdaQueryWrapper<ActivityWaitlist>()
                     .eq(ActivityWaitlist::getStudentId, studentId)
-                    .eq(ActivityWaitlist::getStatus, 1)
+                    .eq(ActivityWaitlist::getStatus, ActivityWaitlistStatus.WAITING.getCode())
                     .eq(ActivityWaitlist::getDeleted, 0)
                     .orderByDesc(ActivityWaitlist::getWaitTime));
         }
@@ -616,13 +626,20 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             }
             Activity refreshed = activityMapper.selectById(candidate.getId());
             if (refreshed == null || !Objects.equals(refreshed.getDeleted(), 0)
-                    || (!Objects.equals(refreshed.getStatus(), 0) && !Objects.equals(refreshed.getStatus(), 1))) {
+                    || (!Objects.equals(refreshed.getStatus(), ActivityStatus.NOT_STARTED.getCode())
+                    && !Objects.equals(refreshed.getStatus(), ActivityStatus.IN_PROGRESS.getCode()))) {
                 return 0;
             }
             if (Objects.equals(refreshed.getVersion(), candidate.getVersion())) {
                 return 0;
             }
             candidate = refreshed;
+            try {
+                Thread.sleep(50L * (attempt + 1));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
         }
         throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "报名人数更新冲突，请重试");
     }

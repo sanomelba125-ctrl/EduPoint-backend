@@ -32,11 +32,12 @@ public class ActivityStatusCheckinHandler extends AbstractCheckinHandler {
             activity = activityMapper.selectById(activityId);
             context.setActivity(activity);
         }
-        if (activity == null || Objects.equals(activity.getDeleted(), 1) || Objects.equals(activity.getStatus(), 3)) {
+        if (activity == null || Objects.equals(activity.getDeleted(), 1)
+                || Objects.equals(activity.getStatus(), com.campus.modules.activity.enums.ActivityStatus.CLOSED.getCode())) {
             throw new BusinessException(ResultCode.ACTIVITY_EXPIRED.getCode(), "活动不存在或已关闭");
         }
 
-        boolean isOngoing = Objects.equals(activity.getStatus(), 1);
+        boolean isOngoing = Objects.equals(activity.getStatus(), com.campus.modules.activity.enums.ActivityStatus.IN_PROGRESS.getCode());
         // 实时时间窗口补偿：若活动已进入有效开场时间但定时任务尚未轮询到，允许学生即时扫码打卡
         if (!isOngoing && activity.getStartTime() != null && activity.getEndTime() != null) {
             LocalDateTime now = LocalDateTime.now();

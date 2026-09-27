@@ -116,4 +116,16 @@ public class Activity {
     /** 当前登录学生的候补序号，不落库。 */
     @TableField(exist = false)
     private Integer myQueueNumber;
+
+    public com.campus.modules.activity.enums.ActivityStatus getStatusEnum() {
+        return com.campus.modules.activity.enums.ActivityStatus.of(this.status);
+    }
+
+    public void setStatus(Integer status) {
+        this.status = status;
+    }
+
+    public void setStatus(com.campus.modules.activity.enums.ActivityStatus status) {
+        this.status = status != null ? status.getCode() : null;
+    }
 }

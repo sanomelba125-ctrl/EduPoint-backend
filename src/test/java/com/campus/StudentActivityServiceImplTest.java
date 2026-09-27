@@ -586,9 +586,8 @@ class StudentActivityServiceImplTest {
 
         service.checkin(checkinRequest(ACTIVITY_ID, NONCE, SIGN, null, null));
 
-        verify(redissonClient).getLock("activity:checkin:" + ACTIVITY_ID);
-        verify(redissonClient).getLock("student:points:" + STUDENT_ID);
-        verify(lock, times(2)).unlock();
+        verify(redissonClient).getLock("student:checkin:" + STUDENT_ID + ":" + ACTIVITY_ID);
+        verify(lock, times(1)).unlock();
     }
 
     // ────────────────────────── 打卡：校验链失败分支 ──────────────────────────

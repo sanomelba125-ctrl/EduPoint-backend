@@ -77,4 +77,16 @@ public class StudentGift {
 
     /** 逻辑删除标记 */
     private Integer deleted;
+
+    public com.campus.modules.mall.enums.OrderStatus getStatusEnum() {
+        return com.campus.modules.mall.enums.OrderStatus.of(this.status);
+    }
+
+    public void setStatus(Integer status) {
+        this.status = status;
+    }
+
+    public void setStatus(com.campus.modules.mall.enums.OrderStatus status) {
+        this.status = status != null ? status.getCode() : null;
+    }
 }

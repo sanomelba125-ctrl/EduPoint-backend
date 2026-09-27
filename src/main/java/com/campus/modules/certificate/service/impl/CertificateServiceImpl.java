@@ -11,6 +11,7 @@ import com.campus.modules.certificate.dto.CertificateMetricsVO;
 import com.campus.modules.certificate.dto.CertificateMyVO;
 import com.campus.modules.certificate.dto.CertificateVerifyVO;
 import com.campus.modules.certificate.entity.Certificate;
+import com.campus.modules.certificate.enums.CertificateStatus;
 import com.campus.modules.certificate.mapper.CertificateMapper;
 import com.campus.modules.certificate.service.CertificateService;
 import org.springframework.stereotype.Service;
@@ -48,16 +49,16 @@ public class CertificateServiceImpl extends ServiceImpl<CertificateMapper, Certi
             throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "证书不存在");
         }
         // 仅将有效证书的文件地址暴露给公众；撤销/过期证书不允许下载。
-        if (result.getStatus() == null || result.getStatus() < 1 || result.getStatus() > 3) {
-            result.setStatus(3);
+        if (result.getStatus() == null || result.getStatus() < CertificateStatus.VALID.getCode() || result.getStatus() > CertificateStatus.EXPIRED.getCode()) {
+            result.setStatus(CertificateStatus.EXPIRED.getCode());
         }
         // 验真接口保持公开，但只返回脱敏姓名；撤销/过期证书禁止下载文件。
-        if (result.getStatus() != null && result.getStatus() == 1) {
+        if (result.getStatus() != null && result.getStatus() == CertificateStatus.VALID.getCode()) {
             result.setStatusText("有效");
             if (result.getFileUrl() == null || result.getFileUrl().isBlank()) {
                 result.setFileUrl("/api/certificate/file/" + result.getCertificateNo() + ".png");
             }
-        } else if (result.getStatus() != null && result.getStatus() == 2) {
+        } else if (result.getStatus() != null && result.getStatus() == CertificateStatus.REVOKED.getCode()) {
             result.setStatusText("已作废撤销");
             result.setFileUrl(null);
         } else {
@@ -95,10 +96,10 @@ public class CertificateServiceImpl extends ServiceImpl<CertificateMapper, Certi
         }
         Certificate certificate = getById(id);
         if (certificate == null) throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "证书不存在");
-        if (!Integer.valueOf(1).equals(certificate.getStatus())) {
+        if (!Integer.valueOf(CertificateStatus.VALID.getCode()).equals(certificate.getStatus())) {
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "仅有效证书可以撤销");
         }
-        certificate.setStatus(2);
+        certificate.setStatus(CertificateStatus.REVOKED);
         certificate.setRevokeReason(revokeReason.trim());
         certificate.setRevokedBy(adminId);
         certificate.setRevokedTime(LocalDateTime.now());

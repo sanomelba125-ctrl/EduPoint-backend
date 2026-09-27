@@ -104,4 +104,8 @@ knife4j:
   setting:
     language: zh_cn
 
+# MyBatis-Plus 通用枚举扫描包配置 (P5-4)
+mybatis-plus:
+  type-enums-package: com.campus.modules.activity.enums,com.campus.modules.mall.enums,com.campus.modules.certificate.enums,com.campus.modules.student.enums
+
 

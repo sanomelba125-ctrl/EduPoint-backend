@@ -65,4 +65,16 @@ public class Certificate {
 
     /** 逻辑删除标记 */
     private Integer deleted;
+
+    public com.campus.modules.certificate.enums.CertificateStatus getStatusEnum() {
+        return com.campus.modules.certificate.enums.CertificateStatus.of(this.status);
+    }
+
+    public void setStatus(Integer status) {
+        this.status = status;
+    }
+
+    public void setStatus(com.campus.modules.certificate.enums.CertificateStatus status) {
+        this.status = status != null ? status.getCode() : null;
+    }
 }

@@ -10,6 +10,7 @@ import com.campus.modules.mall.dto.GiftUpdateDTO;
 import com.campus.modules.mall.dto.GiftVO;
 import com.campus.modules.mall.entity.Gift;
 import com.campus.modules.mall.entity.StudentGift;
+import com.campus.modules.mall.enums.GiftStatus;
 import com.campus.modules.mall.mapper.GiftMapper;
 import com.campus.modules.mall.mapper.StudentGiftMapper;
 import lombok.RequiredArgsConstructor;
@@ -90,7 +91,7 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
         BeanUtils.copyProperties(createDTO, gift);
         gift.setStock(createDTO.getTotalStock());
         gift.setVersion(0);
-        gift.setStatus(createDTO.getStatus() != null ? createDTO.getStatus() : 1);
+        gift.setStatus(createDTO.getStatus() != null ? createDTO.getStatus() : GiftStatus.ON_SHELF.getCode());
         gift.setCreatedBy(adminId);
 
         this.save(gift);
@@ -212,7 +213,7 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
 
         if (orderCount != null && orderCount > 0) {
             // 已有兑换记录，严禁物理删除，降级为自动下架（正常提交事务，严禁抛出异常以避免触发事务回滚）
-            gift.setStatus(0);
+            gift.setStatus(GiftStatus.OFF_SHELF.getCode());
             if (gift.getVersion() == null) {
                 gift.setVersion(0);
             }
@@ -220,7 +221,7 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
             if (!updated) {
                 // 兜底强制更新货架状态（绕过乐观锁版本检查，确保管理员意志落地）
                 this.update(new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Gift>()
-                        .set(Gift::getStatus, 0)
+                        .set(Gift::getStatus, GiftStatus.OFF_SHELF.getCode())
                         .eq(Gift::getId, id));
             }
             log.warn("礼品存在历史兑换订单，不可物理删除，已自动降级为下架状态: giftId={}, orderCount={}", id, orderCount);

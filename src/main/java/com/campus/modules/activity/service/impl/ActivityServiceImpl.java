@@ -89,7 +89,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
             throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "活动不存在");
         }
         copy(dto, activity);
-        if (!Objects.equals(activity.getStatus(), 3)) {
+        if (!Objects.equals(activity.getStatus(), com.campus.modules.activity.enums.ActivityStatus.CLOSED.getCode())) {
             activity.setStatus(resolveStatus(dto.getStartTime(), dto.getEndTime()));
         }
         activity.setUpdatedBy(adminId);
@@ -105,7 +105,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
         if (activity == null || Objects.equals(activity.getDeleted(), 1)) {
             throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "活动不存在");
         }
-        activity.setStatus(3);
+        activity.setStatus(com.campus.modules.activity.enums.ActivityStatus.CLOSED);
         activity.setUpdatedBy(adminId);
         updateById(activity);
         activityCacheService.evict(activity.getId());
@@ -207,7 +207,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
             }
             StudentActivity record = enrolledMap.get(activity.getId());
             if (record != null) {
-                activity.setMyEnrollmentStatus(record.getStatus() != null && record.getStatus() == 2 ? "COMPLETED" : "ENROLLED");
+                activity.setMyEnrollmentStatus(record.getStatus() != null && record.getStatus() == com.campus.modules.activity.enums.StudentActivityStatus.COMPLETED.getCode() ? "COMPLETED" : "ENROLLED");
                 continue;
             }
             ActivityWaitlist waitlist = waitlistMap.get(activity.getId());
@@ -216,7 +216,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
                 // 动态计算当前实际有效排位顺位
                 Long rank = activityWaitlistMapper.selectCount(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ActivityWaitlist>()
                         .eq(ActivityWaitlist::getActivityId, activity.getId())
-                        .eq(ActivityWaitlist::getStatus, 1)
+                        .eq(ActivityWaitlist::getStatus, com.campus.modules.activity.enums.ActivityWaitlistStatus.WAITING.getCode())
                         .eq(ActivityWaitlist::getDeleted, 0)
                         .le(ActivityWaitlist::getQueueNumber, waitlist.getQueueNumber()));
                 activity.setMyQueueNumber(rank != null && rank > 0 ? rank.intValue() : 1);
@@ -243,7 +243,8 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
         if (activity == null || Objects.equals(activity.getDeleted(), 1)) {
             throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "活动不存在");
         }
-        if (Objects.equals(activity.getStatus(), 2) || Objects.equals(activity.getStatus(), 3)) {
+        if (Objects.equals(activity.getStatus(), com.campus.modules.activity.enums.ActivityStatus.ENDED.getCode())
+                || Objects.equals(activity.getStatus(), com.campus.modules.activity.enums.ActivityStatus.CLOSED.getCode())) {
             throw new BusinessException(ResultCode.ACTIVITY_EXPIRED.getCode(), "已结束或已归档的活动不能生成签到码");
         }
 
@@ -336,11 +337,11 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
         }
     }
 
-    private Integer resolveStatus(LocalDateTime start, LocalDateTime end) {
+    private com.campus.modules.activity.enums.ActivityStatus resolveStatus(LocalDateTime start, LocalDateTime end) {
         LocalDateTime now = LocalDateTime.now();
-        if (now.isBefore(start)) return 0;
-        if (now.isAfter(end)) return 2;
-        return 1;
+        if (now.isBefore(start)) return com.campus.modules.activity.enums.ActivityStatus.NOT_STARTED;
+        if (now.isAfter(end)) return com.campus.modules.activity.enums.ActivityStatus.ENDED;
+        return com.campus.modules.activity.enums.ActivityStatus.IN_PROGRESS;
     }
 
     private void copy(ActivitySaveDTO dto, Activity activity) {

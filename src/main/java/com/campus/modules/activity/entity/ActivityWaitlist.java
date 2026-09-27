@@ -44,4 +44,16 @@ public class ActivityWaitlist {
 
     /** 逻辑删除标记 */
     private Integer deleted;
+
+    public com.campus.modules.activity.enums.ActivityWaitlistStatus getStatusEnum() {
+        return com.campus.modules.activity.enums.ActivityWaitlistStatus.of(this.status);
+    }
+
+    public void setStatus(Integer status) {
+        this.status = status;
+    }
+
+    public void setStatus(com.campus.modules.activity.enums.ActivityWaitlistStatus status) {
+        this.status = status != null ? status.getCode() : null;
+    }
 }

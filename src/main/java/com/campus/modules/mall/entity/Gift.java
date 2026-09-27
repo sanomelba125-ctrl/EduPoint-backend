@@ -74,4 +74,16 @@ public class Gift {
 
     /** 逻辑删除标记: 0-正常 1-已删除 */
     private Integer deleted;
+
+    public com.campus.modules.mall.enums.GiftStatus getStatusEnum() {
+        return com.campus.modules.mall.enums.GiftStatus.of(this.status);
+    }
+
+    public void setStatus(Integer status) {
+        this.status = status;
+    }
+
+    public void setStatus(com.campus.modules.mall.enums.GiftStatus status) {
+        this.status = status != null ? status.getCode() : null;
+    }
 }

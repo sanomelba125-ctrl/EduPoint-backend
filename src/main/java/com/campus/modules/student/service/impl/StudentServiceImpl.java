@@ -11,6 +11,7 @@ import com.campus.common.result.ResultCode;
 import com.campus.common.util.PasswordUtil;
 import com.campus.modules.student.dto.*;
 import com.campus.modules.student.entity.Student;
+import com.campus.modules.student.enums.StudentStatus;
 import com.campus.modules.student.mapper.StudentMapper;
 import com.campus.modules.student.service.StudentService;
 import org.slf4j.Logger;
@@ -50,7 +51,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
         }
 
         // 3. 校验账号状态是否已冻结/禁用
-        if (student.getStatus() != null && student.getStatus() == 0) {
+        if (student.getStatus() != null && student.getStatus() == StudentStatus.DISABLED.getCode()) {
             log.warn("学生端登录失败: 账号 [{}] 已被禁用", loginDTO.getStudentNo());
             throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "账号已被冻结或禁用，请联系管理员");
         }
@@ -94,7 +95,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
     public StudentVO getCurrentStudentInfo() {
         Long studentId = AuthUtil.requireStudentId();
         Student student = getById(studentId);
-        if (student == null || (student.getStatus() != null && student.getStatus() == 0)) {
+        if (student == null || (student.getStatus() != null && student.getStatus() == StudentStatus.DISABLED.getCode())) {
             throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "学生账号不存在或已被禁用");
         }
 
@@ -105,7 +106,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
     public StudentVO updateProfile(StudentUpdateProfileDTO updateDTO) {
         Long studentId = AuthUtil.requireStudentId();
         Student student = getById(studentId);
-        if (student == null || (student.getStatus() != null && student.getStatus() == 0)) {
+        if (student == null || (student.getStatus() != null && student.getStatus() == StudentStatus.DISABLED.getCode())) {
             throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "学生账号不存在或已被禁用");
         }
 
@@ -155,7 +156,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
                         Student::getPassword, Student::getStatus)
                 .eq(Student::getId, studentId)
                 .one();
-        if (student == null || (student.getStatus() != null && student.getStatus() == 0)) {
+        if (student == null || (student.getStatus() != null && student.getStatus() == StudentStatus.DISABLED.getCode())) {
             throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "学生账号不存在或已被禁用");
         }
 
@@ -246,7 +247,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
         student.setAvatar(StringUtils.hasText(createDTO.getAvatar()) ? createDTO.getAvatar().trim() : null);
         student.setTotalPoints(0);
         student.setCurrentPoints(0);
-        student.setStatus(1); // 默认正常启用
+        student.setStatus(StudentStatus.NORMAL); // 默认正常启用
         student.setDeleted(0);
 
         save(student);
@@ -287,7 +288,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
         if (updateDTO.getStatus() != null) {
             student.setStatus(updateDTO.getStatus());
             // 若被管理员冻结，强踢学生下线
-            if (updateDTO.getStatus() == 0) {
+            if (updateDTO.getStatus() == StudentStatus.DISABLED.getCode()) {
                 StpUtil.kickout(STUDENT_LOGIN_PREFIX + student.getId());
             }
         }
