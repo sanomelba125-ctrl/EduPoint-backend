@@ -86,10 +86,7 @@ public class QueryActivitiesTool implements AiTool {
     @Override
     public String execute(Long studentId, JSONObject arguments) {
         if (studentId == null) {
-            JSONObject err = new JSONObject();
-            err.put("success", false);
-            err.put("error", "未检测到登录状态。查询个人活动与候补记录属于个人私有数据，请提醒学生先前往平台【个人中心】登录账号。");
-            return err.toJSONString();
+            return AiToolResults.error("未检测到登录状态。查询个人活动与候补记录属于个人私有数据，请提醒学生先前往平台【个人中心】登录账号。");
         }
 
         try {
@@ -176,16 +173,12 @@ public class QueryActivitiesTool implements AiTool {
             }
 
             JSONObject result = new JSONObject();
-            result.put("success", true);
             result.put("activities", list);
             result.put("returnedCount", list.size());
-            return result.toJSONString();
+            return AiToolResults.ok(result);
         } catch (Exception e) {
             log.error("执行 QueryActivitiesTool 异常: studentId={}", studentId, e);
-            JSONObject err = new JSONObject();
-            err.put("success", false);
-            err.put("error", "查询活动与候补记录服务出现异常: " + e.getMessage());
-            return err.toJSONString();
+            return AiToolResults.error("查询活动与候补记录服务出现异常: " + e.getMessage());
         }
     }
 

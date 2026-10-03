@@ -73,26 +73,9 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
     private final GiftIdempotentService giftIdempotentService;
     private final com.campus.common.metrics.CampusMetricsCollector campusMetricsCollector;
 
-    @Autowired(required = false)
-    private GiftStockRedisService giftStockRedisService;
-
-    @Autowired(required = false)
-    private LocalMessageService localMessageService;
-
-    @Autowired(required = false)
-    private GiftCacheService giftCacheService;
-
-    public void setGiftStockRedisService(GiftStockRedisService giftStockRedisService) {
-        this.giftStockRedisService = giftStockRedisService;
-    }
-
-    public void setLocalMessageService(LocalMessageService localMessageService) {
-        this.localMessageService = localMessageService;
-    }
-
-    public void setGiftCacheService(GiftCacheService giftCacheService) {
-        this.giftCacheService = giftCacheService;
-    }
+    private final GiftStockRedisService giftStockRedisService;
+    private final LocalMessageService localMessageService;
+    private final GiftCacheService giftCacheService;
 
     @Autowired
     public StudentGiftServiceImpl(GiftMapper giftMapper,
@@ -104,7 +87,10 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
                                   PickupTokenService pickupTokenService,
                                   MallPickupProperties mallPickupProperties,
                                   GiftIdempotentService giftIdempotentService,
-                                  com.campus.common.metrics.CampusMetricsCollector campusMetricsCollector) {
+                                  com.campus.common.metrics.CampusMetricsCollector campusMetricsCollector,
+                                  GiftStockRedisService giftStockRedisService,
+                                  LocalMessageService localMessageService,
+                                  GiftCacheService giftCacheService) {
         this.giftMapper = giftMapper;
         this.studentMapper = studentMapper;
         this.pointLedger = pointLedger;
@@ -115,6 +101,24 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         this.pickupTokenService = pickupTokenService != null ? pickupTokenService : new PickupTokenService(this.mallPickupProperties);
         this.giftIdempotentService = giftIdempotentService != null ? giftIdempotentService : new GiftIdempotentServiceImpl(redis, null);
         this.campusMetricsCollector = campusMetricsCollector;
+        this.giftStockRedisService = giftStockRedisService;
+        this.localMessageService = localMessageService;
+        this.giftCacheService = giftCacheService;
+    }
+
+    public StudentGiftServiceImpl(GiftMapper giftMapper,
+                                  StudentMapper studentMapper,
+                                  PointLedger pointLedger,
+                                  SysNoticeService sysNoticeService,
+                                  RabbitTemplate rabbitTemplate,
+                                  StringRedisTemplate redis,
+                                  PickupTokenService pickupTokenService,
+                                  MallPickupProperties mallPickupProperties,
+                                  GiftIdempotentService giftIdempotentService,
+                                  com.campus.common.metrics.CampusMetricsCollector campusMetricsCollector) {
+        this(giftMapper, studentMapper, pointLedger, sysNoticeService, rabbitTemplate, redis,
+                pickupTokenService, mallPickupProperties, giftIdempotentService, campusMetricsCollector,
+                null, null, null);
     }
 
     public StudentGiftServiceImpl(GiftMapper giftMapper,

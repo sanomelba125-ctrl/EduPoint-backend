@@ -86,10 +86,7 @@ public class SearchKnowledgeTool implements AiTool {
         String category = arguments != null ? arguments.getString("category") : null;
 
         if (!StringUtils.hasText(keyword)) {
-            JSONObject err = new JSONObject();
-            err.put("success", false);
-            err.put("error", "未提供检索关键词");
-            return err.toJSONString();
+            return AiToolResults.error("未提供检索关键词");
         }
 
         try {
@@ -115,7 +112,6 @@ public class SearchKnowledgeTool implements AiTool {
             }
 
             JSONObject result = new JSONObject();
-            result.put("success", true);
             result.put("keyword", keyword);
 
             JSONArray items = new JSONArray();
@@ -132,13 +128,10 @@ public class SearchKnowledgeTool implements AiTool {
             result.put("matchedFaqs", items);
             result.put("matchedCount", items.size());
 
-            return result.toJSONString();
+            return AiToolResults.ok(result);
         } catch (Exception e) {
             log.error("执行 SearchKnowledgeTool 异常: keyword={}", keyword, e);
-            JSONObject err = new JSONObject();
-            err.put("success", false);
-            err.put("error", "检索知识库服务出现异常: " + e.getMessage());
-            return err.toJSONString();
+            return AiToolResults.error("检索知识库服务出现异常: " + e.getMessage());
         }
     }
 }

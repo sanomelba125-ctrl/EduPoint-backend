@@ -44,6 +44,9 @@ class GiftPickupQrCodeTest {
     private StringRedisTemplate redis;
     private MallPickupProperties mallPickupProperties;
     private PickupTokenService pickupTokenService;
+    private com.campus.modules.mall.service.GiftStockRedisService giftStockRedisService;
+    private com.campus.modules.mall.service.LocalMessageService localMessageService;
+    private com.campus.modules.mall.service.GiftCacheService giftCacheService;
     private StudentGiftServiceImpl studentGiftService;
 
     @BeforeEach
@@ -55,6 +58,9 @@ class GiftPickupQrCodeTest {
         sysNoticeService = mock(SysNoticeService.class);
         rabbitTemplate = mock(RabbitTemplate.class);
         redis = mock(StringRedisTemplate.class);
+        giftStockRedisService = mock(com.campus.modules.mall.service.GiftStockRedisService.class);
+        localMessageService = mock(com.campus.modules.mall.service.LocalMessageService.class);
+        giftCacheService = mock(com.campus.modules.mall.service.GiftCacheService.class);
 
         mallPickupProperties = new MallPickupProperties();
         mallPickupProperties.setValidSeconds(300);
@@ -70,7 +76,12 @@ class GiftPickupQrCodeTest {
                 rabbitTemplate,
                 redis,
                 pickupTokenService,
-                mallPickupProperties
+                mallPickupProperties,
+                null,
+                null,
+                giftStockRedisService,
+                localMessageService,
+                giftCacheService
         );
         ReflectionTestUtils.setField(studentGiftService, "baseMapper", studentGiftMapper);
     }

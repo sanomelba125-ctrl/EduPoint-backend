@@ -73,19 +73,13 @@ public class QueryPointsTool implements AiTool {
     @Override
     public String execute(Long studentId, JSONObject arguments) {
         if (studentId == null) {
-            JSONObject err = new JSONObject();
-            err.put("success", false);
-            err.put("error", "未检测到登录状态。查询积分余额属于个人私有数据，请提醒学生先前往平台【个人中心】登录账号。");
-            return err.toJSONString();
+            return AiToolResults.error("未检测到登录状态。查询积分余额属于个人私有数据，请提醒学生先前往平台【个人中心】登录账号。");
         }
 
         try {
             Student student = studentMapper.selectById(studentId);
             if (student == null) {
-                JSONObject err = new JSONObject();
-                err.put("success", false);
-                err.put("error", "学籍数据库中未查询到该学生档案记录");
-                return err.toJSONString();
+                return AiToolResults.error("学籍数据库中未查询到该学生档案记录");
             }
 
             int limit = 5;
@@ -105,7 +99,6 @@ public class QueryPointsTool implements AiTool {
             );
 
             JSONObject result = new JSONObject();
-            result.put("success", true);
             result.put("currentAvailablePoints", student.getCurrentPoints() != null ? student.getCurrentPoints() : 0);
             result.put("historicalTotalPoints", student.getTotalPoints() != null ? student.getTotalPoints() : 0);
 
@@ -122,13 +115,10 @@ public class QueryPointsTool implements AiTool {
             result.put("recentTransactions", list);
             result.put("totalReturnedCount", list.size());
 
-            return result.toJSONString();
+            return AiToolResults.ok(result);
         } catch (Exception e) {
             log.error("执行 QueryPointsTool 异常: studentId={}", studentId, e);
-            JSONObject err = new JSONObject();
-            err.put("success", false);
-            err.put("error", "查询积分信息服务出现异常: " + e.getMessage());
-            return err.toJSONString();
+            return AiToolResults.error("查询积分信息服务出现异常: " + e.getMessage());
         }
     }
 

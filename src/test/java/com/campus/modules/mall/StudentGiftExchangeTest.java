@@ -42,6 +42,9 @@ class StudentGiftExchangeTest {
     private StringRedisTemplate redis;
     private ValueOperations<String, String> valueOperations;
     private com.campus.modules.mall.service.GiftIdempotentService giftIdempotentService;
+    private com.campus.modules.mall.service.GiftStockRedisService giftStockRedisService;
+    private com.campus.modules.mall.service.LocalMessageService localMessageService;
+    private com.campus.modules.mall.service.GiftCacheService giftCacheService;
 
     private StudentGiftServiceImpl studentGiftService;
 
@@ -57,6 +60,9 @@ class StudentGiftExchangeTest {
         redis = mock(StringRedisTemplate.class);
         valueOperations = mock(ValueOperations.class);
         giftIdempotentService = mock(com.campus.modules.mall.service.GiftIdempotentService.class);
+        giftStockRedisService = mock(com.campus.modules.mall.service.GiftStockRedisService.class);
+        localMessageService = mock(com.campus.modules.mall.service.LocalMessageService.class);
+        giftCacheService = mock(com.campus.modules.mall.service.GiftCacheService.class);
 
         when(redis.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(true);
@@ -72,7 +78,11 @@ class StudentGiftExchangeTest {
                 redis,
                 null,
                 null,
-                giftIdempotentService
+                giftIdempotentService,
+                null,
+                giftStockRedisService,
+                localMessageService,
+                giftCacheService
         );
         ReflectionTestUtils.setField(studentGiftService, "baseMapper", studentGiftMapper);
     }

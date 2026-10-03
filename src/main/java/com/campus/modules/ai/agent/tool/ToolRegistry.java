@@ -91,16 +91,14 @@ public class ToolRegistry {
         if (tool == null) {
             log.warn("【AI 工具注册中心】未找到对应工具: {}", toolName);
             long cost = System.currentTimeMillis() - startTime;
-            JSONObject errJson = new JSONObject();
-            errJson.put("success", false);
-            errJson.put("error", "未找到指定的工具能力: " + toolName);
+            String errJson = AiToolResults.error("未找到指定的工具能力: " + toolName);
 
             return ToolExecutionRecord.builder()
                     .toolCallId(toolCallId)
                     .toolName(toolName)
                     .description("未知工具")
                     .argumentsJson(argumentsJson)
-                    .resultFactJson(errJson.toJSONString())
+                    .resultFactJson(errJson)
                     .executionTimeMs(cost)
                     .status("FAILED")
                     .errorMessage("工具未注册")
@@ -139,16 +137,14 @@ public class ToolRegistry {
             long cost = System.currentTimeMillis() - startTime;
             log.error("【AI 工具执行异常】工具: [{}] 失败: {}", toolName, e.getMessage(), e);
 
-            JSONObject errJson = new JSONObject();
-            errJson.put("success", false);
-            errJson.put("error", "工具执行异常: " + e.getMessage());
+            String errJson = AiToolResults.error("工具执行异常: " + e.getMessage());
 
             return ToolExecutionRecord.builder()
                     .toolCallId(toolCallId)
                     .toolName(toolName)
                     .description(tool.getDescription())
                     .argumentsJson(argumentsJson)
-                    .resultFactJson(errJson.toJSONString())
+                    .resultFactJson(errJson)
                     .executionTimeMs(cost)
                     .status("FAILED")
                     .errorMessage(e.getMessage())

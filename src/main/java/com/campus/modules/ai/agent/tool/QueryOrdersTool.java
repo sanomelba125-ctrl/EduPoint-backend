@@ -83,10 +83,7 @@ public class QueryOrdersTool implements AiTool {
     @Override
     public String execute(Long studentId, JSONObject arguments) {
         if (studentId == null) {
-            JSONObject err = new JSONObject();
-            err.put("success", false);
-            err.put("error", "未检测到登录状态。查询礼品兑换订单属于个人私有数据，请提醒学生先前往平台【个人中心】登录账号。");
-            return err.toJSONString();
+            return AiToolResults.error("未检测到登录状态。查询礼品兑换订单属于个人私有数据，请提醒学生先前往平台【个人中心】登录账号。");
         }
 
         try {
@@ -123,7 +120,6 @@ public class QueryOrdersTool implements AiTool {
                     .eq(StudentGift::getDeleted, 0));
 
             JSONObject result = new JSONObject();
-            result.put("success", true);
             result.put("pendingPickupCount", pendingCount != null ? pendingCount : 0);
 
             JSONArray orderList = new JSONArray();
@@ -153,13 +149,10 @@ public class QueryOrdersTool implements AiTool {
 
             result.put("orders", orderList);
             result.put("returnedCount", orderList.size());
-            return result.toJSONString();
+            return AiToolResults.ok(result);
         } catch (Exception e) {
             log.error("执行 QueryOrdersTool 异常: studentId={}", studentId, e);
-            JSONObject err = new JSONObject();
-            err.put("success", false);
-            err.put("error", "查询兑换订单服务出现异常: " + e.getMessage());
-            return err.toJSONString();
+            return AiToolResults.error("查询兑换订单服务出现异常: " + e.getMessage());
         }
     }
 

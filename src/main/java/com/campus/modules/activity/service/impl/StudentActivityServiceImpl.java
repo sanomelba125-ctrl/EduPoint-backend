@@ -561,7 +561,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             vo.setSignupTime(waitlist.getWaitTime());
             vo.setCreateTime(waitlist.getCreateTime() != null ? waitlist.getCreateTime() : waitlist.getWaitTime());
             vo.setUpdateTime(waitlist.getUpdateTime());
-            vo.setStatus(4);
+            vo.setStatus(StudentActivityStatus.WAITLIST.getCode());
             vo.setPointsAwarded(0);
             vo.setDeleted(waitlist.getDeleted());
             // 动态计算当前有效排位顺位

@@ -6,6 +6,9 @@ import com.campus.modules.mall.dto.DeliveryConfirmDTO;
 import com.campus.modules.mall.entity.StudentGift;
 import com.campus.modules.mall.mapper.GiftMapper;
 import com.campus.modules.mall.mapper.StudentGiftMapper;
+import com.campus.modules.mall.service.GiftCacheService;
+import com.campus.modules.mall.service.GiftStockRedisService;
+import com.campus.modules.mall.service.LocalMessageService;
 import com.campus.modules.mall.service.PointLedger;
 import com.campus.modules.mall.service.impl.StudentGiftServiceImpl;
 import com.campus.modules.student.mapper.StudentMapper;
@@ -36,6 +39,9 @@ class GiftDeliveryVerifyTest {
     private SysNoticeService sysNoticeService;
     private RabbitTemplate rabbitTemplate;
     private StringRedisTemplate redis;
+    private GiftStockRedisService giftStockRedisService;
+    private LocalMessageService localMessageService;
+    private GiftCacheService giftCacheService;
 
     private StudentGiftServiceImpl studentGiftService;
 
@@ -48,6 +54,9 @@ class GiftDeliveryVerifyTest {
         sysNoticeService = mock(SysNoticeService.class);
         rabbitTemplate = mock(RabbitTemplate.class);
         redis = mock(StringRedisTemplate.class);
+        giftStockRedisService = mock(GiftStockRedisService.class);
+        localMessageService = mock(LocalMessageService.class);
+        giftCacheService = mock(GiftCacheService.class);
 
         studentGiftService = new StudentGiftServiceImpl(
                 giftMapper,
@@ -55,7 +64,14 @@ class GiftDeliveryVerifyTest {
                 pointLedger,
                 sysNoticeService,
                 rabbitTemplate,
-                redis
+                redis,
+                null,
+                null,
+                null,
+                null,
+                giftStockRedisService,
+                localMessageService,
+                giftCacheService
         );
         ReflectionTestUtils.setField(studentGiftService, "baseMapper", studentGiftMapper);
     }

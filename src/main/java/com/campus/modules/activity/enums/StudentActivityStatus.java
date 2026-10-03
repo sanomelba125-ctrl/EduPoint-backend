@@ -14,7 +14,8 @@ public enum StudentActivityStatus implements IEnum<Integer> {
 
     REGISTERED(1, "已报名(待打卡)"),
     COMPLETED(2, "已完成(打卡成功)"),
-    CANCELLED(3, "已取消/已失效");
+    CANCELLED(3, "已取消/已失效"),
+    WAITLIST(4, "候补排队中");
 
     @EnumValue
     @JsonValue

@@ -5,6 +5,7 @@ import com.campus.common.exception.BusinessException;
 import com.campus.common.result.ResultCode;
 import com.campus.modules.activity.dto.ActivityCheckinDTO;
 import com.campus.modules.activity.entity.ActivityCheckinCode;
+import com.campus.modules.activity.enums.ActivityCheckinCodeStatus;
 import com.campus.modules.activity.mapper.ActivityCheckinCodeMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -47,7 +48,7 @@ public class QrCodeHmacCheckinHandler extends AbstractCheckinHandler {
                 .eq(ActivityCheckinCode::getActivityId, activityId)
                 .eq(ActivityCheckinCode::getNonce, dto.getNonce())
                 .eq(ActivityCheckinCode::getSign, dto.getSign())
-                .eq(ActivityCheckinCode::getStatus, 0));
+                .eq(ActivityCheckinCode::getStatus, ActivityCheckinCodeStatus.UNUSED.getCode()));
 
         if (code == null || code.getExpireTime() == null || code.getExpireTime().isBefore(LocalDateTime.now())) {
             log.debug("签到码核验失败: activityId={}, nonce={}", activityId, dto.getNonce());

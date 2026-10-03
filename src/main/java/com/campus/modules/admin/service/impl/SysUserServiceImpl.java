@@ -10,6 +10,7 @@ import com.campus.common.result.ResultCode;
 import com.campus.common.util.PasswordUtil;
 import com.campus.modules.admin.dto.*;
 import com.campus.modules.admin.entity.SysUser;
+import com.campus.modules.admin.enums.SysUserStatus;
 import com.campus.modules.admin.mapper.SysUserMapper;
 import com.campus.modules.admin.service.SysUserService;
 import org.slf4j.Logger;
@@ -44,7 +45,7 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
         }
 
         // 3. 账号状态检查
-        if (user.getStatus() != null && user.getStatus() == 0) {
+        if (user.getStatus() != null && user.getStatus() == SysUserStatus.DISABLED.getCode()) {
             log.warn("管理员登录失败: 账号 [{}] 已被禁用", loginDTO.getUsername());
             throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "该管理员账号已被禁用，请联系超级管理员");
         }
@@ -95,7 +96,7 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
 
         long userId = Long.parseLong(loginId.substring(ADMIN_LOGIN_PREFIX.length()));
         SysUser user = getById(userId);
-        if (user == null || (user.getStatus() != null && user.getStatus() == 0)) {
+        if (user == null || (user.getStatus() != null && user.getStatus() == SysUserStatus.DISABLED.getCode())) {
             throw new BusinessException(ResultCode.UNAUTHORIZED.getCode(), "账号不存在或已被禁用");
         }
 
@@ -162,7 +163,7 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
         user.setRole(createDTO.getRole().trim());
         user.setPhone(StringUtils.hasText(createDTO.getPhone()) ? createDTO.getPhone().trim() : null);
         user.setAvatar(StringUtils.hasText(createDTO.getAvatar()) ? createDTO.getAvatar().trim() : null);
-        user.setStatus(1); // 默认启用
+        user.setStatus(SysUserStatus.ENABLED.getCode()); // 默认启用
         user.setDeleted(0);
 
         save(user);
@@ -207,10 +208,10 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
 
         // 状态修改限制：禁止禁用超级管理员
         if (updateDTO.getStatus() != null) {
-            if (isSuperAdmin(user) && updateDTO.getStatus() == 0) {
+            if (isSuperAdmin(user) && updateDTO.getStatus() == SysUserStatus.DISABLED.getCode()) {
                 throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "禁止禁用系统超级管理员账号");
             }
-            if (updateDTO.getStatus() == 0 && (user.getStatus() == null || user.getStatus() != 0)) {
+            if (updateDTO.getStatus() == SysUserStatus.DISABLED.getCode() && (user.getStatus() == null || user.getStatus() != SysUserStatus.DISABLED.getCode())) {
                 needKickout = true; // 账号被禁用，立即踢下线
             }
             user.setStatus(updateDTO.getStatus());
@@ -241,7 +242,7 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
             throw new BusinessException(ResultCode.USER_NOT_EXIST.getCode(), "目标管理员不存在");
         }
 
-        if (isSuperAdmin(user) && status != null && status == 0) {
+        if (isSuperAdmin(user) && status != null && status == SysUserStatus.DISABLED.getCode()) {
             throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "禁止禁用系统超级管理员账号");
         }
 
@@ -249,7 +250,7 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
         updateById(user);
 
         // 核心安全修复：禁用账号时立即强踢当前管理员下线，注销 Token
-        if (status != null && status == 0) {
+        if (status != null && status == SysUserStatus.DISABLED.getCode()) {
             StpUtil.kickout(ADMIN_LOGIN_PREFIX + id);
             log.warn("管理员账号已禁用并强制踢下线: (ID: {}, Username: {})", id, user.getUsername());
         } else {

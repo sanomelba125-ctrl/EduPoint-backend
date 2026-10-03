@@ -13,6 +13,7 @@ import com.campus.modules.activity.dto.QrCodeVO;
 import com.campus.modules.activity.entity.ActivityWaitlist;
 import com.campus.modules.activity.entity.Activity;
 import com.campus.modules.activity.entity.ActivityCheckinCode;
+import com.campus.modules.activity.enums.ActivityCheckinCodeStatus;
 import com.campus.modules.activity.mapper.ActivityMapper;
 import com.campus.modules.activity.mapper.ActivityWaitlistMapper;
 import com.campus.modules.activity.mapper.StudentActivityMapper;
@@ -268,7 +269,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
         code.setNonce(nonce);
         code.setSign(signToken);
         code.setExpireTime(expireTime);
-        code.setStatus(0);
+        code.setStatus(ActivityCheckinCodeStatus.UNUSED.getCode());
         checkinCodeService.save(code);
 
         // 8. 拼装扫码跳转 URL
