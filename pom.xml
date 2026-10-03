@@ -233,6 +233,32 @@
                     </excludes>
                 </configuration>
             </plugin>
+            <!-- Spotless 代码格式统一与质量门禁插件 (一键格式化: mvn spotless:apply) -->
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>2.43.0</version>
+                <configuration>
+                    <java>
+                        <!-- 包含全工程 Java 源码与单测代码 -->
+                        <includes>
+                            <include>src/main/java/**/*.java</include>
+                            <include>src/test/java/**/*.java</include>
+                        </includes>
+                        <!-- 自动清理未使用的 import 引用 -->
+                        <removeUnusedImports />
+                        <!-- 消除行尾多余空格 -->
+                        <trimTrailingWhitespace />
+                        <!-- 保持标准文件结尾换行符 -->
+                        <endWithNewline />
+                        <!-- 统一使用 4 空格缩进 -->
+                        <indent>
+                            <spaces>true</spaces>
+                            <spacesPerTab>4</spacesPerTab>
+                        </indent>
+                    </java>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 </project>

@@ -101,4 +101,3 @@ public interface StudentService extends IService<Student> {
      */
     java.util.List<String> getDistinctClasses();
 }
-

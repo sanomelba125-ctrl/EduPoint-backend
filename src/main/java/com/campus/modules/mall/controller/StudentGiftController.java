@@ -5,9 +5,7 @@ import cn.dev33.satoken.annotation.SaMode;
 import com.campus.common.auth.AuthUtil;
 import com.campus.common.constant.UserRole;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.campus.common.exception.BusinessException;
 import com.campus.common.result.Result;
-import com.campus.common.result.ResultCode;
 import com.campus.modules.mall.dto.*;
 import com.campus.modules.mall.service.StudentGiftService;
 import jakarta.validation.Valid;
@@ -15,7 +13,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Map;
 
 /**
  * 礼品兑换订单控制器

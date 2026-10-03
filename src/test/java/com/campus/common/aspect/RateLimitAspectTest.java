@@ -14,7 +14,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 
 import java.lang.reflect.Method;
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -74,6 +73,7 @@ public class RateLimitAspectTest {
 
         BusinessException ex = assertThrows(BusinessException.class, () -> rateLimitAspect.around(joinPoint));
         assertEquals("触发限流", ex.getMessage());
+        assertEquals(429, ex.getCode());
 
         try {
             verify(joinPoint, never()).proceed();

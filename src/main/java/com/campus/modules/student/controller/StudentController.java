@@ -165,4 +165,3 @@ public class StudentController {
         return Result.success(studentService.getDistinctClasses());
     }
 }
-

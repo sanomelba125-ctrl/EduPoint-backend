@@ -1,6 +1,5 @@
 package com.campus.common.result;
 
-import lombok.Data;
 
 import java.io.Serializable;
 

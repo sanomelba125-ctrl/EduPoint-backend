@@ -3,6 +3,7 @@ package com.campus.common.aspect;
 import cn.dev33.satoken.stp.StpUtil;
 import com.campus.common.annotation.RateLimit;
 import com.campus.common.exception.BusinessException;
+import com.campus.common.result.ResultCode;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -71,7 +72,7 @@ public class RateLimitAspect {
 
             if (result == null || result != 1L) {
                 log.warn("接口触发限流拦截: key={}, windowMs={}, maxCount={}", key, windowMs, maxCount);
-                throw new BusinessException(rateLimit.message());
+                throw new BusinessException(ResultCode.TOO_MANY_REQUESTS.getCode(), rateLimit.message());
             }
         } catch (BusinessException e) {
             throw e;
@@ -98,8 +99,13 @@ public class RateLimitAspect {
             if (attributes != null) {
                 HttpServletRequest request = attributes.getRequest();
                 String ip = request.getHeader("X-Forwarded-For");
-                if (ip == null || ip.isBlank()) {
-                    ip = request.getRemoteAddr();
+                if (ip != null && !ip.isBlank()) {
+                    ip = ip.split(",")[0].trim();
+                } else {
+                    ip = request.getHeader("X-Real-IP");
+                    if (ip == null || ip.isBlank()) {
+                        ip = request.getRemoteAddr();
+                    }
                 }
                 sb.append(":ip:").append(ip);
             }

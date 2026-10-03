@@ -122,7 +122,7 @@ public class RabbitMqConfig {
         // 绑定死信 Routing Key
         args.put("x-dead-letter-routing-key", GIFT_EXPIRE_ROUTING_KEY);
         // 默认延时 24 小时 (86,400,000 ms)。
-        args.put("x-message-ttl", orderTimeoutMs); 
+        args.put("x-message-ttl", orderTimeoutMs);
         return new Queue(GIFT_ORDER_DELAY_QUEUE, true, false, false, args);
     }
 

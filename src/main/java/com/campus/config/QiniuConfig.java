@@ -4,11 +4,14 @@ import com.qiniu.storage.Configuration;
 import com.qiniu.storage.Region;
 import com.qiniu.storage.UploadManager;
 import com.qiniu.util.Auth;
+import jakarta.annotation.PostConstruct;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 
 /**
- * 七牛云 SDK 客户端配置类
+ * 对象存储客户端配置类 (支持优雅降级与本地模式)
  */
+@Slf4j
 @org.springframework.context.annotation.Configuration
 public class QiniuConfig {
 
@@ -18,23 +21,37 @@ public class QiniuConfig {
         this.qiniuProperties = qiniuProperties;
     }
 
+    @PostConstruct
+    public void init() {
+        if (qiniuProperties.isQiniuEnabled()) {
+            log.info("[OSS] 当前运行在七牛云 Kodo 对象存储模式 (bucket={})", qiniuProperties.getBucket());
+        } else {
+            log.info("[OSS] 当前运行在纯本地磁盘存储模式 (campus.oss.type={})", qiniuProperties.getType());
+        }
+    }
+
     /**
      * 构建七牛云上传管理器 UploadManager
-     * 使用 Region.autoRegion() 自动适配对应机房存储区域
+     * 仅在七牛云模式启用时实例化，本地存储模式返回 null 降级
      */
     @Bean
     public UploadManager uploadManager() {
+        if (!qiniuProperties.isQiniuEnabled()) {
+            return null;
+        }
         Configuration cfg = new Configuration(Region.autoRegion());
         return new UploadManager(cfg);
     }
 
     /**
      * 构建七牛云认证凭证 Auth
+     * 仅在七牛云模式启用时实例化，避免生成假数据凭证
      */
     @Bean
     public Auth qiniuAuth() {
-        String ak = qiniuProperties.getAccessKey() != null ? qiniuProperties.getAccessKey() : "unconfigured";
-        String sk = qiniuProperties.getSecretKey() != null ? qiniuProperties.getSecretKey() : "unconfigured";
-        return Auth.create(ak, sk);
+        if (!qiniuProperties.isQiniuEnabled()) {
+            return null;
+        }
+        return Auth.create(qiniuProperties.getAccessKey(), qiniuProperties.getSecretKey());
     }
 }

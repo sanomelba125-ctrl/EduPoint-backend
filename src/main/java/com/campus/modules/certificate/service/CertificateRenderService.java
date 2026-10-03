@@ -1,6 +1,5 @@
 package com.campus.modules.certificate.service;
 
-import com.campus.modules.certificate.entity.Certificate;
 
 /**
  * 电子荣誉证书动态渲染与存储引擎接口

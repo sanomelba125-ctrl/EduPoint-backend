@@ -126,5 +126,3 @@ public class GlobalExceptionHandler {
         return Result.error(ResultCode.ERROR.getCode(), "系统繁忙，请稍后重试 [traceId: " + traceId + "]");
     }
 }
-
-

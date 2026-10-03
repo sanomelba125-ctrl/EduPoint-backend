@@ -51,7 +51,7 @@ public class CampusMessageConsumer {
                                    @Header(value = "x-trace-id", required = false) String traceId) {
         bindTraceId(traceId, message);
         try {
-            log.info("[MQ 削峰消费] 接收到学生活动打卡异步流水: studentId={}, activityId={}", 
+            log.info("[MQ 削峰消费] 接收到学生活动打卡异步流水: studentId={}, activityId={}",
                     message.get("studentId"), message.get("activityId"));
         } finally {
             MDC.remove("traceId");
@@ -80,7 +80,7 @@ public class CampusMessageConsumer {
                     log.warn("[MQ 延时关单] 解析 orderId 格式异常: val={}, error={}", orderIdVal, e.getMessage());
                 }
             }
-            log.info("[MQ 延时关单] 检查到礼品提货码已超时未核销: orderId={}, pickupCode={}, 执行自动退单与积分回滚", 
+            log.info("[MQ 延时关单] 检查到礼品提货码已超时未核销: orderId={}, pickupCode={}, 执行自动退单与积分回滚",
                     orderId, message.get("pickupCode"));
             if (orderId != null) {
                 try {

@@ -41,7 +41,7 @@ public class ActivityExportDTO {
     @ColumnWidth(25)
     @ExcelProperty("结束时间")
     private LocalDateTime endTime;
-    
+
     @ExcelProperty("状态(0未开始,1进行中,2已结束)")
     private Integer status;
 }

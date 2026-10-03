@@ -2,7 +2,6 @@ package com.campus.modules.activity.service;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.campus.modules.activity.dto.*;
-import com.campus.modules.activity.entity.StudentActivity;
 
 public interface StudentActivityService {
     ActivitySignupVO signup(ActivitySignupDTO dto);

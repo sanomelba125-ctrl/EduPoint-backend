@@ -10,10 +10,15 @@ import com.qiniu.storage.UploadManager;
 import com.qiniu.storage.model.DefaultPutRet;
 import com.qiniu.util.Auth;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
@@ -21,7 +26,7 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * 七牛云对象存储服务实现类
+ * 对象存储服务实现类 (支持七牛云与本地磁盘优雅降级)
  * 负责文件上传、格式风控校验、以及私有资源（如电子证书）的按需安全签名
  */
 @Slf4j
@@ -41,7 +46,9 @@ public class QiniuServiceImpl implements QiniuService {
     private final UploadManager uploadManager;
     private final Auth qiniuAuth;
 
-    public QiniuServiceImpl(QiniuProperties properties, UploadManager manager, Auth auth) {
+    public QiniuServiceImpl(QiniuProperties properties,
+                            @Autowired(required = false) UploadManager manager,
+                            @Autowired(required = false) Auth auth) {
         this.qiniuProperties = properties;
         this.uploadManager = manager;
         this.qiniuAuth = auth;
@@ -55,13 +62,18 @@ public class QiniuServiceImpl implements QiniuService {
         // 1. 前置安全校验
         validateFile(file);
 
-        // 2. 生成基于日期分级的唯一文件存储路径 (key)
+        // 2. 本地存储模式降级处理 (未启用七牛云或客户端为 null)
+        if (!qiniuProperties.isQiniuEnabled() || uploadManager == null || qiniuAuth == null) {
+            return saveToLocal(file);
+        }
+
+        // 3. 生成基于日期分级的唯一文件存储路径 (key)
         String suffix = getFileSuffix(file.getOriginalFilename());
         String datePath = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
         String fileKey = String.format("images/%s/%s%s", datePath, UUID.randomUUID().toString().replace("-", ""), suffix);
 
         try {
-            // 3. 签发上传凭证并推送至七牛云存储
+            // 4. 签发上传凭证并推送至七牛云存储
             String uploadToken = qiniuAuth.uploadToken(qiniuProperties.getBucket());
             Response response = uploadManager.put(file.getBytes(), fileKey, uploadToken);
 
@@ -70,11 +82,11 @@ public class QiniuServiceImpl implements QiniuService {
                 throw new BusinessException("图片上传至云存储失败: " + response.error);
             }
 
-            // 4. 解析七牛云响应结果
+            // 5. 解析七牛云响应结果
             DefaultPutRet putRet = GSON.fromJson(response.bodyString(), DefaultPutRet.class);
             String rawUrl = buildPublicUrl(putRet.key);
 
-            // 5. 兼容当前私有空间：若当前存储桶启用了私有防盗链，签发长期可访问地址避免 401
+            // 6. 兼容当前私有空间：若当前存储桶启用了私有防盗链，签发长期可访问地址避免 401
             try {
                 return qiniuAuth.privateDownloadUrl(rawUrl, 315360000L);
             } catch (Exception e) {
@@ -88,6 +100,26 @@ public class QiniuServiceImpl implements QiniuService {
         } catch (IOException e) {
             log.error("读取上传文件二进制流失败: ", e);
             throw new BusinessException("读取上传文件内容失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 保存图片至本地磁盘目录 (uploads/images)
+     */
+    private String saveToLocal(MultipartFile file) {
+        try {
+            Path uploadDir = Paths.get("uploads", "images");
+            Files.createDirectories(uploadDir);
+            String suffix = getFileSuffix(file.getOriginalFilename());
+            String filename = UUID.randomUUID().toString().replace("-", "") + suffix;
+            Path targetPath = uploadDir.resolve(filename);
+            Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+            String accessUrl = "/api/common/file/" + filename;
+            log.info("[OSS] 本地磁盘存储模式：图片上传成功 path={}, url={}", targetPath.toAbsolutePath(), accessUrl);
+            return accessUrl;
+        } catch (IOException e) {
+            log.error("[OSS] 本地保存图片异常", e);
+            throw new BusinessException("本地保存图片失败: " + e.getMessage());
         }
     }
 
@@ -108,6 +140,10 @@ public class QiniuServiceImpl implements QiniuService {
                 ? targetUrlOrKey
                 : buildPublicUrl(targetUrlOrKey);
 
+        if (!qiniuProperties.isQiniuEnabled() || qiniuAuth == null) {
+            return fullUrl;
+        }
+
         try {
             return qiniuAuth.privateDownloadUrl(fullUrl, expireSeconds);
         } catch (Exception e) {
@@ -123,7 +159,7 @@ public class QiniuServiceImpl implements QiniuService {
         if (file == null || file.isEmpty()) {
             throw new BusinessException("上传的文件不能为空");
         }
-        if (!qiniuProperties.isConfigured()) {
+        if (qiniuProperties.isQiniuEnabled() && !qiniuProperties.isConfigured()) {
             throw new BusinessException("七牛云参数未配置，请联系系统管理员");
         }
 

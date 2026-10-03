@@ -1,7 +1,6 @@
 package com.campus.common.exception;
 
 import com.campus.common.result.ResultCode;
-import lombok.Getter;
 
 public class BusinessException extends RuntimeException {
 

@@ -13,7 +13,6 @@ import com.campus.modules.mall.entity.StudentGift;
 import com.campus.modules.mall.enums.GiftStatus;
 import com.campus.modules.mall.mapper.GiftMapper;
 import com.campus.modules.mall.mapper.StudentGiftMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;

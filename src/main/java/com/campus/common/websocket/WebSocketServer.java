@@ -52,7 +52,7 @@ public class WebSocketServer {
 
     // 接收 userId
     private String userId;
-    
+
     // 接收 userType
     private String userType;
 
@@ -64,9 +64,9 @@ public class WebSocketServer {
         this.session = session;
         this.userId = userId;
         this.userType = userType;
-        
+
         String key = buildKey(userType, userId);
-        
+
         // P5-8b: 原子替换 Map 中的会话；如果存在旧连接，立即主动显式关闭，防止僵尸连接残留
         WebSocketServer old = webSocketMap.put(key, this);
         if (old != null && old.session != null && old.session.isOpen()) {
@@ -79,9 +79,9 @@ public class WebSocketServer {
         } else if (old == null) {
             addOnlineCount();
         }
-        
+
         log.info("用户连接建立: {}, 当前在线人数: {}", key, getOnlineCount());
-        
+
         try {
             sendMessage("连接成功");
         } catch (IOException e) {
@@ -132,7 +132,7 @@ public class WebSocketServer {
             }
         }
     }
-    
+
     /**
      * 发送自定义对象
      * P5-8c: 序列化全面统一使用 Jackson，保障与 HTTP 接口端时间格式一致性
@@ -145,7 +145,7 @@ public class WebSocketServer {
 
     /**
      * 向指定用户发送消息（集群模式：本机优先直接投递 + 跨节点 Redis 广播发布）
-     * 
+     *
      * @param userType 用户类型 (admin/student)
      * @param userId   用户ID
      * @param message  消息内容
@@ -159,7 +159,7 @@ public class WebSocketServer {
         }
         WebSocketClusterBridge.publishUserMessage(userType, userId, message);
     }
-    
+
     /**
      * 向指定用户类型的所有在线客户端广播消息（集群模式：本机广播 + 跨节点集群广播）
      */
@@ -226,4 +226,4 @@ public class WebSocketServer {
         webSocketMap.clear();
         onlineCount.set(0);
     }
-}
+}

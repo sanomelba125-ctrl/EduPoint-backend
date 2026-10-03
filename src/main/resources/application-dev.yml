@@ -67,6 +67,11 @@ logging:
     p6spy: info
     org.springframework.web: info
 
+# 对象存储模式配置 (local: 本地磁盘存储，开发默认; qiniu: 七牛云 Kodo 存储)
+campus:
+  oss:
+    type: ${CAMPUS_OSS_TYPE:local}
+
 # 七牛云 Kodo 对象存储配置
 # [说明] 优先从 application-local.yml 读取（开发私有不入库），亦可配置环境变量 QINIU_ACCESS_KEY 等
 # 如需在开发环境中直接配置，可取消注释并填入：

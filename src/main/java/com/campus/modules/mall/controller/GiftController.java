@@ -8,7 +8,6 @@ import com.campus.common.constant.UserRole;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.common.exception.BusinessException;
 import com.campus.common.result.Result;
-import com.campus.common.result.ResultCode;
 import com.campus.modules.mall.dto.GiftCreateDTO;
 import com.campus.modules.mall.dto.GiftQueryDTO;
 import com.campus.modules.mall.dto.GiftUpdateDTO;

@@ -6,6 +6,7 @@ import cn.dev33.satoken.annotation.SaMode;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.campus.common.annotation.RateLimit;
 import com.campus.common.auth.AuthUtil;
 import com.campus.common.constant.UserRole;
 import com.campus.common.result.Result;
@@ -52,8 +53,16 @@ public class CertificateController {
 
     /**
      * 8.2 公开扫码验真接口，完全公开无需登录（姓名自动脱敏保护）
+     * 防刷加固：单 IP 每秒最多 10 次请求，超限返回 429 TOO_MANY_REQUESTS
      * GET /certificate/verify/{certificateNo}
      */
+    @RateLimit(
+            key = "rate_limit:certificate:verify",
+            count = 10,
+            windowMs = 1000L,
+            limitType = RateLimit.LimitType.IP,
+            message = "请求过于频繁，证书验真接口已被限流，请稍后重试！"
+    )
     @GetMapping("/verify/{certificateNo}")
     public Result<CertificateVerifyVO> verify(@PathVariable String certificateNo) {
         return Result.success(certificateService.verify(certificateNo));

@@ -1,6 +1,5 @@
 package com.campus.modules.mall;
 
-import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.campus.modules.mall.entity.Gift;
 import com.campus.modules.mall.mapper.GiftMapper;
 import com.campus.modules.mall.mapper.StudentGiftMapper;

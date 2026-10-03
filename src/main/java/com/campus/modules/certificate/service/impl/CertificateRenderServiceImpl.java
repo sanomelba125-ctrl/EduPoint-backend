@@ -17,15 +17,12 @@ import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
 import com.qiniu.http.Response;
 import com.qiniu.storage.UploadManager;
 import com.qiniu.util.Auth;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
 import java.awt.*;
-import java.awt.geom.AffineTransform;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
@@ -97,8 +94,8 @@ public class CertificateRenderServiceImpl implements CertificateRenderService {
 
         String fileUrl = null;
 
-        // 1. 尝试上传至七牛云存储
-        if (qiniuProperties.isConfigured() && uploadManager != null && qiniuAuth != null) {
+        // 1. 尝试上传至七牛云存储 (仅在开启七牛云且配置有效时)
+        if (qiniuProperties.isQiniuEnabled() && uploadManager != null && qiniuAuth != null) {
             try {
                 String key = "certificates/" + cert.getCertificateNo() + ".png";
                 String uploadToken = qiniuAuth.uploadToken(qiniuProperties.getBucket());
