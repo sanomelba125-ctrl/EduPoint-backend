@@ -40,7 +40,7 @@ public class GeoFenceCheckinHandler extends AbstractCheckinHandler {
             }
             int dist = distance(a.getLatitude(), a.getLongitude(), dto.getCheckinLatitude(), dto.getCheckinLongitude());
             if (dist > radius) {
-                throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "超出活动签到范围");
+                throw new BusinessException(ResultCode.ACTIVITY_GEOFENCE_FAILED.getCode(), "超出活动签到范围");
             }
             context.setCheckinDistance(dist);
             if (context.getStudentActivity() != null) {

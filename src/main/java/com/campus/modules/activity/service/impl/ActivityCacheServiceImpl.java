@@ -31,6 +31,10 @@ import java.util.UUID;
  * 2. L2 分布式缓存：Redis 保证集群各节点数据共享，配合逻辑过期（Logical Expiration）与 RabbitMQ 异步重建（Mutex Lock 兜底）；
  * 3. 一致性双写与失效广播：基于 Redisson RTopic 发布订阅（Pub/Sub），任意节点更新/驱逐活动缓存时，跨集群广播清空各实例本地 L1 缓存，彻底解决集群本地缓存脏读难题；
  * 4. 缓存穿透防御：空值对象防护（Null Object Pattern）与短 TTL 隔离恶意探测。
+ *
+ * <p><b>一致性前提约束：</b>
+ * L1 本地缓存的一致性完全依赖 {@link #initPubSub()} 的跨节点失效广播。
+ * 两者必须同时可用；若失效广播不可用，编辑活动后其它节点会返回陈旧内容直至本地 TTL 到期。
  */
 @Slf4j
 @Service
@@ -47,9 +51,7 @@ public class ActivityCacheServiceImpl implements ActivityCacheService {
     private final ObjectMapper objectMapper;
     private final ActivityMapper activityMapper;
     private final RabbitTemplate rabbitTemplate;
-
-    @Autowired(required = false)
-    private RedissonClient redissonClient;
+    private final RedissonClient redissonClient;
 
     /**
      * L1 一级本地缓存：最大容量 1000，写入后 5 分钟过期，开启统计以供可观测性监控
@@ -61,44 +63,56 @@ public class ActivityCacheServiceImpl implements ActivityCacheService {
             .recordStats()
             .build();
 
+    @Autowired
     public ActivityCacheServiceImpl(StringRedisTemplate redis,
                                     ObjectMapper objectMapper,
                                     ActivityMapper activityMapper,
-                                    RabbitTemplate rabbitTemplate) {
+                                    RabbitTemplate rabbitTemplate,
+                                    RedissonClient redissonClient) {
         this.redis = redis;
         this.objectMapper = objectMapper.copy()
                 .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         this.activityMapper = activityMapper;
         this.rabbitTemplate = rabbitTemplate;
+        this.redissonClient = redissonClient;
+    }
+
+    public ActivityCacheServiceImpl(StringRedisTemplate redis,
+                                    ObjectMapper objectMapper,
+                                    ActivityMapper activityMapper,
+                                    RabbitTemplate rabbitTemplate) {
+        this(redis, objectMapper, activityMapper, rabbitTemplate, null);
     }
 
     @PostConstruct
     public void initPubSub() {
-        if (redissonClient != null) {
-            try {
-                RTopic topic = redissonClient.getTopic(EVICT_TOPIC);
-                topic.addListener(String.class, (channel, msg) -> {
-                    if (msg == null) return;
-                    String[] parts = msg.split(":");
-                    if (parts.length >= 2) {
-                        String originNode = parts[0];
-                        // 忽略本节点自己发出的广播
-                        if (nodeId.equals(originNode)) {
-                            return;
-                        }
-                        try {
-                            Long activityId = Long.parseLong(parts[1]);
-                            l1Cache.invalidate(activityId);
-                            log.debug("收到跨节点活动缓存失效广播，已清除本地 L1 缓存: activityId={}, fromNode={}", activityId, originNode);
-                        } catch (NumberFormatException e) {
-                            log.warn("解析多级缓存失效消息异常: msg={}", msg);
-                        }
+        if (redissonClient == null) {
+            log.warn("RedissonClient 未注入，跳过跨节点活动缓存失效广播监听初始化");
+            return;
+        }
+        try {
+            RTopic topic = redissonClient.getTopic(EVICT_TOPIC);
+            topic.addListener(String.class, (channel, msg) -> {
+                if (msg == null) return;
+                String[] parts = msg.split(":");
+                if (parts.length >= 2) {
+                    String originNode = parts[0];
+                    // 忽略本节点自己发出的广播
+                    if (nodeId.equals(originNode)) {
+                        return;
                     }
-                });
-                log.info("活动多级缓存 (L1 Caffeine + L2 Redis) Pub/Sub 广播监听已启动: nodeId={}", nodeId);
-            } catch (Exception e) {
-                log.warn("初始化活动多级缓存 Pub/Sub 监听异常，降级为本地 TTL 淘汰: {}", e.getMessage());
-            }
+                    try {
+                        Long activityId = Long.parseLong(parts[1]);
+                        l1Cache.invalidate(activityId);
+                        log.debug("收到跨节点活动缓存失效广播，已清除本地 L1 缓存: activityId={}, fromNode={}", activityId, originNode);
+                    } catch (NumberFormatException e) {
+                        log.warn("解析多级缓存失效消息异常: msg={}", msg);
+                    }
+                }
+            });
+            log.info("活动多级缓存 (L1 Caffeine + L2 Redis) Pub/Sub 广播监听已启动: nodeId={}", nodeId);
+        } catch (Exception e) {
+            log.error("初始化活动多级缓存 Pub/Sub 监听失败，跨节点缓存一致性降级: {}", e.getMessage(), e);
         }
     }
 

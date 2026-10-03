@@ -39,7 +39,7 @@ public class EnrollmentCheckinHandler extends AbstractCheckinHandler {
 
         if (rec == null || Objects.equals(rec.getStatus(), 0)
                 || Objects.equals(rec.getStatus(), com.campus.modules.activity.enums.StudentActivityStatus.CANCELLED.getCode())) {
-            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "请先报名活动");
+            throw new BusinessException(ResultCode.ACTIVITY_NOT_ENROLLED.getCode(), "请先报名活动");
         }
     }
 }

@@ -35,13 +35,9 @@ public class CertificateController {
 
     @Autowired
     public CertificateController(CertificateService certificateService,
-                                 @Autowired(required = false) CertificateRenderService certificateRenderService) {
-        this.certificateService = certificateService;
-        this.certificateRenderService = certificateRenderService;
-    }
-
-    public CertificateController(CertificateService certificateService) {
-        this(certificateService, null);
+                                 CertificateRenderService certificateRenderService) {
+        this.certificateService = java.util.Objects.requireNonNull(certificateService, "certificateService must not be null");
+        this.certificateRenderService = java.util.Objects.requireNonNull(certificateRenderService, "certificateRenderService must not be null");
     }
 
     /**
@@ -137,9 +133,6 @@ public class CertificateController {
      */
     @GetMapping(value = {"/file/{certificateNo}.png", "/file/{certificateNo}", "/{certificateNo}/image"}, produces = MediaType.IMAGE_PNG_VALUE)
     public ResponseEntity<byte[]> getCertificateImage(@PathVariable("certificateNo") String certificateNo) {
-        if (certificateRenderService == null) {
-            return ResponseEntity.notFound().build();
-        }
         if (certificateNo == null || certificateNo.isBlank()) {
             return ResponseEntity.badRequest().build();
         }

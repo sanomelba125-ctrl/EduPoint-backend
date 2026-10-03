@@ -17,7 +17,17 @@ import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * 礼品缓存三防工程化落地服务 (P1-8 穿透/击穿/雪崩)
+ * 礼品详情缓存三防工程化落地服务 (P1-8 穿透/击穿/雪崩)
+ *
+ * <p><b>为什么只有 L2 (Redis) 不加 L1 (Caffeine)：</b>
+ * 礼品详情是全站共享的读多写少数据，单条数据体积较大（包含描述、多图 URL、兑换规格等），
+ * 且对"价格/分值变动"极度敏感。L2 分布式缓存天然具备跨实例一致性；若盲目引入 L1 本地缓存，
+ * 则必须同时实现严格的跨节点失效广播（如 {@link com.campus.modules.activity.service.impl.ActivityCacheServiceImpl}），
+ * 否则管理员调价或下架后其他节点在 TTL 到期前仍会返回陈旧价格，引发价格超兑纠纷。
+ *
+ * <p><b>若未来需要引入 L1，必须同时满足：</b>
+ * 1. 接入 Redisson RTopic 跨节点双向失效广播，且启动与订阅失败必须可见；
+ * 2. 明确评估全站改价至各实例完全生效的广播同步延迟容忍度。
  */
 @Slf4j
 @Service
@@ -30,9 +40,7 @@ public class GiftCacheService {
 
     private final StringRedisTemplate redis;
     private final GiftMapper giftMapper;
-
-    @Autowired(required = false)
-    private RedissonClient redissonClient;
+    private final RedissonClient redissonClient;
 
     private RBloomFilter<Long> giftBloomFilter;
 
@@ -46,10 +54,6 @@ public class GiftCacheService {
      * 预计容纳 10 万个礼品，误判率 0.01 (1%)
      */
     public synchronized void initBloomFilter() {
-        if (redissonClient == null) {
-            log.warn("[缓存三防-防穿透] RedissonClient 未注入，跳过 Redisson BloomFilter 初始化");
-            return;
-        }
         try {
             giftBloomFilter = redissonClient.getBloomFilter("bloom:gift:ids");
             giftBloomFilter.tryInit(100000L, 0.01);

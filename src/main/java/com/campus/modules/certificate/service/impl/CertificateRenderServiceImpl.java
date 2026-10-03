@@ -41,22 +41,39 @@ import java.util.Map;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class CertificateRenderServiceImpl implements CertificateRenderService {
 
     private final CertificateMapper certificateMapper;
     private final StudentMapper studentMapper;
     private final ActivityMapper activityMapper;
     private final QiniuProperties qiniuProperties;
-
-    @Autowired(required = false)
-    private UploadManager uploadManager;
-
-    @Autowired(required = false)
-    private Auth qiniuAuth;
+    private final UploadManager uploadManager;
+    private final Auth qiniuAuth;
 
     private static final int CANVAS_WIDTH = 1200;
     private static final int CANVAS_HEIGHT = 840;
+
+    @Autowired
+    public CertificateRenderServiceImpl(CertificateMapper certificateMapper,
+                                        StudentMapper studentMapper,
+                                        ActivityMapper activityMapper,
+                                        QiniuProperties qiniuProperties,
+                                        UploadManager uploadManager,
+                                        Auth qiniuAuth) {
+        this.certificateMapper = certificateMapper;
+        this.studentMapper = studentMapper;
+        this.activityMapper = activityMapper;
+        this.qiniuProperties = qiniuProperties;
+        this.uploadManager = uploadManager;
+        this.qiniuAuth = qiniuAuth;
+    }
+
+    public CertificateRenderServiceImpl(CertificateMapper certificateMapper,
+                                        StudentMapper studentMapper,
+                                        ActivityMapper activityMapper,
+                                        QiniuProperties qiniuProperties) {
+        this(certificateMapper, studentMapper, activityMapper, qiniuProperties, null, null);
+    }
 
     @Override
     public String renderAndUpload(Long certificateId) {

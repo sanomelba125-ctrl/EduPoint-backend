@@ -23,7 +23,7 @@ public class DuplicateCheckinHandler extends AbstractCheckinHandler {
     protected void doHandle(CheckinContext context) {
         StudentActivity rec = context.getStudentActivity();
         if (rec != null && Objects.equals(rec.getStatus(), com.campus.modules.activity.enums.StudentActivityStatus.COMPLETED.getCode())) {
-            throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "您已完成签到，请勿重复打卡");
+            throw new BusinessException(ResultCode.ALREADY_CHECKED_IN.getCode(), "您已完成签到，请勿重复打卡");
         }
     }
 }

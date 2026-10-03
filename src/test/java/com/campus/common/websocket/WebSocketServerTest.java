@@ -120,8 +120,7 @@ class WebSocketServerTest {
         RTopic topic = mock(RTopic.class);
         when(redissonClient.getTopic(WebSocketClusterBridge.TOPIC_NAME)).thenReturn(topic);
 
-        WebSocketClusterBridge bridge = new WebSocketClusterBridge();
-        ReflectionTestUtils.setField(bridge, "redissonClient", redissonClient);
+        WebSocketClusterBridge bridge = new WebSocketClusterBridge(redissonClient);
         bridge.init();
 
         // 测试发布用户消息

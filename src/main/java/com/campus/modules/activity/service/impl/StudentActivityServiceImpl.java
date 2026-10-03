@@ -68,8 +68,8 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                                       ActivityCacheService activityCacheService,
                                       TransactionTemplate transactionTemplate,
                                       CheckinChainPipeline checkinChainPipeline,
-                                      @Autowired(required = false) SysNoticeService sysNoticeService,
-                                      @Autowired(required = false) CertificateRenderService certificateRenderService) {
+                                      SysNoticeService sysNoticeService,
+                                      CertificateRenderService certificateRenderService) {
         this.activityMapper = activityMapper;
         this.waitlistMapper = waitlistMapper;
         this.codeMapper = codeMapper;

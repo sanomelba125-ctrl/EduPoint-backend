@@ -17,9 +17,12 @@ import java.util.Arrays;
  *    - 405: METHOD_NOT_ALLOWED 请求方法不支持
  *    - 409: CONFLICT 业务状态冲突 / 乐观锁冲突
  *    - 429: TOO_MANY_REQUESTS 请求被限流
- *    - 500: ERROR 系统未捕获异常 / 服务端错误
+ *    - 500: ERROR 系统内部未捕获异常 / 服务端错误
+ *    - 501: BUSINESS_ERROR 通用业务逻辑处理失败
  *
- * 2. 领域业务细分错误码（五位定长分段，彻底杜绝与 HTTP 501~506 撞车）：
+ * <p><b>维护约定：新增枚举项时必须确认 code 全局唯一。</b>
+ *
+ * 2. 领域业务细分错误码（五位定长分段，彻底杜绝与 HTTP 状态码撞车）：
  *    - 2xxxx: 用户身份与权限域 (User & Auth)
  *    - 3xxxx: 活动与打卡核验域 (Activity & Checkin)
  *    - 4xxxx: 积分账户与礼品商城域 (Points & Mall)
@@ -40,7 +43,7 @@ public enum ResultCode {
     CONFLICT(409, "数据状态冲突或版本并发冲突"),
     TOO_MANY_REQUESTS(429, "请求过于频繁，触发系统限流保护"),
     ERROR(500, "系统内部异常，请稍后重试"),
-    BUSINESS_ERROR(500, "业务逻辑处理失败"),
+    BUSINESS_ERROR(501, "业务逻辑处理失败"),
 
     // ==========================================
     // 2. 用户与认证域 (2xxxx)

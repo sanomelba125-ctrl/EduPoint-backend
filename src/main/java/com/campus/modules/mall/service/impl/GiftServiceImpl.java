@@ -33,26 +33,26 @@ import com.campus.modules.mall.service.GiftCacheService;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements GiftService {
 
     /** 单次补货上限，防误操作输入天文数字 */
     private static final int MAX_RESTOCK_QUANTITY = 100000;
 
     private final StudentGiftMapper studentGiftMapper;
+    private final GiftStockRedisService giftStockRedisService;
+    private final GiftCacheService giftCacheService;
 
-    @Autowired(required = false)
-    private GiftStockRedisService giftStockRedisService;
-
-    @Autowired(required = false)
-    private GiftCacheService giftCacheService;
-
-    public void setGiftStockRedisService(GiftStockRedisService giftStockRedisService) {
+    @Autowired
+    public GiftServiceImpl(StudentGiftMapper studentGiftMapper,
+                           GiftStockRedisService giftStockRedisService,
+                           GiftCacheService giftCacheService) {
+        this.studentGiftMapper = studentGiftMapper;
         this.giftStockRedisService = giftStockRedisService;
+        this.giftCacheService = giftCacheService;
     }
 
-    public void setGiftCacheService(GiftCacheService giftCacheService) {
-        this.giftCacheService = giftCacheService;
+    public GiftServiceImpl(StudentGiftMapper studentGiftMapper) {
+        this(studentGiftMapper, null, null);
     }
 
     @Override

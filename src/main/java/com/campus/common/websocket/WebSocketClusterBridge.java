@@ -29,8 +29,16 @@ public class WebSocketClusterBridge {
     private static final String NODE_ID = UUID.randomUUID().toString();
     private static WebSocketClusterBridge INSTANCE;
 
-    @Autowired(required = false)
-    private RedissonClient redissonClient;
+    private final RedissonClient redissonClient;
+
+    public WebSocketClusterBridge() {
+        this.redissonClient = null;
+    }
+
+    @Autowired
+    public WebSocketClusterBridge(RedissonClient redissonClient) {
+        this.redissonClient = redissonClient;
+    }
 
     private static final ObjectMapper OBJECT_MAPPER = JsonMapper.builder()
             .addModule(new JavaTimeModule())
@@ -51,10 +59,13 @@ public class WebSocketClusterBridge {
     @PostConstruct
     public void init() {
         INSTANCE = this;
-        if (redissonClient != null) {
-            try {
-                RTopic topic = redissonClient.getTopic(TOPIC_NAME);
-                topic.addListener(ClusterMessage.class, (channel, msg) -> {
+        if (redissonClient == null) {
+            log.info("未检测到 RedissonClient 实例，WebSocket 运行于单机单实例模式");
+            return;
+        }
+        try {
+            RTopic topic = redissonClient.getTopic(TOPIC_NAME);
+            topic.addListener(ClusterMessage.class, (channel, msg) -> {
                     if (msg == null) return;
                     // 过滤本节点发送的消息，防止本节点重复消费
                     if (NODE_ID.equals(msg.getOriginNodeId())) {
@@ -68,12 +79,9 @@ public class WebSocketClusterBridge {
                         WebSocketServer.deliverLocalBroadcast(msg.getUserType(), msg.getMessage());
                     }
                 });
-                log.info("WebSocket 集群广播桥接已启动: nodeId={}, topic={}", NODE_ID, TOPIC_NAME);
-            } catch (Exception e) {
-                log.warn("初始化 WebSocket 集群广播监听异常，降级为单机模式: {}", e.getMessage());
-            }
-        } else {
-            log.info("未检测到 RedissonClient，WebSocket 运行于单机模式");
+            log.info("WebSocket 集群广播桥接已启动: nodeId={}, topic={}", NODE_ID, TOPIC_NAME);
+        } catch (Exception e) {
+            log.warn("初始化 WebSocket 集群广播监听异常，降级为单机模式: {}", e.getMessage());
         }
     }
 

@@ -55,8 +55,7 @@ class ActivityCacheServiceImplTest {
         when(redis.opsForValue()).thenReturn(valueOperations);
         when(redissonClient.getTopic(anyString())).thenReturn(rTopic);
 
-        cacheService = new ActivityCacheServiceImpl(redis, objectMapper, activityMapper, rabbitTemplate);
-        ReflectionTestUtils.setField(cacheService, "redissonClient", redissonClient);
+        cacheService = new ActivityCacheServiceImpl(redis, objectMapper, activityMapper, rabbitTemplate, redissonClient);
         cacheService.initPubSub();
     }
 

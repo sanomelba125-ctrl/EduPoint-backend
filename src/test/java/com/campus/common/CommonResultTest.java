@@ -63,8 +63,35 @@ class CommonResultTest {
 
         // 工厂方法与防御
         assertEquals(ResultCode.SUCCESS, ResultCode.of(200));
+        assertEquals(ResultCode.BUSINESS_ERROR, ResultCode.of(501));
         assertEquals(ResultCode.ACTIVITY_EXPIRED, ResultCode.of(30001));
         assertEquals(ResultCode.ERROR, ResultCode.of(999999));
         assertEquals(ResultCode.ERROR, ResultCode.of(null));
+    }
+
+    @Test
+    @DisplayName("守卫测试：断言ResultCode全部枚举状态码全局唯一，杜绝撞车")
+    void testResultCodeUniqueness() {
+        java.util.Set<Integer> seenCodes = new java.util.HashSet<>();
+        for (ResultCode rc : ResultCode.values()) {
+            boolean isUnique = seenCodes.add(rc.getCode());
+            assertTrue(isUnique, "发现重复的状态码定义: code=" + rc.getCode() + ", enum=" + rc.name());
+            assertEquals(rc, ResultCode.of(rc.getCode()), "ResultCode.of() 无法反查出对应枚举: " + rc.name());
+        }
+    }
+
+    @Test
+    @DisplayName("测试BusinessException对ResultCode及动态详情的规范包装")
+    void testBusinessExceptionWithResultCode() {
+        com.campus.common.exception.BusinessException ex1 =
+                new com.campus.common.exception.BusinessException(ResultCode.POINTS_NOT_ENOUGH);
+        assertEquals(40001, ex1.getCode());
+        assertEquals("您的可用积分余额不足", ex1.getMessage());
+
+        com.campus.common.exception.BusinessException ex2 =
+                new com.campus.common.exception.BusinessException(ResultCode.POINTS_NOT_ENOUGH, "当前余额: 10 pts，本次需要: 50 pts");
+        assertEquals(40001, ex2.getCode());
+        assertTrue(ex2.getMessage().contains("当前余额: 10 pts"));
+        assertTrue(ex2.getMessage().contains("您的可用积分余额不足"));
     }
 }

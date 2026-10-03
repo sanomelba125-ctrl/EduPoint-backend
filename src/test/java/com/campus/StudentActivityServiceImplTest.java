@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.common.auth.AuthUtil;
 import com.campus.common.exception.BusinessException;
+import com.campus.common.result.ResultCode;
 import com.campus.config.RabbitMqConfig;
 import com.campus.modules.activity.dto.ActivityCheckinDTO;
 import com.campus.modules.activity.dto.ActivityCheckinVO;
@@ -612,7 +613,7 @@ class StudentActivityServiceImplTest {
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.checkin(checkinRequest(ACTIVITY_ID, NONCE, SIGN, null, null)));
-        assertEquals(400, ex.getCode());
+        assertEquals(ResultCode.ACTIVITY_NOT_ENROLLED.getCode(), ex.getCode());
         assertEquals("请先报名活动", ex.getMessage());
     }
 
@@ -646,7 +647,7 @@ class StudentActivityServiceImplTest {
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.checkin(checkinRequest(ACTIVITY_ID, NONCE, SIGN, null, null)));
-        assertEquals(400, ex.getCode());
+        assertEquals(ResultCode.ALREADY_CHECKED_IN.getCode(), ex.getCode());
         assertEquals("您已完成签到，请勿重复打卡", ex.getMessage());
 
         verify(codeMapper, never()).markUsed(anyLong(), anyLong());
@@ -695,7 +696,7 @@ class StudentActivityServiceImplTest {
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.checkin(checkinRequest(ACTIVITY_ID, NONCE, SIGN,
                         new BigDecimal("30.623412"), new BigDecimal("114.362145"))));
-        assertEquals(400, ex.getCode());
+        assertEquals(ResultCode.ACTIVITY_GEOFENCE_FAILED.getCode(), ex.getCode());
         assertEquals("超出活动签到范围", ex.getMessage());
         verify(codeMapper, never()).markUsed(any(), any());
     }
