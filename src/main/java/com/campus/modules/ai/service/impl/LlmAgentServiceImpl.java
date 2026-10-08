@@ -265,8 +265,7 @@ public class LlmAgentServiceImpl implements LlmAgentService {
         aiMessageService.saveMessage(studentId, conversationId, "assistant", answer, "LOCAL_AGENT", toolCallJson);
     }
 
-    @Override
-    public void streamToolResultsFallback(SseEmitter emitter, List<ToolExecutionRecord> records) {
+    private void streamToolResultsFallback(SseEmitter emitter, List<ToolExecutionRecord> records) {
         if (records == null || records.isEmpty()) {
             streamDirectText(emitter, "暂时无法组织回答，请稍后重试或联系管理员。", "LOCAL_AGENT");
             return;

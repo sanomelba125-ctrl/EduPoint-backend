@@ -16,6 +16,11 @@ spring:
     enabled: true
     baseline-on-migrate: true
     baseline-version: 1.0.0
+  sql:
+    init:
+      # 演示种子数据按需导入支持 (生产环境严格关闭；开发测试需要时可设为 always)
+      mode: never
+      data-locations: classpath:data/demo-data.sql
   data:
     redis:
       host: localhost

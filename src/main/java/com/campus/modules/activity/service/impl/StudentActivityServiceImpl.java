@@ -31,8 +31,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import jakarta.annotation.PostConstruct;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -195,7 +193,8 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                                 .max(Integer::compareTo)
                                 .orElse(0);
                     }
-                } catch (Exception ignored) {
+                } catch (Exception e) {
+                    log.warn("[候补排队] 兼容回落查询最大排队序号异常，使用0兜底: activityId={}, err={}", aid, e.getMessage());
                 }
             }
             if (max == null) {
@@ -332,16 +331,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             // P2-10: 候补转正即时触达闭环，事务提交后触发系统通知与 WebSocket 强提醒
             final Long promotedStudentId = w.getStudentId();
             final String actTitle = activity.getTitle();
-            if (TransactionSynchronizationManager.isActualTransactionActive()) {
-                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                    @Override
-                    public void afterCommit() {
-                        notifyWaitlistPromoted(promotedStudentId, aid, actTitle);
-                    }
-                });
-            } else {
-                notifyWaitlistPromoted(promotedStudentId, aid, actTitle);
-            }
+            com.campus.common.tx.AfterCommitExecutor.run(() -> notifyWaitlistPromoted(promotedStudentId, aid, actTitle));
             return null;
         });
     }
@@ -414,24 +404,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
 
                 if (certificateRenderService != null && c.getId() != null) {
                     final Long certId = c.getId();
-                    if (TransactionSynchronizationManager.isActualTransactionActive()) {
-                        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                            @Override
-                            public void afterCommit() {
-                                try {
-                                    certificateRenderService.renderAndUpload(certId);
-                                } catch (Exception e) {
-                                    log.warn("异步渲染证书图片失败: certId={}, error={}", certId, e.getMessage());
-                                }
-                            }
-                        });
-                    } else {
-                        try {
-                            certificateRenderService.renderAndUpload(certId);
-                        } catch (Exception e) {
-                            log.warn("渲染证书图片失败: certId={}, error={}", certId, e.getMessage());
-                        }
-                    }
+                    com.campus.common.tx.AfterCommitExecutor.run(() -> certificateRenderService.renderAndUpload(certId));
                 }
             }
             return ActivityCheckinVO.builder()
@@ -642,26 +615,18 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
     }
 
     private void publishAfterCommit(Map<String, Object> message) {
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                try {
-                    rabbitTemplate.convertAndSend(RabbitMqConfig.ACTIVITY_EXCHANGE,
-                            RabbitMqConfig.ACTIVITY_CHECKIN_ROUTING_KEY, message);
-                } catch (Exception e) {
-                    log.error("Post-commit check-in event publish failed: {}", message, e);
-                }
+        com.campus.common.tx.AfterCommitExecutor.run(() -> {
+            try {
+                rabbitTemplate.convertAndSend(RabbitMqConfig.ACTIVITY_EXCHANGE,
+                        RabbitMqConfig.ACTIVITY_CHECKIN_ROUTING_KEY, message);
+            } catch (Exception e) {
+                log.error("Post-commit check-in event publish failed: {}", message, e);
             }
         });
     }
 
     private void refreshActivityCacheAfterCommit(Long activityId) {
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                activityCacheService.requestRefresh(activityId);
-            }
-        });
+        com.campus.common.tx.AfterCommitExecutor.run(() -> activityCacheService.requestRefresh(activityId));
     }
 
     private <T> T withLock(String key, java.util.function.Supplier<T> action) {

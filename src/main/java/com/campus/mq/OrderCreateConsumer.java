@@ -49,6 +49,10 @@ public class OrderCreateConsumer {
             msg = JSON.parseObject(rawPayload, OrderCreateMessage.class);
         } catch (Exception e) {
             log.error("[MQ消费异常] 消息格式损坏，判定为无法解析的毒消息，路由至死信队列: payload={}", rawPayload, e);
+            // 毒消息同样已预扣过 Redis 库存，必须尽力回补，否则这笔库存被永久占用（少卖）。
+            // 反序列化失败拿不到强类型消息，退化为正则提取 giftId/quantity 尝试回补；
+            // 提取失败则只能由 StockReconciliationScheduler 的 5 分钟对账兜底。
+            compensateIfParsable(rawPayload);
             // requeue = false -> 自动转入死信队列
             channel.basicNack(deliveryTag, false, false);
             return;
@@ -111,5 +115,56 @@ public class OrderCreateConsumer {
         } finally {
             MDC.remove("traceId");
         }
+    }
+
+    /**
+     * 毒消息场景下的尽力库存回补：反序列化失败时 {@code msg} 为 null，无法走强类型分支。
+     * <p>用正则从原始 JSON 载荷中提取 {@code giftId} 与 {@code quantity} 后回补预扣的库存，
+     * 避免「消息损坏进死信 + Redis 库存被永久占用」的少卖。
+     * <p>提取失败（如载荷被截断）时仅告警，兜底交由 {@code StockReconciliationScheduler}
+     * 以 MySQL 为准的定时对账修复。
+     *
+     * @param rawPayload 原始消息载荷
+     */
+    private void compensateIfParsable(String rawPayload) {
+        if (rawPayload == null || rawPayload.isBlank()) {
+            return;
+        }
+        try {
+            String giftIdRaw = extractJsonField(rawPayload, "giftId");
+            String quantityRaw = extractJsonField(rawPayload, "quantity");
+            if (giftIdRaw == null || quantityRaw == null) {
+                log.warn("[MQ毒消息] 未能从损坏载荷中提取 giftId/quantity，库存回补跳过，交由定时对账兜底: payload={}", rawPayload);
+                return;
+            }
+            long giftId = Long.parseLong(giftIdRaw.trim());
+            int quantity = Integer.parseInt(quantityRaw.trim());
+            if (quantity <= 0) {
+                log.warn("[MQ毒消息] 损坏载荷中 quantity 非法，库存回补跳过: giftId={}, quantity={}", giftId, quantity);
+                return;
+            }
+            giftStockRedisService.compensateStock(giftId, quantity);
+            log.info("[MQ毒消息] 已尽力回补预扣库存: giftId={}, quantity={}", giftId, quantity);
+        } catch (Exception ex) {
+            log.warn("[MQ毒消息] 损坏载荷库存回补失败，交由定时对账兜底: payload={}, err={}", rawPayload, ex.getMessage());
+        }
+    }
+
+    /**
+     * 从扁平 JSON 文本中提取指定字段的原始值（支持字符串/数字/布尔三种形态，不处理嵌套对象与转义）。
+     *
+     * @param json JSON 文本
+     * @param field 字段名
+     * @return 字段值的原始文本；不存在或格式不匹配时返回 null
+     */
+    private String extractJsonField(String json, String field) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("\"" + java.util.regex.Pattern.quote(field) + "\"\\s*:\\s*(\"([^\"]*)\"|[^,}\\s]+)")
+                .matcher(json);
+        if (!m.find()) {
+            return null;
+        }
+        // 分组 2 为带引号的字符串值（可能为空串），分组 1 覆盖两种形态
+        return m.group(2) != null ? m.group(2) : m.group(1);
     }
 }

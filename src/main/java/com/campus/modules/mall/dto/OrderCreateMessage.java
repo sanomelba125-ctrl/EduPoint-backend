@@ -17,8 +17,26 @@ public record OrderCreateMessage(
         String receiverPhone,
         String receiverAddress,
         long timestamp,
-        String traceId
+        String traceId,
+        String orderNo
 ) implements Serializable {
+
+    public OrderCreateMessage(
+            String messageId,
+            Long studentId,
+            Long giftId,
+            Integer quantity,
+            String requestId,
+            String exchangeToken,
+            String receiverName,
+            String receiverPhone,
+            String receiverAddress,
+            long timestamp,
+            String traceId
+    ) {
+        this(messageId, studentId, giftId, quantity, requestId, exchangeToken,
+                receiverName, receiverPhone, receiverAddress, timestamp, traceId, null);
+    }
 
     public OrderCreateMessage {
         if (messageId == null || messageId.isBlank()) {

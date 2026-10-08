@@ -6,6 +6,7 @@ import com.qiniu.storage.UploadManager;
 import com.qiniu.util.Auth;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 
 /**
@@ -32,26 +33,22 @@ public class QiniuConfig {
 
     /**
      * 构建七牛云上传管理器 UploadManager
-     * 仅在七牛云模式启用时实例化，本地存储模式返回 null 降级
+     * 仅在 campus.oss.type 配置为 qiniu 时由 Spring 条件装配，本地存储模式不注册该 Bean
      */
     @Bean
+    @ConditionalOnProperty(name = "campus.oss.type", havingValue = "qiniu")
     public UploadManager uploadManager() {
-        if (!qiniuProperties.isQiniuEnabled()) {
-            return null;
-        }
         Configuration cfg = new Configuration(Region.autoRegion());
         return new UploadManager(cfg);
     }
 
     /**
      * 构建七牛云认证凭证 Auth
-     * 仅在七牛云模式启用时实例化，避免生成假数据凭证
+     * 仅在 campus.oss.type 配置为 qiniu 时由 Spring 条件装配，本地存储模式不注册该 Bean
      */
     @Bean
+    @ConditionalOnProperty(name = "campus.oss.type", havingValue = "qiniu")
     public Auth qiniuAuth() {
-        if (!qiniuProperties.isQiniuEnabled()) {
-            return null;
-        }
         return Auth.create(qiniuProperties.getAccessKey(), qiniuProperties.getSecretKey());
     }
 }

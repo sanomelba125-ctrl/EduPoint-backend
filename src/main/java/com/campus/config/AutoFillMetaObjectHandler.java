@@ -63,7 +63,9 @@ public class AutoFillMetaObjectHandler implements MetaObjectHandler {
                     return Long.parseLong(loginIdStr);
                 }
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            // 异步线程、定时任务或MQ消费者调用时无 Sa-Token 请求上下文，安全降级返回 null
+            log.trace("[审计字段自动填充] 当前上下文无登录态，使用 null 填充审计人字段: {}", e.getMessage());
         }
         return null;
     }

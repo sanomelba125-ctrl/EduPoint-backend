@@ -82,4 +82,9 @@ public interface StudentGiftService extends IService<StudentGift> {
      * 消费者异步落库处理 (P1-2 异步段: 数据库事务更新库存、扣减积分与保存订单)
      */
     boolean processAsyncOrder(OrderCreateMessage msg);
+
+    /**
+     * 按 requestId 查询当前学生的秒杀订单，用于前端轮询排队结果 (防横向越权)
+     */
+    StudentGiftVO getSeckillResultByRequestId(String requestId, Long studentId);
 }

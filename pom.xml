@@ -258,6 +258,38 @@
                         </indent>
                     </java>
                 </configuration>
+                <executions>
+                    <!-- 绑定到 verify 阶段：格式不合规则构建失败，真正成为「质量门禁」而非仅手工工具。
+                         注意：启用前需先执行一次 mvn spotless:apply 对齐存量代码，
+                         否则首次构建会因存量 20000+ 行格式不达标而失败。 -->
+                    <execution>
+                        <id>spotless-check</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- JaCoCo 单元测试覆盖率统计插件 (P4-1 自动化CI/CD度量) -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.12</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

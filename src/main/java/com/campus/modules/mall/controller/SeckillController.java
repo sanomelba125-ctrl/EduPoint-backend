@@ -2,7 +2,6 @@ package com.campus.modules.mall.controller;
 
 import cn.dev33.satoken.annotation.SaCheckRole;
 import cn.dev33.satoken.annotation.SaMode;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.campus.common.annotation.RateLimit;
 import com.campus.common.auth.AuthUtil;
 import com.campus.common.constant.UserRole;
@@ -10,14 +9,12 @@ import com.campus.common.result.Result;
 import com.campus.modules.mall.dto.GiftExchangeDTO;
 import com.campus.modules.mall.dto.GiftExchangeVO;
 import com.campus.modules.mall.dto.StudentGiftVO;
-import com.campus.modules.mall.entity.StudentGift;
 import com.campus.modules.mall.service.StudentGiftService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.web.bind.annotation.*;
@@ -68,20 +65,9 @@ public class SeckillController {
     @GetMapping("/result/{requestId}")
     public Result<StudentGiftVO> querySeckillResult(@PathVariable("requestId") String requestId) {
         Long studentId = AuthUtil.requireStudentId();
-        StudentGift order = studentGiftService.getOne(
-                new LambdaQueryWrapper<StudentGift>()
-                        .eq(StudentGift::getRequestId, requestId)
-                        .eq(StudentGift::getStudentId, studentId)
-                        .last("LIMIT 1")
-        );
-
-        if (order != null) {
-            StudentGiftVO vo = new StudentGiftVO();
-            BeanUtils.copyProperties(order, vo);
-            return Result.success("订单落库成功", vo);
-        } else {
-            // 尚未落库完成或排队中
-            return Result.success("排队处理中", null);
-        }
+        StudentGiftVO vo = studentGiftService.getSeckillResultByRequestId(requestId, studentId);
+        return vo != null
+                ? Result.success("订单落库成功", vo)
+                : Result.success("排队处理中", null);
     }
 }

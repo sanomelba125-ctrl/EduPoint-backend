@@ -1,8 +1,11 @@
 package com.campus.modules.mall;
 
+import com.alibaba.fastjson2.JSON;
 import com.campus.config.RabbitMqConfig;
+import com.campus.modules.mall.dto.OrderCreateMessage;
 import com.campus.modules.mall.entity.LocalMessage;
 import com.campus.modules.mall.mapper.LocalMessageMapper;
+import com.campus.modules.mall.service.GiftStockRedisService;
 import com.campus.modules.mall.task.OutboxRetryScheduler;
 import com.campus.modules.mall.service.LocalMessageService;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,13 +37,16 @@ public class TransactionalOutboxTest {
     @Mock
     private RabbitTemplate rabbitTemplate;
 
+    @Mock
+    private GiftStockRedisService giftStockRedisService;
+
     private LocalMessageService localMessageService;
     private OutboxRetryScheduler outboxRetryScheduler;
 
     @BeforeEach
     void setUp() {
         localMessageService = new LocalMessageService(localMessageMapper);
-        outboxRetryScheduler = new OutboxRetryScheduler(localMessageService, rabbitTemplate);
+        outboxRetryScheduler = new OutboxRetryScheduler(localMessageService, rabbitTemplate, giftStockRedisService);
     }
 
     @Test
@@ -134,5 +140,71 @@ public class TransactionalOutboxTest {
         );
         // 验证投递成功后更新状态为已发送
         verify(localMessageMapper, times(1)).markAsPublished(pendingMsg.getMessageId());
+    }
+
+    @Test
+    @DisplayName("P1-5: 在途预扣统计 - 按礼品聚合未完成订单件数，损坏/缺字段载荷跳过而不干扰统计")
+    void testCountInflightOrderQtyByGift() {
+        LocalMessage first = inflightMessage("msg-inflight-1", 1L, 2);
+        LocalMessage second = inflightMessage("msg-inflight-2", 1L, 1);
+        LocalMessage third = inflightMessage("msg-inflight-3", 2L, 3);
+
+        LocalMessage broken = new LocalMessage();
+        broken.setMessageId("msg-broken");
+        broken.setPayload("{ 这不是合法 JSON");
+
+        LocalMessage withoutGiftId = new LocalMessage();
+        withoutGiftId.setMessageId("msg-without-gift");
+        withoutGiftId.setPayload("{\"messageId\":\"x\",\"studentId\":1001}");
+
+        when(localMessageMapper.selectInflightOrderMessages())
+                .thenReturn(List.of(first, second, third, broken, withoutGiftId));
+
+        Map<Long, Integer> inflightByGift = localMessageService.countInflightOrderQtyByGift();
+
+        assertEquals(2, inflightByGift.size());
+        assertEquals(Integer.valueOf(3), inflightByGift.get(1L)); // 2 + 1
+        assertEquals(Integer.valueOf(3), inflightByGift.get(2L));
+    }
+
+    @Test
+    @DisplayName("P1-5: 在途预扣统计 - 无未完成订单时返回空快照（对账退化为按实存比对）")
+    void testCountInflightOrderQtyByGift_Empty() {
+        when(localMessageMapper.selectInflightOrderMessages()).thenReturn(List.of());
+
+        assertTrue(localMessageService.countInflightOrderQtyByGift().isEmpty());
+    }
+
+    @Test
+    @DisplayName("P1-5: 消息判死（重试超限）时回补 Redis 预扣，避免该笔库存被永久占用造成少卖")
+    void testOutboxRetryScheduler_DeadMessage_CompensatesStock() {
+        LocalMessage deadMessage = inflightMessage("msg-dead-001", 7L, 2);
+        deadMessage.setRetryCount(5); // 达到 MAX_RETRIES，判定为死亡
+        deadMessage.setStatus(0);
+
+        when(localMessageMapper.selectPendingMessages(any(LocalDateTime.class), eq(5), eq(50)))
+                .thenReturn(List.of(deadMessage));
+
+        outboxRetryScheduler.retryPendingMessages();
+
+        // 判死的消息不再重投：重投成功会把状态推进为 PUBLISHED，此处必须不发生
+        verify(localMessageMapper, never()).markAsPublished(anyString());
+        // 但必须回补它在秒杀入口预扣的 Redis 库存
+        verify(giftStockRedisService, times(1)).compensateStock(7L, 2);
+        verify(localMessageMapper, times(1)).markAsFailed(eq("msg-dead-001"), eq(3), anyString());
+    }
+
+    /** 构造一条「在途」发件箱消息：payload 与生产同源，均为 OrderCreateMessage 契约序列化结果 */
+    private LocalMessage inflightMessage(String messageId, Long giftId, int quantity) {
+        OrderCreateMessage payload = new OrderCreateMessage(
+                messageId, 1001L, giftId, quantity, "req-" + messageId, null,
+                "张三", "13911110006", "大学生活动中心一楼 102 创客服务台",
+                System.currentTimeMillis(), "trace-test", "ORD-TEST-0001");
+        LocalMessage message = new LocalMessage();
+        message.setMessageId(messageId);
+        message.setBizType("GIFT_ORDER_CREATE");
+        message.setPayload(JSON.toJSONString(payload));
+        message.setStatus(0);
+        return message;
     }
 }

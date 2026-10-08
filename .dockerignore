@@ -1,0 +1,7 @@
+.git
+.idea
+target
+logs
+uploads/temp
+*.log
+.mvn/wrapper/maven-wrapper.jar

@@ -1,9 +1,7 @@
 package com.campus.modules.ai.service;
 
-import com.campus.modules.ai.agent.model.ToolExecutionRecord;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.util.List;
 
 /**
  * 大模型 Agent 调度与工具协同执行领域服务接口
@@ -30,12 +28,4 @@ public interface LlmAgentService {
      * @param conversationId 会话分组ID
      */
     void streamLocalAgentAnswer(SseEmitter emitter, String question, Long studentId, String conversationId);
-
-    /**
-     * 第二轮大模型生成超时或异常时的已查事实降级展示
-     *
-     * @param emitter SSE 发送器
-     * @param records 已成功执行的工具事实记录
-     */
-    void streamToolResultsFallback(SseEmitter emitter, List<ToolExecutionRecord> records);
 }

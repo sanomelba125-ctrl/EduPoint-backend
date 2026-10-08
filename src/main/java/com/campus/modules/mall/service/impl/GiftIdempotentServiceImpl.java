@@ -23,6 +23,14 @@ import java.util.UUID;
 
 /**
  * 礼品兑换幂等与防重令牌专职服务实现
+ *
+ * <p><b>【核心架构设计不变量】</b>
+ * 1. 本服务（Redis + Lua 幂等占位与防重 Token）作为高并发接入层的第一道高性能阻断防线。
+ * 2. <b>降级策略 (Fail-Open)：</b>在 Redis 瞬时抖动、网络超时或脚本异常时，采用 {@code return true} 降级放行策略，
+ *    优先保证核心兑换主流程的高可用，绝不因缓存侧偶发故障阻断学生正常的权益兑换。
+ * 3. <b>终极一致性底线：</b>所有兑换订单在 MySQL 数据库持久化层均受 {@code student_gift.request_id} 严格全局唯一索引
+ *    （{@code uk_request_id}）保护，若发生并发击穿或降级重复提交，事务必将在落库阶段触发唯一键冲突异常并全事务回滚，
+ *    确保绝对不发生重复扣减积分或超卖。
  */
 @Slf4j
 @Service
@@ -103,7 +111,8 @@ public class GiftIdempotentServiceImpl implements GiftIdempotentService {
             }
             return success;
         } catch (Exception e) {
-            log.warn("Lua 脚本执行核验防重 Token 异常，降级放行(由 DB 联合唯一索引兜底): key={}, error={}", key, e.getMessage());
+            // [架构不变量] 遵循 Fail-Open 策略，Redis 偶发异常不阻断正常兑换，最终一致性由底层 MySQL uk_request_id 唯一索引兜底
+            log.warn("Lua 脚本执行核验防重 Token 异常，降级放行(由 DB 全局唯一索引兜底): key={}, error={}", key, e.getMessage());
             return true;
         }
     }
@@ -117,7 +126,8 @@ public class GiftIdempotentServiceImpl implements GiftIdempotentService {
         try {
             return Boolean.TRUE.equals(redis.opsForValue().setIfAbsent(key, IDEMPOTENT_PENDING, IDEMPOTENT_PENDING_TTL));
         } catch (Exception e) {
-            log.warn("兑换幂等占位写入 Redis 失败，降级放行: key={}, error={}", key, e.getMessage());
+            // [架构不变量] Redis 幂等占位异常降级放行，若并发重复提交，由底层数据库事务与唯一键冲突回滚兜底
+            log.warn("兑换幂等占位写入 Redis 失败，降级放行(由 DB 全局唯一索引兜底): key={}, error={}", key, e.getMessage());
             return true;
         }
     }

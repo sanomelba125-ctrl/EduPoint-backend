@@ -55,8 +55,8 @@ public class CertificateRenderServiceImpl implements CertificateRenderService {
                                         StudentMapper studentMapper,
                                         ActivityMapper activityMapper,
                                         QiniuProperties qiniuProperties,
-                                        UploadManager uploadManager,
-                                        Auth qiniuAuth) {
+                                        @Autowired(required = false) UploadManager uploadManager,
+                                        @Autowired(required = false) Auth qiniuAuth) {
         this.certificateMapper = certificateMapper;
         this.studentMapper = studentMapper;
         this.activityMapper = activityMapper;
@@ -151,7 +151,8 @@ public class CertificateRenderServiceImpl implements CertificateRenderService {
         if (Files.exists(localPath)) {
             try {
                 return Files.readAllBytes(localPath);
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                log.warn("[证书渲染] 读取本地磁盘证书缓存失败: certNo={}, err={}", certificateNo, e.getMessage());
             }
         }
 
@@ -171,7 +172,8 @@ public class CertificateRenderServiceImpl implements CertificateRenderService {
                 Path dir = Paths.get("uploads", "certificates");
                 Files.createDirectories(dir);
                 Files.write(localPath, pngBytes);
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                log.warn("[证书渲染] 写入本地磁盘证书缓存失败: certNo={}, err={}", certificateNo, e.getMessage());
             }
         }
         return pngBytes;
@@ -296,9 +298,10 @@ public class CertificateRenderServiceImpl implements CertificateRenderService {
 
             g2d.dispose();
 
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            ImageIO.write(image, "PNG", baos);
-            return baos.toByteArray();
+            try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+                ImageIO.write(image, "PNG", baos);
+                return baos.toByteArray();
+            }
         } catch (Exception e) {
             log.error("证书动态渲染生成异常: certificateId={}, error={}", cert.getId(), e.getMessage(), e);
             return null;

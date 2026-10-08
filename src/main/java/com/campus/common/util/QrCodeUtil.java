@@ -46,10 +46,11 @@ public final class QrCodeUtil {
             QRCodeWriter writer = new QRCodeWriter();
             BitMatrix bitMatrix = writer.encode(content, BarcodeFormat.QR_CODE, w, h, hints);
 
-            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-            MatrixToImageWriter.writeToStream(bitMatrix, "PNG", outputStream);
-            byte[] bytes = outputStream.toByteArray();
-            return "data:image/png;base64," + Base64.getEncoder().encodeToString(bytes);
+            try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+                MatrixToImageWriter.writeToStream(bitMatrix, "PNG", outputStream);
+                byte[] bytes = outputStream.toByteArray();
+                return "data:image/png;base64," + Base64.getEncoder().encodeToString(bytes);
+            }
         } catch (Exception e) {
             throw new IllegalStateException("生成二维码失败: " + e.getMessage(), e);
         }

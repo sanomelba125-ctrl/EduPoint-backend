@@ -36,6 +36,7 @@ public class GiftStockRedisService {
 
     private static final DefaultRedisScript<Long> DECR_SCRIPT;
     private static final DefaultRedisScript<Long> INCR_SCRIPT;
+    private static final DefaultRedisScript<Long> RECONCILE_SCRIPT;
     private static final ScheduledExecutorService DOUBLE_DELETE_EXECUTOR =
             Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "double-delete-thread");
@@ -51,6 +52,10 @@ public class GiftStockRedisService {
         INCR_SCRIPT = new DefaultRedisScript<>();
         INCR_SCRIPT.setLocation(new ClassPathResource("lua/gift_stock_incr.lua"));
         INCR_SCRIPT.setResultType(Long.class);
+
+        RECONCILE_SCRIPT = new DefaultRedisScript<>();
+        RECONCILE_SCRIPT.setLocation(new ClassPathResource("lua/gift_stock_reconcile.lua"));
+        RECONCILE_SCRIPT.setResultType(Long.class);
     }
 
     /**
@@ -162,18 +167,83 @@ public class GiftStockRedisService {
     }
 
     /**
-     * 差异对账 (以 MySQL 为唯一真相源修正 Redis)
+     * 差异对账：以「MySQL 实存 − 在途预扣」作为唯一正确可用量修正 Redis。
+     *
+     * <p><b>为什么不能直接用 MySQL 库存覆盖：</b>秒杀链路是「Redis 先原子预扣、MQ 异步落库」，
+     * 在消息被消费落库之前，Redis 的可用库存<b>本来就应当</b>低于 MySQL 的实存库存，
+     * 差额正是在途预扣。若按 MySQL 直接覆盖，会把在途预扣一并抹掉——Redis 凭空多出库存，
+     * 下一秒就被重复预扣，形成超卖窗口（这正是「用户看到抢光却无人下单」的成因）。
+     *
+     * <p><b>修正策略（单向安全阀）：</b>
+     * <ol>
+     *   <li>Redis &gt; 应有可用量：库存高于「实存 − 在途」，存在超卖风险，<b>必须下修</b>；</li>
+     *   <li>Redis &lt; 应有可用量：疑似少卖，但<b>不自动上修</b>。该差值同样可能是「预扣已发生、
+     *       发件箱尚未提交」的瞬时状态，盲目上修会抹掉那笔在途预扣。少卖的所有已知成因
+     *       （MQ 投递失败、毒消息、业务拒绝、消费异常）均已由 {@code OutboxRetryScheduler}
+     *       与 {@code OrderCreateConsumer} 的反向补偿覆盖，此处只告警。</li>
+     * </ol>
+     *
+     * <p><b>并发安全：</b>修正走 Lua CAS，仅当 Redis 当前值仍等于本次观测值时才写入，
+     * 因此对账期间新发生的预扣不会被覆盖掉。
+     *
+     * @param giftId      礼品 ID
+     * @param inflightQty 在途预扣件数（尚未落库的秒杀订单占用量，由发件箱统计得出；未知时传 0）
      */
-    public void reconcileStock(Long giftId) {
+    public void reconcileStock(Long giftId, int inflightQty) {
         Gift gift = giftMapper.selectById(giftId);
-        if (gift == null) return;
-        Integer dbStock = gift.getStock() != null ? gift.getStock() : 0;
+        if (gift == null) {
+            return;
+        }
+        int dbStock = gift.getStock() != null ? gift.getStock() : 0;
+        int inflight = Math.max(inflightQty, 0);
+        int expectedStock = Math.max(0, dbStock - inflight);
         Integer redisStock = getStock(giftId);
 
-        if (redisStock == null || !redisStock.equals(dbStock)) {
-            log.warn("[对账报警] 发现 Redis 与 MySQL 库存不一致！giftId={}, redisStock={}, dbStock={} -> 以 MySQL 为准自动修复",
-                    giftId, redisStock, dbStock);
-            warmupStock(giftId, dbStock);
+        // 未预热：无需比对，按「实存 − 在途」预热，避免把在途量当成可用库存放出去
+        if (redisStock == null) {
+            warmupStock(giftId, expectedStock);
+            log.info("[库存对账] Redis 未预热，按实存扣减在途后预热: giftId={}, dbStock={}, inflight={}, expected={}",
+                    giftId, dbStock, inflight, expectedStock);
+            return;
+        }
+
+        if (redisStock == expectedStock) {
+            return;
+        }
+
+        // 少卖方向：不自动上修（见方法注释第 2 点），仅告警，交由上游反向补偿处理
+        if (redisStock < expectedStock) {
+            log.warn("[对账告警] Redis 可用库存低于「实存-在途」，疑似少卖，不自动上修以免抹掉在途预扣: "
+                            + "giftId={}, redisStock={}, dbStock={}, inflight={}, expected={}",
+                    giftId, redisStock, dbStock, inflight, expectedStock);
+            return;
+        }
+
+        // 超卖方向：Redis 可用库存高于应有值，必须下修
+        if (compareAndSetStock(giftId, redisStock, expectedStock)) {
+            log.warn("[对账修复] Redis 可用库存高于「实存-在途」，存在超卖风险，已以 MySQL 为准下修: "
+                            + "giftId={}, redisStock={}, dbStock={}, inflight={}, fixedTo={}",
+                    giftId, redisStock, dbStock, inflight, expectedStock);
+        } else {
+            log.info("[对账跳过] 修正前检测到并发库存变动，本轮放弃，交由下一轮对账: giftId={}", giftId);
+        }
+    }
+
+    /**
+     * 原子「比较并修正」库存：仅当 Redis 当前值仍等于 {@code expectStock} 时才写入 {@code targetStock}。
+     *
+     * @return true-已修正；false-观测值已被并发修改（期间发生新的预扣/回补），本次未修正
+     */
+    private boolean compareAndSetStock(Long giftId, int expectStock, int targetStock) {
+        String key = GiftRedisKeys.stock(giftId);
+        try {
+            Long result = redis.execute(RECONCILE_SCRIPT, Collections.singletonList(key),
+                    String.valueOf(expectStock), String.valueOf(targetStock));
+            return result != null && result == 1L;
+        } catch (Exception e) {
+            log.warn("[对账修复] CAS 修正 Redis 库存失败: giftId={}, expect={}, target={}",
+                    giftId, expectStock, targetStock, e);
+            return false;
         }
     }
 }
