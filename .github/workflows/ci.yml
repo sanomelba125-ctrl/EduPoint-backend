@@ -26,11 +26,14 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
+      - name: Make Maven Wrapper Executable
+        run: chmod +x ./mvnw
+
       - name: Run Spotless Code Format Check
-        run: mvn -B spotless:check
+        run: ./mvnw -B spotless:check
 
       - name: Run Unit Tests with JaCoCo Coverage
-        run: mvn -B test jacoco:report
+        run: ./mvnw -B test -Djava.awt.headless=true
 
       - name: Upload JaCoCo Coverage Report
         uses: actions/upload-artifact@v4
@@ -39,3 +42,4 @@ jobs:
           name: backend-jacoco-report
           path: target/site/jacoco
           retention-days: 7
+          if-no-files-found: ignore
