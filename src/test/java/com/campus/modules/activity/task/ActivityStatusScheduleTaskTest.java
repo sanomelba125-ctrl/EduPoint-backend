@@ -1,9 +1,15 @@
 package com.campus.modules.activity.task;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.config.GlobalConfig;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.baomidou.mybatisplus.core.toolkit.GlobalConfigUtils;
 import com.campus.modules.activity.entity.Activity;
 import com.campus.modules.activity.mapper.ActivityMapper;
 import com.campus.modules.activity.service.ActivityCacheService;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -23,6 +29,15 @@ class ActivityStatusScheduleTaskTest {
     private ActivityMapper activityMapper;
     private ActivityCacheService activityCacheService;
     private ActivityStatusScheduleTask scheduleTask;
+
+    @BeforeAll
+    static void initMybatisPlusMetadata() {
+        MybatisConfiguration configuration = new MybatisConfiguration();
+        GlobalConfig globalConfig = new GlobalConfig();
+        globalConfig.setDbConfig(new GlobalConfig.DbConfig());
+        GlobalConfigUtils.setGlobalConfig(configuration, globalConfig);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), Activity.class);
+    }
 
     @BeforeEach
     void setUp() {
