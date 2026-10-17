@@ -197,8 +197,21 @@ public class TransactionalOutboxTest {
         // 但必须回补它在秒杀入口预扣的 Redis 库存
         verify(giftStockRedisService, times(1)).compensateStock(7L, 2);
         verify(localMessageMapper, times(1)).markAsFailed(eq("msg-dead-001"), eq(3), anyString());
-        // 且必须上报 Outbox 判死度量指标
+        // 且必须上报 Outbox 判死度量指标与积压 Gauge
         verify(metricsCollector, times(1)).recordOutboxDead();
+        verify(metricsCollector, atLeastOnce()).updateOutboxBacklog(anyLong());
+    }
+
+    @Test
+    @DisplayName("R4: 调度器每次轮询时实时采样并更新待投递积压 Gauge")
+    void testOutboxRetryScheduler_UpdatesBacklogGauge() {
+        when(localMessageMapper.countPendingBacklog()).thenReturn(42L);
+        when(localMessageMapper.selectPendingMessages(any(LocalDateTime.class), eq(5), eq(50)))
+                .thenReturn(List.of());
+
+        outboxRetryScheduler.retryPendingMessages();
+
+        verify(metricsCollector, times(1)).updateOutboxBacklog(42L);
     }
 
     @Test

@@ -36,6 +36,10 @@ public class OutboxRetryScheduler {
 
     @Scheduled(fixedDelay = 5000)
     public void retryPendingMessages() {
+        // 1. 实时采集并上报发件箱待投递积压 Gauge (R4)
+        long backlog = localMessageService.countPendingBacklog();
+        metricsCollector.updateOutboxBacklog(backlog);
+
         List<LocalMessage> pendingMessages = localMessageService.getPendingMessages(MAX_RETRIES, 50);
         if (pendingMessages.isEmpty()) {
             return;
@@ -58,6 +62,7 @@ public class OutboxRetryScheduler {
                     compensatePreDeductedStock(msg, "投递重试超限");
                     localMessageService.markFailed(msg.getMessageId(), "超过最大重试次数: " + MAX_RETRIES);
                     metricsCollector.recordOutboxDead();
+                    sendAlertNotification("OUTBOX_DEAD_LETTER", msg.getMessageId(), "投递重试超限被判死");
                     continue;
                 }
 
@@ -68,6 +73,7 @@ public class OutboxRetryScheduler {
                     compensatePreDeductedStock(msg, "未知业务类型");
                     localMessageService.markFailed(msg.getMessageId(), "未支持的 bizType: " + msg.getBizType());
                     metricsCollector.recordOutboxDead();
+                    sendAlertNotification("OUTBOX_UNKNOWN_TYPE", msg.getMessageId(), "未知业务类型: " + msg.getBizType());
                     continue;
                 }
 
@@ -124,5 +130,13 @@ public class OutboxRetryScheduler {
             log.warn("[Outbox补偿] 判死消息库存回补失败，交由定时对账兜底: messageId={}, err={}",
                     message.getMessageId(), e.getMessage());
         }
+    }
+
+    /**
+     * 生产级告警通知通道：死信累积时触发结构化告警事件 (R4 告警闭环)
+     */
+    private void sendAlertNotification(String alertEvent, String messageId, String reason) {
+        log.error("[ALERT-CHANNEL] 🚨 触发死信报警通知通道: event={}, messageId={}, reason={}, timestamp={}",
+                alertEvent, messageId, reason, System.currentTimeMillis());
     }
 }

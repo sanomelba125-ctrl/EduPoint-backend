@@ -65,4 +65,10 @@ public interface LocalMessageMapper extends BaseMapper<LocalMessage> {
     int incrementRetry(@Param("messageId") String messageId,
                        @Param("nextRetryTime") LocalDateTime nextRetryTime,
                        @Param("reason") String reason);
+
+    /**
+     * 统计当前待投递积压消息总数 (status = 0)
+     */
+    @Select("SELECT COUNT(*) FROM local_message WHERE status = 0")
+    long countPendingBacklog();
 }

@@ -1,12 +1,14 @@
 package com.campus.common.metrics;
 
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 生产级 Prometheus 自定义业务指标采集器 (P3-1)
@@ -32,9 +34,10 @@ public class CampusMetricsCollector {
     // 3. 延时死信关单指标
     private final Counter orderExpireCounter;
 
-    // 4. 本地发件箱 Outbox 异常/判死指标 (P1-D)
+    // 4. 本地发件箱 Outbox 异常/判死指标 (P1-D / R4)
     private final Counter outboxDeadCounter;
     private final Counter outboxRetryCounter;
+    private final AtomicLong outboxBacklogGauge = new AtomicLong(0);
 
     public CampusMetricsCollector(MeterRegistry registry) {
         this.registry = registry;
@@ -90,6 +93,11 @@ public class CampusMetricsCollector {
         this.outboxRetryCounter = Counter.builder("campus.mall.outbox.retry.total")
                 .description("事务发件箱消息补偿投递重试总量")
                 .register(registry);
+
+        // 初始化发件箱待投递积压 Gauge 指标 (R4)
+        Gauge.builder("campus.mall.outbox.backlog", outboxBacklogGauge, AtomicLong::get)
+                .description("事务发件箱待投递积压实时深度")
+                .register(registry);
     }
 
     /**
@@ -141,6 +149,13 @@ public class CampusMetricsCollector {
      */
     public void recordOutboxRetry() {
         outboxRetryCounter.increment();
+    }
+
+    /**
+     * 更新发件箱待投递积压深度 (R4)
+     */
+    public void updateOutboxBacklog(long count) {
+        outboxBacklogGauge.set(count);
     }
 
     public MeterRegistry getRegistry() {

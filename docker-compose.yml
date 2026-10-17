@@ -11,7 +11,7 @@ services:
     ports:
       - "3306:3306"
     environment:
-      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be set in .env}
       MYSQL_DATABASE: campus_activity
       TZ: Asia/Shanghai
     command:
@@ -25,7 +25,7 @@ services:
     networks:
       - campus-network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be set in .env}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -39,13 +39,13 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
-    command: redis-server --requirepass redispassword --appendonly yes
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env} --appendonly yes
     volumes:
       - redis_data_v70:/data
     networks:
       - campus-network
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redispassword", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -59,10 +59,10 @@ services:
     restart: unless-stopped
     ports:
       - "5672:5672"      # AMQP 消息通信端口
-      - "15672:15672"    # Web 交互式管理后台 (账号 guest, 密码 guest)
+      - "15672:15672"    # Web 交互式管理后台
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:?RABBITMQ_PASS must be set in .env}
       TZ: Asia/Shanghai
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
@@ -88,6 +88,10 @@ services:
       - "8080:8080"
     environment:
       SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be set in .env}
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-guest}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS:?RABBITMQ_PASS must be set in .env}
       SA_TOKEN_TIMEOUT: 3600
       TZ: Asia/Shanghai
     depends_on:

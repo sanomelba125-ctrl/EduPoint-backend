@@ -125,4 +125,11 @@ public class LocalMessageService {
         }
         return inflightByGift;
     }
+
+    /**
+     * 统计当前待处理发件箱积压量 (status = 0) (R4 修复)
+     */
+    public long countPendingBacklog() {
+        return localMessageMapper.countPendingBacklog();
+    }
 }
