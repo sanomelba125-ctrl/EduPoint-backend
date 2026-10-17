@@ -29,6 +29,15 @@ jobs:
       - name: Make Maven Wrapper Executable
         run: chmod +x ./mvnw
 
+      - name: Hardcoded Secrets Static Analysis Gate
+        run: |
+          echo "Scanning for hardcoded secret assignments in src/main/java..."
+          if grep -rn -E 'private String .*(Secret|SignSecret) *= *"[^"]+"' src/main/java; then
+            echo "::error::Detected hardcoded secret assignment in Java source files!"
+            exit 1
+          fi
+          echo "No hardcoded secrets found."
+
       - name: Run Spotless Code Format Check
         run: ./mvnw -B spotless:check
 

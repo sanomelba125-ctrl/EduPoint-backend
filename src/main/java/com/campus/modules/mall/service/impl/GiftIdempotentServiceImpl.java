@@ -81,8 +81,8 @@ public class GiftIdempotentServiceImpl implements GiftIdempotentService {
 
         try {
             redis.opsForValue().set(key, token, TOKEN_TTL);
-            log.info("已生成并下发礼品兑换防重令牌: studentId={}, giftId={}, token={}, ttl={}s",
-                    studentId, giftId, token, TOKEN_TTL.toSeconds());
+            log.info("已生成并下发礼品兑换防重令牌: studentId={}, giftId={}, tokenPrefix={}, ttl={}s",
+                    studentId, giftId, maskToken(token), TOKEN_TTL.toSeconds());
         } catch (Exception e) {
             log.warn("保存兑换防重令牌到 Redis 异常: key={}, error={}", key, e.getMessage());
         }
@@ -105,16 +105,23 @@ public class GiftIdempotentServiceImpl implements GiftIdempotentService {
             Long result = redis.execute(CHECK_AND_DELETE_SCRIPT, Collections.singletonList(key), token.trim());
             boolean success = result != null && result == 1L;
             if (success) {
-                log.info("防重令牌核验通过并成功原子销毁: key={}, token={}", key, token);
+                log.info("防重令牌核验通过并成功原子销毁: key={}, tokenPrefix={}", key, maskToken(token));
             } else {
-                log.warn("防重令牌核验失败(已失效或不匹配): key={}, token={}, luaResult={}", key, token, result);
+                log.warn("防重令牌核验失败(已失效或不匹配): key={}, tokenPrefix={}, luaResult={}", key, maskToken(token), result);
             }
             return success;
         } catch (Exception e) {
-            // [架构不变量] 遵循 Fail-Open 策略，Redis 偶发异常不阻断正常兑换，最终一致性由底层 MySQL uk_request_id 唯一索引兜底
-            log.warn("Lua 脚本执行核验防重 Token 异常，降级放行(由 DB 全局唯一索引兜底): key={}, error={}", key, e.getMessage());
+            // [架构策略] 遵循 Fail-Open 策略，Redis 偶发异常时优先保障兑换可用性，放行通过；底层由 MySQL uk_stu_request_id 联合唯一索引阻断同一请求重发落单
+            log.warn("Lua 脚本执行核验防重 Token 异常，降级放行(由 DB uk_stu_request_id 兜底防重提交): key={}, error={}", key, e.getMessage());
             return true;
         }
+    }
+
+    private String maskToken(String token) {
+        if (token == null || token.length() <= 8) {
+            return "***";
+        }
+        return token.substring(0, 4) + "****" + token.substring(token.length() - 4);
     }
 
     @Override

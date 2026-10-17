@@ -136,60 +136,13 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         this.sysNoticeService = sysNoticeService;
         this.rabbitTemplate = rabbitTemplate;
         this.redis = redis;
-        this.mallPickupProperties = mallPickupProperties != null ? mallPickupProperties : new MallPickupProperties();
-        this.pickupTokenService = pickupTokenService != null ? pickupTokenService : new PickupTokenService(this.mallPickupProperties);
-        this.giftIdempotentService = giftIdempotentService != null ? giftIdempotentService : new GiftIdempotentServiceImpl(redis, null);
+        this.mallPickupProperties = mallPickupProperties;
+        this.pickupTokenService = pickupTokenService;
+        this.giftIdempotentService = giftIdempotentService;
         this.campusMetricsCollector = campusMetricsCollector;
         this.giftStockRedisService = giftStockRedisService;
         this.localMessageService = localMessageService;
         this.giftCacheService = giftCacheService;
-    }
-
-    public StudentGiftServiceImpl(GiftMapper giftMapper,
-                                  StudentMapper studentMapper,
-                                  PointLedger pointLedger,
-                                  SysNoticeService sysNoticeService,
-                                  RabbitTemplate rabbitTemplate,
-                                  StringRedisTemplate redis,
-                                  PickupTokenService pickupTokenService,
-                                  MallPickupProperties mallPickupProperties,
-                                  GiftIdempotentService giftIdempotentService,
-                                  com.campus.common.metrics.CampusMetricsCollector campusMetricsCollector) {
-        this(giftMapper, studentMapper, pointLedger, sysNoticeService, rabbitTemplate, redis,
-                pickupTokenService, mallPickupProperties, giftIdempotentService, campusMetricsCollector,
-                null, null, null);
-    }
-
-    public StudentGiftServiceImpl(GiftMapper giftMapper,
-                                  StudentMapper studentMapper,
-                                  PointLedger pointLedger,
-                                  SysNoticeService sysNoticeService,
-                                  RabbitTemplate rabbitTemplate,
-                                  StringRedisTemplate redis,
-                                  PickupTokenService pickupTokenService,
-                                  MallPickupProperties mallPickupProperties,
-                                  GiftIdempotentService giftIdempotentService) {
-        this(giftMapper, studentMapper, pointLedger, sysNoticeService, rabbitTemplate, redis, pickupTokenService, mallPickupProperties, giftIdempotentService, null);
-    }
-
-    public StudentGiftServiceImpl(GiftMapper giftMapper,
-                                  StudentMapper studentMapper,
-                                  PointLedger pointLedger,
-                                  SysNoticeService sysNoticeService,
-                                  RabbitTemplate rabbitTemplate,
-                                  StringRedisTemplate redis,
-                                  PickupTokenService pickupTokenService,
-                                  MallPickupProperties mallPickupProperties) {
-        this(giftMapper, studentMapper, pointLedger, sysNoticeService, rabbitTemplate, redis, pickupTokenService, mallPickupProperties, null);
-    }
-
-    public StudentGiftServiceImpl(GiftMapper giftMapper,
-                                  StudentMapper studentMapper,
-                                  PointLedger pointLedger,
-                                  SysNoticeService sysNoticeService,
-                                  RabbitTemplate rabbitTemplate,
-                                  StringRedisTemplate redis) {
-        this(giftMapper, studentMapper, pointLedger, sysNoticeService, rabbitTemplate, redis, null, null, null);
     }
 
     @Override
@@ -1018,18 +971,19 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         }
         localMessageService.savePendingMessage(messageId, "GIFT_ORDER_CREATE", orderNo, msg, MDC.get("traceId"));
 
-        // 8. 投递 MQ 削峰队列（瞬时失败不阻断：发件箱已落库，由 OutboxRetryScheduler 兜底重投）
-
-        try {
-            rabbitTemplate.convertAndSend(
-                    RabbitMqConfig.SECKILL_ORDER_EXCHANGE,
-                    RabbitMqConfig.SECKILL_ORDER_ROUTING_KEY,
-                    JSON.toJSONString(msg)
-            );
-            localMessageService.markPublished(messageId);
-        } catch (Exception e) {
-            log.warn("[秒杀下单] MQ 瞬时投递异常，将由本地发件箱定时任务自动补偿重试: messageId={}", messageId, e);
-        }
+        // 8. 投递 MQ 削峰队列（提交后执行，避免事务回滚时消息已发出；瞬时投递失败不阻断，发件箱定时任务自动补偿）
+        AfterCommitExecutor.run(() -> {
+            try {
+                rabbitTemplate.convertAndSend(
+                        RabbitMqConfig.SECKILL_ORDER_EXCHANGE,
+                        RabbitMqConfig.SECKILL_ORDER_ROUTING_KEY,
+                        JSON.toJSONString(msg)
+                );
+                localMessageService.markPublished(messageId);
+            } catch (Exception e) {
+                log.warn("[秒杀下单] MQ 提交后投递异常，将由本地发件箱定时任务自动补偿重试: messageId={}", messageId, e);
+            }
+        });
         if (campusMetricsCollector != null) {
             campusMetricsCollector.recordExchange(true, System.currentTimeMillis() - startTime);
         }
