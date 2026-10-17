@@ -292,7 +292,9 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
             throw new BusinessException(ResultCode.FORBIDDEN.getCode(), "禁止重置系统内置超级管理员账号密码");
         }
 
-        String rawPassword = StringUtils.hasText(newPassword) ? newPassword.trim() : "123456";
+        String rawPassword = StringUtils.hasText(newPassword)
+                ? newPassword.trim()
+                : com.campus.common.constant.SecurityConstants.DEFAULT_INITIAL_PASSWORD;
         String encodedPassword = PasswordUtil.encode(rawPassword);
 
         lambdaUpdate()

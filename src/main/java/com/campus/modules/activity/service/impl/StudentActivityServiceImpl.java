@@ -31,7 +31,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
-import jakarta.annotation.PostConstruct;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
@@ -106,14 +105,6 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                                       CheckinChainPipeline checkinChainPipeline) {
         this(activityMapper, waitlistMapper, codeMapper, studentScoreService, redissonClient,
                 rabbitTemplate, certificateService, activityCacheService, transactionTemplate, checkinChainPipeline, null, null);
-    }
-
-    @PostConstruct
-    void configurePublisherCallbacks() {
-        rabbitTemplate.setConfirmCallback((correlation, confirmed, reason) -> {
-            if (!confirmed) log.error("RabbitMQ publisher confirm failed: correlation={}, reason={}", correlation, reason);
-        });
-        rabbitTemplate.setReturnsCallback(returned -> log.error("RabbitMQ returned an unroutable message: {}", returned));
     }
 
     @Override

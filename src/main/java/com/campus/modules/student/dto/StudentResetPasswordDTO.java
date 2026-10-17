@@ -1,5 +1,6 @@
 package com.campus.modules.student.dto;
 
+import com.campus.common.constant.SecurityConstants;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -12,5 +13,5 @@ public class StudentResetPasswordDTO implements Serializable {
     private static final long serialVersionUID = 1L;
 
     /** 重置的新密码（统一默认 123456） */
-    private String newPassword = "123456";
+    private String newPassword = SecurityConstants.DEFAULT_INITIAL_PASSWORD;
 }

@@ -133,8 +133,11 @@ public class SysUserController {
     public Result<Void> resetPassword(
             @PathVariable Long id,
             @RequestBody(required = false) SysUserResetPasswordDTO dto) {
-        String newPassword = (dto != null && dto.getNewPassword() != null) ? dto.getNewPassword() : "123456";
+        String newPassword = (dto != null && org.springframework.util.StringUtils.hasText(dto.getNewPassword()))
+                ? dto.getNewPassword().trim()
+                : com.campus.common.constant.SecurityConstants.DEFAULT_INITIAL_PASSWORD;
         sysUserService.resetPassword(id, newPassword);
-        return Result.success("管理员密码重置成功", null);
+        boolean isDefault = com.campus.common.constant.SecurityConstants.DEFAULT_INITIAL_PASSWORD.equals(newPassword);
+        return Result.success(isDefault ? "管理员密码已重置为初始密码(123456)" : "管理员密码重置成功", null);
     }
 }

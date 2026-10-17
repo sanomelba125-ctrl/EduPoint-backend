@@ -1,5 +1,6 @@
 package com.campus.config;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.*;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
@@ -15,6 +16,7 @@ import java.util.Map;
  * 1. 校园活动打卡高并发削峰填谷队列（Direct）
  * 2. 礼品兑换超时未提货自动关单与积分回退延时死信队列 (TTL + DLX，默认24小时)
  */
+@Slf4j
 @Configuration
 public class RabbitMqConfig {
 
@@ -71,6 +73,13 @@ public class RabbitMqConfig {
             }
             return message;
         });
+        // 统一在基础设施配置类中注册全局 Publisher Confirm 与 Returns 回调，避免业务类侵入污染
+        template.setConfirmCallback((correlation, confirmed, reason) -> {
+            if (!confirmed) {
+                log.error("RabbitMQ publisher confirm failed: correlation={}, reason={}", correlation, reason);
+            }
+        });
+        template.setReturnsCallback(returned -> log.error("RabbitMQ returned an unroutable message: {}", returned));
         return template;
     }
 

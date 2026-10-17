@@ -141,9 +141,12 @@ public class StudentController {
     public Result<Void> resetStudentPassword(
             @PathVariable Long id,
             @RequestBody(required = false) StudentResetPasswordDTO dto) {
-        String newPassword = (dto != null && dto.getNewPassword() != null) ? dto.getNewPassword() : "123456";
+        String newPassword = (dto != null && org.springframework.util.StringUtils.hasText(dto.getNewPassword()))
+                ? dto.getNewPassword().trim()
+                : com.campus.common.constant.SecurityConstants.DEFAULT_INITIAL_PASSWORD;
         studentService.resetStudentPassword(id, newPassword);
-        return Result.success("学生密码已成功重置", null);
+        boolean isDefault = com.campus.common.constant.SecurityConstants.DEFAULT_INITIAL_PASSWORD.equals(newPassword);
+        return Result.success(isDefault ? "学生密码已成功重置为初始密码(123456)" : "学生密码已成功重置", null);
     }
 
     /**

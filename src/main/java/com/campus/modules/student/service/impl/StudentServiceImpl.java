@@ -331,7 +331,9 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
             throw new BusinessException(ResultCode.USER_NOT_EXIST.getCode(), "目标学生档案不存在");
         }
 
-        String rawPassword = StringUtils.hasText(newPassword) ? newPassword.trim() : "123456";
+        String rawPassword = StringUtils.hasText(newPassword)
+                ? newPassword.trim()
+                : com.campus.common.constant.SecurityConstants.DEFAULT_INITIAL_PASSWORD;
         String encodedPassword = PasswordUtil.encode(rawPassword);
 
         lambdaUpdate()

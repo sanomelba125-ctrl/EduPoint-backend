@@ -32,7 +32,7 @@ jobs:
       - name: Hardcoded Secrets Static Analysis Gate
         run: |
           echo "Scanning for hardcoded secret assignments in src/main/java..."
-          if grep -rn -E 'private String .*(Secret|SignSecret) *= *"[^"]+"' src/main/java; then
+          if grep -rn -E '(private|static|final).*String\s+[A-Za-z_]*(SECRET|Secret|PASSWORD|Password|PASSWD|API_KEY|ApiKey|apiKey|ACCESS_KEY|AccessKey|SIGN_KEY|SignKey|AES_KEY|AesKey)[A-Za-z_]*\s*=\s*"[^"]+"' src/main/java | grep -v 'KEY_PREFIX'; then
             echo "::error::Detected hardcoded secret assignment in Java source files!"
             exit 1
           fi
