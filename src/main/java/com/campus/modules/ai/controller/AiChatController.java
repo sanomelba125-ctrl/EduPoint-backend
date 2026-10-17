@@ -1,5 +1,6 @@
 package com.campus.modules.ai.controller;
 
+import cn.dev33.satoken.annotation.SaCheckLogin;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.campus.common.auth.AuthUtil;
 import com.campus.common.result.Result;
@@ -40,6 +41,7 @@ public class AiChatController {
      * Content-Type: application/json
      * Produces: text/event-stream;charset=UTF-8
      */
+    @SaCheckLogin
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamChatPost(@RequestBody AiChatRequest request) {
         Long studentId = resolveStudentId(request);
@@ -50,6 +52,7 @@ public class AiChatController {
      * AI 对话流式接口 (GET 方式，兼容原生 EventSource 规范)
      * GET /api/ai/chat/stream?question=xxx
      */
+    @SaCheckLogin
     @GetMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamChatGet(@RequestParam("question") String question) {
         Long studentId = AuthUtil.currentStudentIdOrNull();
@@ -62,6 +65,7 @@ public class AiChatController {
      * 获取 AI 历史对话消息列表
      * GET /api/ai/chat/history
      */
+    @SaCheckLogin
     @GetMapping("/chat/history")
     public Result<List<AiChatMessageVO>> getChatHistory(
             @RequestParam(value = "conversationId", required = false) String conversationId,
@@ -79,6 +83,7 @@ public class AiChatController {
      * 清空 AI 对话历史消息
      * DELETE /api/ai/chat/history
      */
+    @SaCheckLogin
     @DeleteMapping("/chat/history")
     public Result<Void> clearChatHistory(
             @RequestParam(value = "conversationId", required = false) String conversationId,

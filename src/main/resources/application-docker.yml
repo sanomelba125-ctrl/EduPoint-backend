@@ -35,7 +35,7 @@ spring:
     password: guest
     listener:
       simple:
-        acknowledge-mode: auto
+        acknowledge-mode: manual
         prefetch: 10
 
 # MyBatis-Plus 配置 (纯注解开发，已清理空转的 XML 扫描与实体别名配置)

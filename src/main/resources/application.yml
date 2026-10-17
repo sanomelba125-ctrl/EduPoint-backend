@@ -20,6 +20,9 @@ spring:
     publisher-returns: true
     template:
       mandatory: true
+    listener:
+      simple:
+        acknowledge-mode: manual
 
 
 # Sa-Token 配置

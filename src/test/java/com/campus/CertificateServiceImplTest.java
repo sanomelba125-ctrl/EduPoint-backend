@@ -80,7 +80,7 @@ class CertificateServiceImplTest {
     void getMyList_shouldQueryByStudentLoginId() {
         stpUtil.when(StpUtil::getLoginIdAsString).thenReturn("student:" + STUDENT_ID);
         List<CertificateMyVO> rows = List.of(new CertificateMyVO(
-                1L, "CERT-2026-ACT2-A89F3B12", "青年AI前沿学术讲座",
+                1L, "CERT-2026-ACT2-A89F3B12", 2L, "青年AI前沿学术讲座",
                 "AI前沿学术讲座结业证书", "校科技创新协会", LocalDateTime.now(), "https://oss/cert.png", 1));
         when(certificateMapper.selectMyList(STUDENT_ID)).thenReturn(rows);
 

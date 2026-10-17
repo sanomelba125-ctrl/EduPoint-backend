@@ -14,9 +14,9 @@ import org.apache.ibatis.annotations.Select;
 public interface MqConsumeLogMapper extends BaseMapper<MqConsumeLog> {
 
     /**
-     * 判断是否已消费成功
+     * 判断是否已消费成功 (status = 1 视为成功消费，业务拒绝 status = 2 不计入成功以允许重试)
      */
-    @Select("SELECT COUNT(1) FROM mq_consume_log WHERE message_id = #{messageId} AND consumer_name = #{consumerName}")
+    @Select("SELECT COUNT(1) FROM mq_consume_log WHERE message_id = #{messageId} AND consumer_name = #{consumerName} AND status = 1")
     int existsConsumed(@Param("messageId") String messageId, @Param("consumerName") String consumerName);
 
     /**

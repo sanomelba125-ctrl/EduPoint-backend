@@ -40,7 +40,7 @@ spring:
     password: guest
     listener:
       simple:
-        acknowledge-mode: auto
+        acknowledge-mode: manual
         prefetch: 10
         auto-startup: ${RABBITMQ_LISTENER_AUTO_STARTUP:true}
 

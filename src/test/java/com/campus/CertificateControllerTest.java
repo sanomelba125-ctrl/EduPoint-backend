@@ -106,7 +106,7 @@ class CertificateControllerTest {
     @DisplayName("GET /certificate/my-list：返回当前学生证书列表")
     void myList_shouldReturnCertificates() throws Exception {
         List<CertificateMyVO> rows = List.of(new CertificateMyVO(
-                1L, "CERT-2026-ACT2-A89F3B12", "“青年AI与新质生产力”前沿学术讲座",
+                1L, "CERT-2026-ACT2-A89F3B12", 2L, "“青年AI与新质生产力”前沿学术讲座",
                 "AI前沿学术讲座结业证书", "校科技创新协会", LocalDateTime.now(), "https://oss/cert.png", 1));
         when(certificateService.getMyList()).thenReturn(rows);
 

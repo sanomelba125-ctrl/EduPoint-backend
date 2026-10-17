@@ -108,7 +108,7 @@ class PointRewardStrategyTest {
     void testAdminAdjustNegativeExceedBalance() {
         PointContext ctx = new PointContext(100L, 5, -10, "ADJ-2026-003", null, 1L, "违规扣分");
         BusinessException ex = assertThrows(BusinessException.class, () -> context.execute(3, ctx));
-        assertTrue(ex.getMessage().contains("当前余额仅剩: 5 pts"));
+        assertTrue(ex.getMessage().contains("当前余额仅剩: 5 积分"));
     }
 
     @Test
