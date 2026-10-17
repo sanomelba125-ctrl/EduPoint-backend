@@ -23,7 +23,8 @@ public interface MqConsumeLogMapper extends BaseMapper<MqConsumeLog> {
      * 原子记录消费日志 (依靠 uk_msg_consumer 唯一索引防并发穿透)
      */
     @Insert("INSERT INTO mq_consume_log (message_id, consumer_name, biz_type, biz_id, status, consume_time) " +
-            "VALUES (#{messageId}, #{consumerName}, #{bizType}, #{bizId}, #{status}, NOW())")
+            "VALUES (#{messageId}, #{consumerName}, #{bizType}, #{bizId}, #{status}, NOW()) " +
+            "ON DUPLICATE KEY UPDATE status = VALUES(status), consume_time = NOW()")
     int insertConsumeLog(@Param("messageId") String messageId,
                          @Param("consumerName") String consumerName,
                          @Param("bizType") String bizType,
