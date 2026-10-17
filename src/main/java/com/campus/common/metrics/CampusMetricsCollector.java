@@ -32,6 +32,10 @@ public class CampusMetricsCollector {
     // 3. 延时死信关单指标
     private final Counter orderExpireCounter;
 
+    // 4. 本地发件箱 Outbox 异常/判死指标 (P1-D)
+    private final Counter outboxDeadCounter;
+    private final Counter outboxRetryCounter;
+
     public CampusMetricsCollector(MeterRegistry registry) {
         this.registry = registry;
 
@@ -77,6 +81,15 @@ public class CampusMetricsCollector {
         this.orderExpireCounter = Counter.builder("campus.mall.order.expire.total")
                 .description("MQ 延时死信超时关单与积分回退总量")
                 .register(registry);
+
+        // 初始化发件箱判死与重试指标 (P1-D)
+        this.outboxDeadCounter = Counter.builder("campus.mall.outbox.dead.total")
+                .description("事务发件箱消息重试超限被判死（死信）总量")
+                .register(registry);
+
+        this.outboxRetryCounter = Counter.builder("campus.mall.outbox.retry.total")
+                .description("事务发件箱消息补偿投递重试总量")
+                .register(registry);
     }
 
     /**
@@ -114,6 +127,20 @@ public class CampusMetricsCollector {
      */
     public void recordOrderExpired() {
         orderExpireCounter.increment();
+    }
+
+    /**
+     * 记录一次发件箱消息判死 (P1-D)
+     */
+    public void recordOutboxDead() {
+        outboxDeadCounter.increment();
+    }
+
+    /**
+     * 记录一次发件箱消息补偿重试 (P1-D)
+     */
+    public void recordOutboxRetry() {
+        outboxRetryCounter.increment();
     }
 
     public MeterRegistry getRegistry() {

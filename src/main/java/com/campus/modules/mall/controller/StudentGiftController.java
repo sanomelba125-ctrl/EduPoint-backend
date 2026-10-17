@@ -2,6 +2,7 @@ package com.campus.modules.mall.controller;
 
 import cn.dev33.satoken.annotation.SaCheckRole;
 import cn.dev33.satoken.annotation.SaMode;
+import com.campus.common.annotation.RateLimit;
 import com.campus.common.auth.AuthUtil;
 import com.campus.common.constant.UserRole;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -44,6 +45,7 @@ public class StudentGiftController {
      * 学生发起礼品兑换
      * 对应 API.md 5.3 POST /gift/exchange 与 /student/gift/exchange
      */
+    @RateLimit(key = "rate_limit:mall:exchange:user", count = 3, windowMs = 1000L, limitType = RateLimit.LimitType.USER, message = "操作过于频繁，请稍候再试")
     @PostMapping({"/gift/exchange", "/student/gift/exchange"})
     public Result<GiftExchangeVO> exchangeGift(@Valid @RequestBody GiftExchangeDTO dto) {
         Long studentId = getStudentId();

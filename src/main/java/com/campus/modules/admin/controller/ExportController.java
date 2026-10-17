@@ -6,6 +6,7 @@ import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.campus.common.annotation.RateLimit;
 import com.campus.common.constant.UserRole;
 import com.campus.modules.activity.dto.ActivityRecordVO;
 import com.campus.modules.activity.entity.Activity;
@@ -53,6 +54,7 @@ public class ExportController {
     /**
      * 导出活动明细
      */
+    @RateLimit(key = "rate_limit:export:activities:user", count = 3, windowMs = 10000L, limitType = RateLimit.LimitType.USER, message = "活动报表导出过于频繁，请稍候再试")
     @GetMapping("/activities")
     public void exportActivities(HttpServletResponse response) throws IOException {
         try {
@@ -101,6 +103,7 @@ public class ExportController {
     /**
      * 导出积分明细
      */
+    @RateLimit(key = "rate_limit:export:points:user", count = 3, windowMs = 10000L, limitType = RateLimit.LimitType.USER, message = "积分报表导出过于频繁，请稍候再试")
     @GetMapping("/points")
     public void exportPoints(HttpServletResponse response) throws IOException {
         try {
@@ -153,6 +156,7 @@ public class ExportController {
     /**
      * 导出学生活动参与/打卡明细
      */
+    @RateLimit(key = "rate_limit:export:records:user", count = 3, windowMs = 10000L, limitType = RateLimit.LimitType.USER, message = "考勤报表导出过于频繁，请稍候再试")
     @GetMapping({"/activity-records", "/activities/records"})
     public void exportActivityRecords(
             @RequestParam(required = false) String studentName,

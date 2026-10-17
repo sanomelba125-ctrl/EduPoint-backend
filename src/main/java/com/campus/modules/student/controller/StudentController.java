@@ -4,6 +4,7 @@ import cn.dev33.satoken.annotation.SaCheckLogin;
 import cn.dev33.satoken.annotation.SaCheckRole;
 import cn.dev33.satoken.annotation.SaMode;
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.campus.common.annotation.RateLimit;
 import com.campus.common.constant.UserRole;
 import com.campus.common.result.Result;
 import com.campus.modules.student.dto.*;
@@ -29,6 +30,7 @@ public class StudentController {
     /**
      * 移动学生端登录 (学号 + 密码)
      */
+    @RateLimit(key = "rate_limit:auth:student_login:ip", count = 10, windowMs = 10000L, limitType = RateLimit.LimitType.IP, message = "登录尝试过于频繁，请稍候再试")
     @PostMapping("/login")
     public Result<StudentLoginVO> login(@Valid @RequestBody StudentLoginDTO loginDTO) {
         StudentLoginVO vo = studentService.login(loginDTO);

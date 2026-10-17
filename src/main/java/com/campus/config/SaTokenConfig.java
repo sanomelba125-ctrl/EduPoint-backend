@@ -24,7 +24,8 @@ public class SaTokenConfig implements WebMvcConfigurer {
                         "/swagger-ui/**",
                         "/swagger-ui.html",
                         "/favicon.ico",
-                        "/actuator/**"
+                        "/actuator/health",
+                        "/actuator/info"
                 );
     }
 }

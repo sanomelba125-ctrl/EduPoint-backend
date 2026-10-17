@@ -1,6 +1,7 @@
 package com.campus.modules.mall;
 
 import com.alibaba.fastjson2.JSON;
+import com.campus.common.metrics.CampusMetricsCollector;
 import com.campus.config.RabbitMqConfig;
 import com.campus.modules.mall.dto.OrderCreateMessage;
 import com.campus.modules.mall.entity.LocalMessage;
@@ -40,13 +41,17 @@ public class TransactionalOutboxTest {
     @Mock
     private GiftStockRedisService giftStockRedisService;
 
+    @Mock
+    private CampusMetricsCollector metricsCollector;
+
     private LocalMessageService localMessageService;
     private OutboxRetryScheduler outboxRetryScheduler;
 
     @BeforeEach
     void setUp() {
         localMessageService = new LocalMessageService(localMessageMapper);
-        outboxRetryScheduler = new OutboxRetryScheduler(localMessageService, rabbitTemplate, giftStockRedisService);
+        outboxRetryScheduler = new OutboxRetryScheduler(
+                localMessageService, rabbitTemplate, giftStockRedisService, metricsCollector);
     }
 
     @Test
@@ -192,6 +197,26 @@ public class TransactionalOutboxTest {
         // 但必须回补它在秒杀入口预扣的 Redis 库存
         verify(giftStockRedisService, times(1)).compensateStock(7L, 2);
         verify(localMessageMapper, times(1)).markAsFailed(eq("msg-dead-001"), eq(3), anyString());
+        // 且必须上报 Outbox 判死度量指标
+        verify(metricsCollector, times(1)).recordOutboxDead();
+    }
+
+    @Test
+    @DisplayName("P1-D: 消息投递抛异常时执行重试并上报重试指标")
+    void testOutboxRetryScheduler_RetryFailure_RecordsMetric() {
+        LocalMessage pendingMsg = inflightMessage("msg-retry-fail-001", 7L, 1);
+        pendingMsg.setRetryCount(1);
+        pendingMsg.setStatus(0);
+
+        when(localMessageMapper.selectPendingMessages(any(LocalDateTime.class), eq(5), eq(50)))
+                .thenReturn(List.of(pendingMsg));
+        doThrow(new RuntimeException("RabbitMQ connection timed out"))
+                .when(rabbitTemplate).convertAndSend(anyString(), anyString(), any(Object.class));
+
+        outboxRetryScheduler.retryPendingMessages();
+
+        verify(localMessageMapper, times(1)).incrementRetry(eq("msg-retry-fail-001"), any(LocalDateTime.class), anyString());
+        verify(metricsCollector, times(1)).recordOutboxRetry();
     }
 
     /** 构造一条「在途」发件箱消息：payload 与生产同源，均为 OrderCreateMessage 契约序列化结果 */

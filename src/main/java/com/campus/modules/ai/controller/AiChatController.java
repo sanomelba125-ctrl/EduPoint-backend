@@ -2,6 +2,7 @@ package com.campus.modules.ai.controller;
 
 import cn.dev33.satoken.annotation.SaCheckLogin;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.campus.common.annotation.RateLimit;
 import com.campus.common.auth.AuthUtil;
 import com.campus.common.result.Result;
 import com.campus.modules.ai.dto.AiChatRequest;
@@ -42,6 +43,7 @@ public class AiChatController {
      * Produces: text/event-stream;charset=UTF-8
      */
     @SaCheckLogin
+    @RateLimit(key = "rate_limit:ai:stream:user", count = 15, windowMs = 60000L, limitType = RateLimit.LimitType.USER, message = "AI 助手正在深度思考中，请勿频繁发送消息！")
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamChatPost(@RequestBody AiChatRequest request) {
         Long studentId = resolveStudentId(request);
@@ -53,6 +55,7 @@ public class AiChatController {
      * GET /api/ai/chat/stream?question=xxx
      */
     @SaCheckLogin
+    @RateLimit(key = "rate_limit:ai:stream:user", count = 15, windowMs = 60000L, limitType = RateLimit.LimitType.USER, message = "AI 助手正在深度思考中，请勿频繁发送消息！")
     @GetMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamChatGet(@RequestParam("question") String question) {
         Long studentId = AuthUtil.currentStudentIdOrNull();

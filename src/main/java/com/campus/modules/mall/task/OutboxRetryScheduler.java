@@ -1,6 +1,7 @@
 package com.campus.modules.mall.task;
 
 import com.alibaba.fastjson2.JSON;
+import com.campus.common.metrics.CampusMetricsCollector;
 import com.campus.config.RabbitMqConfig;
 import com.campus.modules.mall.dto.OrderCreateMessage;
 import com.campus.modules.mall.entity.LocalMessage;
@@ -29,6 +30,7 @@ public class OutboxRetryScheduler {
     private final LocalMessageService localMessageService;
     private final RabbitTemplate rabbitTemplate;
     private final GiftStockRedisService giftStockRedisService;
+    private final CampusMetricsCollector metricsCollector;
 
     private static final int MAX_RETRIES = 5;
 
@@ -55,6 +57,7 @@ public class OutboxRetryScheduler {
                     // 否则该库存被永久占用（表现为「显示已抢光却无人下单」的少卖）。
                     compensatePreDeductedStock(msg, "投递重试超限");
                     localMessageService.markFailed(msg.getMessageId(), "超过最大重试次数: " + MAX_RETRIES);
+                    metricsCollector.recordOutboxDead();
                     continue;
                 }
 
@@ -64,6 +67,7 @@ public class OutboxRetryScheduler {
                             msg.getMessageId(), msg.getBizType());
                     compensatePreDeductedStock(msg, "未知业务类型");
                     localMessageService.markFailed(msg.getMessageId(), "未支持的 bizType: " + msg.getBizType());
+                    metricsCollector.recordOutboxDead();
                     continue;
                 }
 
@@ -79,6 +83,7 @@ public class OutboxRetryScheduler {
                 log.warn("[Outbox补偿] 补偿投递失败，累计重试次数: messageId={}, err={}",
                         msg.getMessageId(), e.getMessage());
                 localMessageService.incrementRetry(msg.getMessageId(), msg.getRetryCount() + 1, e.getMessage());
+                metricsCollector.recordOutboxRetry();
             } finally {
                 if (originalTraceId != null) {
                     MDC.put("traceId", originalTraceId);

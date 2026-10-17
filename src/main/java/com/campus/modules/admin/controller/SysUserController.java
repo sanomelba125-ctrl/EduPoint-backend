@@ -3,6 +3,7 @@ package com.campus.modules.admin.controller;
 import cn.dev33.satoken.annotation.SaCheckRole;
 import cn.dev33.satoken.annotation.SaMode;
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.campus.common.annotation.RateLimit;
 import com.campus.common.auth.AuthUtil;
 import com.campus.common.constant.UserRole;
 import com.campus.common.result.Result;
@@ -29,6 +30,7 @@ public class SysUserController {
      * 管理员登录
      * 对应 API.md 1.1 /user/login 及 admin-web /auth/login
      */
+    @RateLimit(key = "rate_limit:auth:admin_login:ip", count = 10, windowMs = 10000L, limitType = RateLimit.LimitType.IP, message = "登录尝试过于频繁，请稍候再试")
     @PostMapping("/login")
     public Result<AdminLoginVO> login(@Valid @RequestBody AdminLoginDTO loginDTO) {
         AdminLoginVO vo = sysUserService.login(loginDTO);
