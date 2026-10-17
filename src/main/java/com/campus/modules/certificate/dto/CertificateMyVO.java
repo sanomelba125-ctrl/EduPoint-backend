@@ -13,6 +13,7 @@ import java.time.LocalDateTime;
 public class CertificateMyVO {
     private Long id;
     private String certificateNo;
+    private Long activityId;
     private String activityTitle;
     private String title;
     private String issuer;

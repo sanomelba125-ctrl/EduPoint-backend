@@ -27,7 +27,7 @@ public class MallExchangeDeductStrategy implements PointRewardStrategy {
         }
         int before = context.currentPoints() != null ? context.currentPoints() : 0;
         if (before < cost) {
-            throw new BusinessException(String.format("可用积分不足！当前余额: %d pts，本次兑换需要: %d pts", before, cost));
+            throw new BusinessException(String.format("可用积分不足！当前余额: %d 积分，本次兑换需要: %d 积分", before, cost));
         }
         int after = before - cost;
         int pointChange = -cost;

@@ -32,7 +32,7 @@ public class AdminAdjustStrategy implements PointRewardStrategy {
         if (change < 0) {
             int deduct = Math.abs(change);
             if (before < deduct) {
-                throw new BusinessException(String.format("扣减后可用积分将变负数，系统拦截操作！学生当前余额仅剩: %d pts", before));
+                throw new BusinessException(String.format("扣减后可用积分将变负数，系统拦截操作！学生当前余额仅剩: %d 积分", before));
             }
         }
 

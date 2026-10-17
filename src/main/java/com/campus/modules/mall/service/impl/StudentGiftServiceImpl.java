@@ -294,7 +294,7 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         // 5. 校验学生可用积分余额
         int currentBalance = student.getCurrentPoints() != null ? student.getCurrentPoints() : 0;
         if (currentBalance < totalPointsCost) {
-            throw new BusinessException(ResultCode.POINTS_NOT_ENOUGH.getCode(), String.format("可用积分不足！当前余额: %d pts，本次兑换需要: %d pts", currentBalance, totalPointsCost));
+            throw new BusinessException(ResultCode.POINTS_NOT_ENOUGH.getCode(), String.format("可用积分不足！当前余额: %d 积分，本次兑换需要: %d 积分", currentBalance, totalPointsCost));
         }
 
         // 6. 校验库存并执行原子乐观锁扣减（P1-7: 统一乐观锁冲突重试策略，最大重试 3 次 + 指数退避）
@@ -968,7 +968,7 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         int totalPointsCost = gift.getPointsRequired() * quantity;
         int currentBalance = student.getCurrentPoints() != null ? student.getCurrentPoints() : 0;
         if (currentBalance < totalPointsCost) {
-            throw new BusinessException(ResultCode.POINTS_NOT_ENOUGH.getCode(), String.format("可用积分不足！当前余额: %d pts，本次兑换需要: %d pts", currentBalance, totalPointsCost));
+            throw new BusinessException(ResultCode.POINTS_NOT_ENOUGH.getCode(), String.format("可用积分不足！当前余额: %d 积分，本次兑换需要: %d 积分", currentBalance, totalPointsCost));
         }
 
         // 6. Redis + Lua 原子预扣库存 (P1-1 阻断 99% 的无效流量打入数据库)

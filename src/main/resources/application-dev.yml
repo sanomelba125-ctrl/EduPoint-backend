@@ -79,6 +79,13 @@ campus:
 
 # 七牛云 Kodo 对象存储配置
 # [说明] 优先从 application-local.yml 读取（开发私有不入库），亦可配置环境变量 QINIU_ACCESS_KEY 等
+#
+# ⚠️ 重要提示（2026-10）：项目曾使用的七牛「测试域名」(*.clouddn.com) **已被七牛官方回收**，
+#    DNS 现指向 testdomain-offline.qiniu.in，历史图片全部 404 且无法恢复。
+#    七牛测试域名有效期仅 30 天，到期即回收，这是历史图片失效的根因。
+#    若要启用 qiniu 模式，必须先在七牛控制台绑定自有【已备案】域名并把 domain-url 指向它；
+#    否则请保持 campus.oss.type=local（默认值，图片落盘到 backend/uploads/images）。
+#
 # 如需在开发环境中直接配置，可取消注释并填入：
 # qiniu:
 #   access-key: ${QINIU_ACCESS_KEY:}

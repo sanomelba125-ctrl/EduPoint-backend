@@ -35,7 +35,7 @@ public interface CertificateMapper extends BaseMapper<Certificate> {
                                                 @Param("activityTitle") String activityTitle,
                                                 @Param("status") Integer status);
 
-    @Select("SELECT c.id, c.certificate_no, a.title AS activity_title, c.title, c.issuer, c.issue_time, c.file_url, c.status " +
+    @Select("SELECT c.id, c.certificate_no, c.activity_id, a.title AS activity_title, c.title, c.issuer, c.issue_time, c.file_url, c.status " +
             "FROM certificate c JOIN activity a ON a.id=c.activity_id " +
             "WHERE c.deleted=0 AND c.student_id=#{studentId} ORDER BY c.issue_time DESC")
     List<CertificateMyVO> selectMyList(@Param("studentId") Long studentId);

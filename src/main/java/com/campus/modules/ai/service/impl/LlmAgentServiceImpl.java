@@ -325,8 +325,8 @@ public class LlmAgentServiceImpl implements LlmAgentService {
             sb.append(String.format("""
                     同学你好！已为你实时查询到平台积分账户数据：
 
-                    • **可用积分余额**：%d pts
-                    • **历史累计总积分**：%d pts
+                    • **可用积分余额**：%d 积分
+                    • **历史累计总积分**：%d 积分
 
                     """, available, total));
 
@@ -334,7 +334,7 @@ public class LlmAgentServiceImpl implements LlmAgentService {
                 sb.append("📋 **最近收支流水记录**：\n");
                 for (int i = 0; i < txs.size(); i++) {
                     JSONObject tx = txs.getJSONObject(i);
-                    sb.append(String.format("%d. [%s] **%s pts** - %s (%s)\n",
+                    sb.append(String.format("%d. [%s] **%s 积分** - %s (%s)\n",
                             i + 1,
                             tx.getString("typeText"),
                             tx.getString("changePoints"),
@@ -376,7 +376,7 @@ public class LlmAgentServiceImpl implements LlmAgentService {
                     sb.append(String.format("""
                             • **【%s】** x %d 件
                               - 订单编号：`%s`
-                              - 消耗积分：%d pts
+                              - 消耗积分：%d 积分
                               - 提货核销码：`%s`
                               - 当前状态：%s
                               - 下单时间：%s
@@ -416,7 +416,7 @@ public class LlmAgentServiceImpl implements LlmAgentService {
                 for (int i = 0; i < acts.size(); i++) {
                     JSONObject a = acts.getJSONObject(i);
                     sb.append(String.format("""
-                            %d. **【%s】**（奖励积分: %d pts）
+                            %d. **【%s】**（奖励积分: %d 积分）
                                - 参与状态：%s
                                - 活动地点：%s
                                - 报名时间：%s
