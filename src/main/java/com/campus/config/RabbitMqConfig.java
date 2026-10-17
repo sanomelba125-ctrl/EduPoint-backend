@@ -73,6 +73,8 @@ public class RabbitMqConfig {
             }
             return message;
         });
+        // 关键可靠性加固：开启 mandatory=true，确保遇到无法路由的消息时由 Broker 回退 basic.return 并触发 returnsCallback，避免静默丢消息
+        template.setMandatory(true);
         // 统一在基础设施配置类中注册全局 Publisher Confirm 与 Returns 回调，避免业务类侵入污染
         template.setConfirmCallback((correlation, confirmed, reason) -> {
             if (!confirmed) {

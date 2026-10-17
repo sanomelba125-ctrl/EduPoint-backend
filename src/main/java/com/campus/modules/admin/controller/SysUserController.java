@@ -7,6 +7,7 @@ import com.campus.common.annotation.RateLimit;
 import com.campus.common.auth.AuthUtil;
 import com.campus.common.constant.UserRole;
 import com.campus.common.result.Result;
+import com.campus.config.DefaultPasswordProvider;
 import com.campus.modules.admin.dto.*;
 import com.campus.modules.admin.service.SysUserService;
 import jakarta.validation.Valid;
@@ -25,6 +26,7 @@ import java.util.Map;
 public class SysUserController {
 
     private final SysUserService sysUserService;
+    private final DefaultPasswordProvider defaultPasswordProvider;
 
     /**
      * 管理员登录
@@ -133,11 +135,12 @@ public class SysUserController {
     public Result<Void> resetPassword(
             @PathVariable Long id,
             @RequestBody(required = false) SysUserResetPasswordDTO dto) {
+        String defaultPwd = defaultPasswordProvider.get();
         String newPassword = (dto != null && org.springframework.util.StringUtils.hasText(dto.getNewPassword()))
                 ? dto.getNewPassword().trim()
-                : com.campus.common.constant.SecurityConstants.DEFAULT_INITIAL_PASSWORD;
+                : defaultPwd;
         sysUserService.resetPassword(id, newPassword);
-        boolean isDefault = com.campus.common.constant.SecurityConstants.DEFAULT_INITIAL_PASSWORD.equals(newPassword);
-        return Result.success(isDefault ? "管理员密码已重置为初始密码(123456)" : "管理员密码重置成功", null);
+        boolean isDefault = defaultPwd.equals(newPassword);
+        return Result.success(isDefault ? "管理员密码已重置为初始密码(" + defaultPwd + ")" : "管理员密码重置成功", null);
     }
 }

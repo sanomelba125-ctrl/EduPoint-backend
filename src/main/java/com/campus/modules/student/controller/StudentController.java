@@ -26,6 +26,7 @@ import java.util.Map;
 public class StudentController {
 
     private final StudentService studentService;
+    private final com.campus.config.DefaultPasswordProvider defaultPasswordProvider;
 
     /**
      * 移动学生端登录 (学号 + 密码)
@@ -141,12 +142,13 @@ public class StudentController {
     public Result<Void> resetStudentPassword(
             @PathVariable Long id,
             @RequestBody(required = false) StudentResetPasswordDTO dto) {
+        String defaultPwd = defaultPasswordProvider.get();
         String newPassword = (dto != null && org.springframework.util.StringUtils.hasText(dto.getNewPassword()))
                 ? dto.getNewPassword().trim()
-                : com.campus.common.constant.SecurityConstants.DEFAULT_INITIAL_PASSWORD;
+                : defaultPwd;
         studentService.resetStudentPassword(id, newPassword);
-        boolean isDefault = com.campus.common.constant.SecurityConstants.DEFAULT_INITIAL_PASSWORD.equals(newPassword);
-        return Result.success(isDefault ? "学生密码已成功重置为初始密码(123456)" : "学生密码已成功重置", null);
+        boolean isDefault = defaultPwd.equals(newPassword);
+        return Result.success(isDefault ? "学生密码已成功重置为初始密码(" + defaultPwd + ")" : "学生密码已成功重置", null);
     }
 
     /**

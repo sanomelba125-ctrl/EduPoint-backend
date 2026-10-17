@@ -324,6 +324,9 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
         }
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.campus.config.DefaultPasswordProvider defaultPasswordProvider;
+
     @Override
     public void resetStudentPassword(Long id, String newPassword) {
         Student student = getById(id);
@@ -333,7 +336,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
 
         String rawPassword = StringUtils.hasText(newPassword)
                 ? newPassword.trim()
-                : com.campus.common.constant.SecurityConstants.DEFAULT_INITIAL_PASSWORD;
+                : (defaultPasswordProvider != null ? defaultPasswordProvider.get() : "123456");
         String encodedPassword = PasswordUtil.encode(rawPassword);
 
         lambdaUpdate()

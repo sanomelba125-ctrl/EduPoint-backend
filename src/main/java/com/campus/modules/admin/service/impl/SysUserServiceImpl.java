@@ -280,6 +280,9 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
         log.info("管理员账号注销成功并强制踢下线: (ID: {}, Username: {})", user.getId(), user.getUsername());
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.campus.config.DefaultPasswordProvider defaultPasswordProvider;
+
     @Override
     public void resetPassword(Long id, String newPassword) {
         SysUser user = getById(id);
@@ -294,7 +297,7 @@ public class SysUserServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impl
 
         String rawPassword = StringUtils.hasText(newPassword)
                 ? newPassword.trim()
-                : com.campus.common.constant.SecurityConstants.DEFAULT_INITIAL_PASSWORD;
+                : (defaultPasswordProvider != null ? defaultPasswordProvider.get() : "123456");
         String encodedPassword = PasswordUtil.encode(rawPassword);
 
         lambdaUpdate()
