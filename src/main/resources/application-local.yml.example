@@ -23,6 +23,11 @@ activity:
   qrcode:
     sign-secret: ${ACTIVITY_QR_SIGN_SECRET:EduPoint@QrSign#2026-LocalDevOnly}
 
+# 商城礼品提货码防伪私钥 (本地测试用随机安全密钥，生产请通过环境变量 MALL_PICKUP_SIGN_SECRET 注入)
+mall:
+  pickup:
+    sign-secret: ${MALL_PICKUP_SIGN_SECRET:EduPoint@PickupSign#2026-LocalDevOnly}
+
 # 本地私有 AI 大模型配置 (通义千问 Qwen / 商汤日日新 SenseNova，生产通过环境变量 SENSENOVA_API_KEY 注入)
 ai:
   llm:

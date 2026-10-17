@@ -104,8 +104,7 @@ public class PickupTokenService {
         String expectedSign = hmacSha256(payload, getSecret());
         if (!MessageDigest.isEqual(expectedSign.getBytes(StandardCharsets.UTF_8),
                 receivedSign.getBytes(StandardCharsets.UTF_8))) {
-            log.warn("Pickup QR code tamper detected for orderNo={}: received={}, expected={}",
-                    orderNo, receivedSign, expectedSign);
+            log.warn("Pickup QR code tamper detected for orderNo={}, signature mismatch", orderNo);
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "提货二维码防伪校验失败，无效凭证");
         }
 
@@ -117,11 +116,11 @@ public class PickupTokenService {
     }
 
     private String getSecret() {
-        if (mallPickupProperties != null && mallPickupProperties.getSignSecret() != null
-                && !mallPickupProperties.getSignSecret().isBlank()) {
-            return mallPickupProperties.getSignSecret();
+        if (mallPickupProperties == null || mallPickupProperties.getSignSecret() == null
+                || mallPickupProperties.getSignSecret().isBlank()) {
+            throw new IllegalStateException("提货码签名密钥未配置，请配置环境变量 MALL_PICKUP_SIGN_SECRET 或在配置文件中指定 mall.pickup.sign-secret");
         }
-        return "CampusMallPickupTokenSecretKey2026SafeGuard";
+        return mallPickupProperties.getSignSecret();
     }
 
     private String hmacSha256(String data, String secret) {

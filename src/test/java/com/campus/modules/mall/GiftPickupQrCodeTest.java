@@ -129,6 +129,17 @@ class GiftPickupQrCodeTest {
         assertTrue(ex.getMessage().contains("防伪校验失败"));
     }
 
+    @Test
+    @DisplayName("Token服务：密钥未配置或为空时抛出明确配置异常拒绝静默兜底 (P1修复)")
+    void tokenService_shouldThrowWhenSecretMissing() {
+        MallPickupProperties unconfiguredProp = new MallPickupProperties();
+        PickupTokenService unconfiguredService = new PickupTokenService(unconfiguredProp);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> unconfiguredService.generateToken(ORDER_NO, PICKUP_CODE, System.currentTimeMillis()));
+        assertTrue(ex.getMessage().contains("提货码签名密钥未配置"));
+    }
+
     // ==========================================
     // 2. 学生端获取动态提货二维码
     // ==========================================

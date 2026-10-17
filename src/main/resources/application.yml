@@ -42,6 +42,11 @@ activity:
     sign-secret: ${ACTIVITY_QR_SIGN_SECRET}
     checkin-base-url: ${ACTIVITY_CHECKIN_BASE_URL:http://localhost:5173/#/checkin}
 
+mall:
+  pickup:
+    valid-seconds: ${MALL_PICKUP_VALID_SECONDS:300}
+    sign-secret: ${MALL_PICKUP_SIGN_SECRET}
+
 # WebSocket 握手鉴权配置
 websocket:
   auth:
