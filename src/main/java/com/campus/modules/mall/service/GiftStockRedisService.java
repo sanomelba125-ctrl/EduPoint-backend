@@ -69,12 +69,36 @@ public class GiftStockRedisService {
     }
 
     /**
-     * 库存主动预热
+     * 库存主动预热（管理端创建/编辑礼品、库存被显式修改后调用）。
+     *
+     * <p>这是<b>允许覆盖</b>的写入口，仅在数据库库存确实发生变化时使用。
+     * 秒杀链路的懒加载必须走 {@link #warmupStockIfAbsent(Long, int)}，否则会覆盖
+     * 其他线程已经扣减过的在途库存。</p>
      */
     public void warmupStock(Long giftId, int stock) {
         String key = GiftRedisKeys.stock(giftId);
         redis.opsForValue().set(key, String.valueOf(stock));
         log.info("[库存预热] 成功将礼品库存预热至 Redis: giftId={}, stock={}", giftId, stock);
+    }
+
+    /**
+     * 懒加载预热：仅当库存 key 不存在时写入数据库库存（P1 修复）。
+     *
+     * <p>旧实现直接 {@code SET}，两个请求同时冷启动时会互相覆盖：一方已把 10 扣到 9，
+     * 另一方又把数据库里的 10 写回去再扣一次，结果两个成功请求只净减 1 件，直接超卖。
+     * 这里改用 SETNX 语义，保证初始值只写一次，其余请求都在当前值上继续原子扣减。</p>
+     *
+     * @return true=本次写入成功；false=key 已存在，未覆盖
+     */
+    public boolean warmupStockIfAbsent(Long giftId, int stock) {
+        String key = GiftRedisKeys.stock(giftId);
+        Boolean created = redis.opsForValue().setIfAbsent(key, String.valueOf(stock));
+        if (Boolean.TRUE.equals(created)) {
+            log.info("[库存预热] 懒加载写入初始库存: giftId={}, stock={}", giftId, stock);
+            return true;
+        }
+        log.info("[库存预热] 库存 key 已被其他请求写入，跳过覆盖: giftId={}", giftId);
+        return false;
     }
 
     /**
@@ -107,9 +131,10 @@ public class GiftStockRedisService {
                     throw new BusinessException("您选择的礼品不存在");
                 }
                 int dbStock = (gift.getStock() != null && gift.getStock() > 0) ? gift.getStock() : 0;
-                warmupStock(giftId, dbStock);
+                // 只允许首个请求写入初始库存：并发冷启动时不得把别人已扣减的值覆盖回数据库旧值
+                warmupStockIfAbsent(giftId, dbStock);
 
-                // 预热后再次原子扣减
+                // 在 key 的当前值上再次原子扣减；若其他请求已扣到 0，Lua 返回 0 而不是超扣
                 Long retryResult = redis.execute(DECR_SCRIPT, Collections.singletonList(key), String.valueOf(quantity));
                 return retryResult != null && retryResult == 1L;
             }

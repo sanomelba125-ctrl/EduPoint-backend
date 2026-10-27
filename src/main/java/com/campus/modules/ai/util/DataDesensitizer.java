@@ -19,8 +19,15 @@ public final class DataDesensitizer {
     /** 身份证号正则 (18位) */
     private static final Pattern ID_CARD_PATTERN = Pattern.compile("(?<!\\d)(\\d{6})(\\d{8})(\\d{3}[0-9Xx])(?!\\d)");
 
-    /** 密码敏感词匹配 (如: 密码是123456 / pwd: xxx) */
-    private static final Pattern PASSWORD_PATTERN = Pattern.compile("(?i)(密码|pwd|password)[\\s:=:：]+([\\S]{4,20})");
+    /**
+     * 密码敏感词匹配，覆盖「密码是/为/is + 值」「密码:/：/=/空白 + 值」两类写法。
+     *
+     * <p>旧正则只认 {@code [:：=]}，导致「密码是123456」这类最常见的口语表达完全不脱敏，
+     * 明文会直接进入大模型与日志。分隔符必须是显式连接词或标点，因此「密码错误」
+     * 「忘记密码了」这类不含密码值的句子不会被误伤。</p>
+     */
+    private static final Pattern PASSWORD_PATTERN = Pattern.compile(
+            "(?i)(密码|pwd|password)(?:\\s*(?:是|为|is)\\s*|\\s*[:：=]\\s*|\\s+)([^\\s，。；,;!?！？]{4,20})");
 
     /**
      * 对提问文本进行安全脱敏过滤

@@ -69,6 +69,8 @@ logging:
     com.campus.modules.activity.mapper: debug
     com.campus.modules.mall.mapper: debug
     com.campus.modules.student.mapper: debug
+    # AI 对话内容属隐私：该 mapper 的 DEBUG 会打印 SQL 参数（含完整问答正文、提货码）
+    com.campus.modules.ai.mapper: info
     p6spy: info
     org.springframework.web: info
 

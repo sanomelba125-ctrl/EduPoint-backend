@@ -49,8 +49,8 @@ ENV JAVA_OPTS="-XX:+UseContainerSupport \
                -Dfile.encoding=UTF-8 \
                -Duser.timezone=Asia/Shanghai"
 
-# 容器健康检查 (对接 Spring Boot Actuator)
+# 容器健康检查 (对接 Spring Boot Actuator；server.servlet.context-path=/api，必须带前缀)
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
-  CMD curl -fsS http://localhost:8080/actuator/health || exit 1
+  CMD curl -fsS http://localhost:8080/api/actuator/health || exit 1
 
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar app.jar"]

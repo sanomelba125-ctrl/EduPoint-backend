@@ -79,7 +79,9 @@ public class AiChatServiceImpl implements AiChatService {
 
         // 1. 敏感数据脱敏过滤器 (DataDesensitizer)
         String cleanQuestion = DataDesensitizer.desensitize(rawQuestion.trim());
-        log.info("【AI 对话】收到提问: [学生ID:{}, 会话:{}] '{}' -> 脱敏后: '{}'", studentId, conversationId, rawQuestion, cleanQuestion);
+        // 只记录脱敏后的文本：原文里可能含手机号、密码，日志同样属于数据外泄面
+        log.info("【AI 对话】收到提问: [学生ID:{}, 会话:{}] 原文字符数:{}, 脱敏后: '{}'",
+                studentId, conversationId, rawQuestion.length(), cleanQuestion);
 
         // 持久化用户提问 (role: user)
         aiMessageService.saveMessage(studentId, conversationId, "user", cleanQuestion, null, null);

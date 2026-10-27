@@ -66,7 +66,7 @@ class GiftStockRedisServiceTest {
     }
 
     @Test
-    @DisplayName("测试未预热懒加载：脚本返回 -1 时从 MySQL 查库预热并再次预扣")
+    @DisplayName("测试未预热懒加载：脚本返回 -1 时从 MySQL 查库，用 SETNX 写入并再次预扣")
     @SuppressWarnings("unchecked")
     void testPreDeductStock_LazyWarmup() {
         Gift gift = new Gift();
@@ -74,6 +74,7 @@ class GiftStockRedisServiceTest {
         gift.setStock(15);
         gift.setDeleted(0);
         when(giftMapper.selectById(6L)).thenReturn(gift);
+        when(valueOperations.setIfAbsent("gift:stock:6", "15")).thenReturn(true);
 
         // 第一次返回 -1 (未预热)，第二次返回 1 (预扣成功)
         when(redis.execute(any(RedisScript.class), anyList(), any()))
@@ -82,7 +83,43 @@ class GiftStockRedisServiceTest {
 
         boolean result = giftStockRedisService.preDeductStock(6L, 1);
         assertTrue(result);
-        verify(valueOperations).set("gift:stock:6", "15");
+        verify(valueOperations).setIfAbsent("gift:stock:6", "15");
+    }
+
+    @Test
+    @DisplayName("P1: 并发冷启动时 SETNX 返回 false 也不影响扣减，且绝不覆盖别人已扣减的值")
+    @SuppressWarnings("unchecked")
+    void testPreDeductStock_LazyWarmup_DoesNotOverwriteExistingKey() {
+        stubGift(6L, 10);
+        // 另一个线程已经把 key 写成 10 并扣到 9，本线程的 SETNX 必须失败且不写入
+        when(valueOperations.setIfAbsent("gift:stock:6", "10")).thenReturn(false);
+
+        when(redis.execute(any(RedisScript.class), anyList(), any()))
+                .thenReturn(-1L)
+                .thenReturn(1L);
+
+        assertTrue(giftStockRedisService.preDeductStock(6L, 1));
+
+        verify(valueOperations).setIfAbsent("gift:stock:6", "10");
+        verify(valueOperations, never()).set("gift:stock:6", "10");
+    }
+
+    @Test
+    @DisplayName("P1: warmupStockIfAbsent 在 key 已存在时返回 false，绝不使用 SET 覆盖")
+    void testWarmupStockIfAbsent_ExistingKey() {
+        when(valueOperations.setIfAbsent("gift:stock:6", "10")).thenReturn(false);
+
+        assertFalse(giftStockRedisService.warmupStockIfAbsent(6L, 10));
+        verify(valueOperations, never()).set(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("P1: warmupStockIfAbsent 在 key 缺失时写入成功并返回 true")
+    void testWarmupStockIfAbsent_MissingKey() {
+        when(valueOperations.setIfAbsent("gift:stock:6", "10")).thenReturn(true);
+
+        assertTrue(giftStockRedisService.warmupStockIfAbsent(6L, 10));
+        verify(valueOperations).setIfAbsent("gift:stock:6", "10");
     }
 
     @Test

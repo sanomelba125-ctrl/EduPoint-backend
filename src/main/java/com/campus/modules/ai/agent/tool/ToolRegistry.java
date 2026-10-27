@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.campus.modules.ai.agent.model.ToolExecutionRecord;
+import com.campus.modules.ai.util.DataDesensitizer;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -111,18 +112,19 @@ public class ToolRegistry {
                 args = JSON.parseObject(argumentsJson);
             }
         } catch (Exception e) {
-            log.warn("解析工具入参 JSON 失败: {}, error={}", argumentsJson, e.getMessage());
+            log.warn("解析工具入参 JSON 失败: {}, error={}", safeLogText(argumentsJson), e.getMessage());
         }
 
         try {
-            log.info("【AI 工具执行】触发工具: [{}] (CallId: {}), 入参: {}, 绑定学生ID: {}",
-                    toolName, toolCallId, argumentsJson, studentId);
+            log.info("【AI 工具执行】触发工具: [{}] (CallId: {}), 入参(脱敏): {}, 绑定学生ID: {}",
+                    toolName, toolCallId, safeLogText(argumentsJson), studentId);
 
             String factJson = tool.execute(studentId, args);
             long cost = System.currentTimeMillis() - startTime;
 
-            log.info("【AI 工具执行完成】工具: [{}] 耗时: {} ms, 事实数据: {}",
-                    toolName, cost, factJson.length() > 200 ? factJson.substring(0, 200) + "..." : factJson);
+            // 事实数据可能含积分、订单、提货码等业务明细，日志只保留大小，不落内容
+            log.info("【AI 工具执行完成】工具: [{}] 耗时: {} ms, 事实数据字符数: {}",
+                    toolName, cost, factJson == null ? 0 : factJson.length());
 
             return ToolExecutionRecord.builder()
                     .toolCallId(toolCallId)
@@ -150,5 +152,16 @@ public class ToolRegistry {
                     .errorMessage(e.getMessage())
                     .build();
         }
+    }
+
+    /**
+     * 日志安全输出：先脱敏再截断，避免手机号、密码、订单号等原样落盘。
+     */
+    private String safeLogText(String text) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+        String masked = DataDesensitizer.desensitize(text);
+        return masked.length() > 120 ? masked.substring(0, 120) + "..." : masked;
     }
 }
