@@ -9,7 +9,9 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -21,7 +23,8 @@ import java.util.concurrent.TimeUnit;
  * 1. Redis + Lua 原子预扣库存与回滚；
  * 2. 拒绝 Fail-Open 的安全快速失败机制；
  * 3. Cache-Aside 延时双删；
- * 4. Redis 与 MySQL 差异对账。
+ * 4. Redis 与 MySQL 差异对账；
+ * 5. MQ 补偿按 messageId 一次性幂等回补。
  */
 @Slf4j
 @Service
@@ -30,6 +33,8 @@ public class GiftStockRedisService {
 
     public static final String KEY_PREFIX_STOCK = "gift:stock:";
     public static final String KEY_PREFIX_DETAIL = "gift:detail:";
+    public static final String KEY_PREFIX_COMPENSATED = "gift:stock:compensated:";
+    private static final long COMPENSATE_DEDUPE_TTL_SECONDS = 7 * 24 * 3600L;
 
     private final StringRedisTemplate redis;
     private final GiftMapper giftMapper;
@@ -37,6 +42,7 @@ public class GiftStockRedisService {
     private static final DefaultRedisScript<Long> DECR_SCRIPT;
     private static final DefaultRedisScript<Long> INCR_SCRIPT;
     private static final DefaultRedisScript<Long> RECONCILE_SCRIPT;
+    private static final DefaultRedisScript<Long> COMPENSATE_ONCE_SCRIPT;
     private static final ScheduledExecutorService DOUBLE_DELETE_EXECUTOR =
             Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "double-delete-thread");
@@ -56,6 +62,10 @@ public class GiftStockRedisService {
         RECONCILE_SCRIPT = new DefaultRedisScript<>();
         RECONCILE_SCRIPT.setLocation(new ClassPathResource("lua/gift_stock_reconcile.lua"));
         RECONCILE_SCRIPT.setResultType(Long.class);
+
+        COMPENSATE_ONCE_SCRIPT = new DefaultRedisScript<>();
+        COMPENSATE_ONCE_SCRIPT.setLocation(new ClassPathResource("lua/gift_stock_compensate_once.lua"));
+        COMPENSATE_ONCE_SCRIPT.setResultType(Long.class);
     }
 
     /**
@@ -113,8 +123,12 @@ public class GiftStockRedisService {
     }
 
     /**
-     * 反向回补补偿库存 (P1-1 & P1-5)
+     * 非幂等反向回补，仅保留给历史非 MQ 调用兼容。
+     *
+     * @deprecated 所有 MQ 消费、Outbox 判死和事务回滚补偿必须使用
+     * {@link #compensateStockOnce(Long, int, String)}，按 messageId 原子去重。
      */
+    @Deprecated
     public void compensateStock(Long giftId, int quantity) {
         String key = GiftRedisKeys.stock(giftId);
         try {
@@ -122,6 +136,52 @@ public class GiftStockRedisService {
             log.info("[库存补偿] 成功回补 Redis 库存: giftId={}, 回补数量={}, 回补后库存={}", giftId, quantity, newStock);
         } catch (Exception e) {
             log.error("[库存补偿] 回补 Redis 库存失败: giftId={}, quantity={}", giftId, quantity, e);
+        }
+    }
+
+    /**
+     * 按 messageId 幂等回补库存（P0-4）。
+     *
+     * <p>同一消息无论因 ACK 失败、重复投递还是补偿重试被处理多少次，库存最多只加回一次。
+     * 库存 key 不存在时返回 -1，绝不凭空 SET 一个库存值，避免把其他在途数据覆盖掉。</p>
+     *
+     * @return 1=本次已回补；0=该 messageId 已回补过；-1=库存 key 不存在；-2=执行异常
+     */
+    public int compensateStockOnce(Long giftId, int quantity, String messageId) {
+        if (giftId == null || quantity <= 0 || !StringUtils.hasText(messageId)) {
+            log.warn("[库存补偿] 参数非法，跳过一次性回补: giftId={}, quantity={}, messageId={}",
+                    giftId, quantity, messageId);
+            return -2;
+        }
+
+        String stockKey = GiftRedisKeys.stock(giftId);
+        String dedupeKey = KEY_PREFIX_COMPENSATED + messageId.trim();
+        try {
+            Long result = redis.execute(
+                    COMPENSATE_ONCE_SCRIPT,
+                    Arrays.asList(stockKey, dedupeKey),
+                    String.valueOf(quantity),
+                    String.valueOf(COMPENSATE_DEDUPE_TTL_SECONDS)
+            );
+            if (result == null) {
+                log.error("[库存补偿] Lua 返回 null: giftId={}, messageId={}", giftId, messageId);
+                return -2;
+            }
+            if (result == 1L) {
+                log.info("[库存补偿] 一次性回补成功: giftId={}, quantity={}, messageId={}",
+                        giftId, quantity, messageId);
+                return 1;
+            }
+            if (result == 0L) {
+                log.info("[库存补偿] messageId 已回补过，幂等跳过: giftId={}, messageId={}", giftId, messageId);
+                return 0;
+            }
+            log.warn("[库存补偿] 库存 key 不存在，跳过回补，交由对账处理: giftId={}, messageId={}",
+                    giftId, messageId);
+            return -1;
+        } catch (Exception e) {
+            log.error("[库存补偿] 一次性回补执行异常: giftId={}, messageId={}", giftId, messageId, e);
+            return -2;
         }
     }
 

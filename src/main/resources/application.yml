@@ -41,6 +41,12 @@ campus:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:3200,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:3200,http://127.0.0.1:5173}
   security:
     default-initial-password: ${DEFAULT_INITIAL_PASSWORD:123456}
+    # 仅可信反向代理之后才开启；直连客户端可伪造 X-Forwarded-For 绕过限流
+    trust-forwarded-headers: ${CAMPUS_TRUST_FORWARDED_HEADERS:false}
+  oss:
+    type: ${CAMPUS_OSS_TYPE:local} # 对象存储模式: local (本地磁盘存储) / qiniu (七牛云 Kodo)
+  mall:
+    order-timeout-ms: ${CAMPUS_MALL_ORDER_TIMEOUT_MS:86400000} # 礼品订单未提货自动关单时效 (默认 24 小时 / 86400000 毫秒)
 
 activity:
   qrcode:
@@ -73,16 +79,6 @@ ai:
     timeout-seconds: 60
     reasoning-effort: ${AI_LLM_REASONING_EFFORT:none} # 客服模式设为 none 关闭思考以秒级响应；可选 low/medium/high
     max-tokens: 4096
-
-# 平台业务规约配置
-campus:
-  oss:
-    type: ${CAMPUS_OSS_TYPE:local} # 对象存储模式: local (本地磁盘存储) / qiniu (七牛云 Kodo)
-  mall:
-    order-timeout-ms: ${CAMPUS_MALL_ORDER_TIMEOUT_MS:86400000} # 礼品订单未提货自动关单时效 (默认 24 小时 / 86400000 毫秒)
-  cors:
-    # 受信任跨域来源白名单 (逗号分隔，P5-2 收敛泛域名安全治理)
-    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:3200,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:3200,http://127.0.0.1:5173}
 
 # Spring Boot Actuator 生产级可观测性与 Prometheus 指标配置 (P3-1)
 management:

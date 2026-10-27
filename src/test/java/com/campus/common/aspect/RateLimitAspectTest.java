@@ -12,8 +12,13 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.lang.reflect.Method;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -42,6 +47,50 @@ public class RateLimitAspectTest {
     // 辅助测试靶标方法
     @RateLimit(key = "rate_limit:test:api", count = 10, windowMs = 1000, message = "触发限流")
     public void dummyTargetMethod() {
+    }
+
+    @RateLimit(key = "rate_limit:test:ip", count = 10, windowMs = 1000, limitType = RateLimit.LimitType.IP)
+    public void dummyIpTargetMethod() {
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void tearDown() {
+        RequestContextHolder.resetRequestAttributes();
+    }
+
+    @SuppressWarnings("unchecked")
+    private String capturedIpKey(String methodName, boolean trustForwarded) throws Throwable {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRemoteAddr("10.0.0.8");
+        request.addHeader("X-Forwarded-For", "203.0.113.9, 10.0.0.1");
+        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+
+        Method method = this.getClass().getMethod(methodName);
+        when(joinPoint.getSignature()).thenReturn(methodSignature);
+        when(methodSignature.getMethod()).thenReturn(method);
+        when(redis.execute(any(DefaultRedisScript.class), anyList(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(1L);
+        ReflectionTestUtils.setField(rateLimitAspect, "trustForwardedHeaders", trustForwarded);
+
+        rateLimitAspect.around(joinPoint);
+
+        org.mockito.ArgumentCaptor<List<String>> captor = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(redis).execute(any(DefaultRedisScript.class), captor.capture(), anyString(), anyString(), anyString(), anyString());
+        return captor.getValue().get(0);
+    }
+
+    @Test
+    @DisplayName("P1-6 安全: 默认不信任 X-Forwarded-For，限流按真实 remoteAddr")
+    void testRateLimit_IgnoresForwardedHeaderByDefault() throws Throwable {
+        String key = capturedIpKey("dummyIpTargetMethod", false);
+        assertTrue(key.contains(":ip:10.0.0.8"));
+    }
+
+    @Test
+    @DisplayName("P1-6 安全: 显式信任代理后才使用 X-Forwarded-For 首段 IP")
+    void testRateLimit_UsesForwardedHeaderWhenTrusted() throws Throwable {
+        String key = capturedIpKey("dummyIpTargetMethod", true);
+        assertTrue(key.contains(":ip:203.0.113.9"));
     }
 
     @Test

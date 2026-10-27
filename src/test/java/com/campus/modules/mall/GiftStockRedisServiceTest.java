@@ -9,6 +9,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.mockito.ArgumentCaptor;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -90,6 +93,45 @@ class GiftStockRedisServiceTest {
 
         giftStockRedisService.compensateStock(6L, 1);
         verify(redis).execute(any(RedisScript.class), anyList(), eq("1"));
+    }
+
+    @Test
+    @DisplayName("P0-4: 一次性补偿脚本使用 stock+dedupe 两个 key，并带 7 天幂等标记")
+    @SuppressWarnings("unchecked")
+    void testCompensateStockOnce_UsesDedupeKey() {
+        when(redis.execute(any(RedisScript.class), anyList(), any(), any())).thenReturn(1L);
+
+        int result = giftStockRedisService.compensateStockOnce(6L, 2, "msg-abc");
+
+        assertEquals(1, result);
+        ArgumentCaptor<List<String>> keysCaptor = ArgumentCaptor.forClass(List.class);
+        verify(redis).execute(any(RedisScript.class), keysCaptor.capture(), eq("2"), eq("604800"));
+        assertEquals(List.of("gift:stock:6", "gift:stock:compensated:msg-abc"), keysCaptor.getValue());
+    }
+
+    @Test
+    @DisplayName("P0-4: 同一 messageId 已回补时返回 0，不重复增加库存")
+    @SuppressWarnings("unchecked")
+    void testCompensateStockOnce_DuplicateSkipped() {
+        when(redis.execute(any(RedisScript.class), anyList(), any(), any())).thenReturn(0L);
+
+        assertEquals(0, giftStockRedisService.compensateStockOnce(6L, 1, "msg-abc"));
+    }
+
+    @Test
+    @DisplayName("P0-4: 库存 key 不存在时返回 -1，不凭空创建库存")
+    @SuppressWarnings("unchecked")
+    void testCompensateStockOnce_MissingStockKey() {
+        when(redis.execute(any(RedisScript.class), anyList(), any(), any())).thenReturn(-1L);
+
+        assertEquals(-1, giftStockRedisService.compensateStockOnce(6L, 1, "msg-abc"));
+    }
+
+    @Test
+    @DisplayName("P0-4: 无 messageId 时拒绝补偿，防止无法去重")
+    void testCompensateStockOnce_RejectsMissingMessageId() {
+        assertEquals(-2, giftStockRedisService.compensateStockOnce(6L, 1, " "));
+        verify(redis, never()).execute(any(RedisScript.class), anyList(), any(), any());
     }
 
     // ---------------------- 库存对账（P1-5：在途预扣感知 + 单向安全阀） ----------------------

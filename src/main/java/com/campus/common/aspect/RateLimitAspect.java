@@ -32,6 +32,13 @@ import java.util.UUID;
 public class RateLimitAspect {
 
     private final StringRedisTemplate redis;
+
+    /**
+     * 默认不信任客户端自报的 X-Forwarded-For，避免伪造 IP 绕过登录限流。
+     * 仅当应用部署在可信反向代理之后，或本地隔离压测时，才显式开启。
+     */
+    @org.springframework.beans.factory.annotation.Value("${campus.security.trust-forwarded-headers:false}")
+    private boolean trustForwardedHeaders;
     private static final DefaultRedisScript<Long> RATE_LIMIT_SCRIPT;
 
     static {
@@ -98,14 +105,17 @@ public class RateLimitAspect {
             ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
             if (attributes != null) {
                 HttpServletRequest request = attributes.getRequest();
-                String ip = request.getHeader("X-Forwarded-For");
-                if (ip != null && !ip.isBlank()) {
-                    ip = ip.split(",")[0].trim();
-                } else {
-                    ip = request.getHeader("X-Real-IP");
-                    if (ip == null || ip.isBlank()) {
-                        ip = request.getRemoteAddr();
+                String ip = null;
+                if (trustForwardedHeaders) {
+                    ip = request.getHeader("X-Forwarded-For");
+                    if (ip != null && !ip.isBlank()) {
+                        ip = ip.split(",")[0].trim();
+                    } else {
+                        ip = request.getHeader("X-Real-IP");
                     }
+                }
+                if (ip == null || ip.isBlank()) {
+                    ip = request.getRemoteAddr();
                 }
                 sb.append(":ip:").append(ip);
             }

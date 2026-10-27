@@ -36,6 +36,16 @@ public class OutboxRetryScheduler {
 
     @Scheduled(fixedDelay = 5000)
     public void retryPendingMessages() {
+        // 0. 先用消费终态日志修复「订单已成功/已拒绝，但本地消息状态丢失」的窗口
+        try {
+            int repaired = localMessageService.repairTerminalStatusFromConsumeLog();
+            if (repaired > 0) {
+                log.warn("[Outbox状态修复] 已用消费日志补齐 {} 条本地消息终态，避免在途预扣虚高", repaired);
+            }
+        } catch (Exception e) {
+            log.warn("[Outbox状态修复] 本轮状态修复失败，等待下一轮: {}", e.getMessage());
+        }
+
         // 1. 实时采集并上报发件箱待投递积压 Gauge (R4)
         long backlog = localMessageService.countPendingBacklog();
         metricsCollector.updateOutboxBacklog(backlog);
@@ -77,10 +87,11 @@ public class OutboxRetryScheduler {
                     continue;
                 }
 
+                OrderCreateMessage payload = JSON.parseObject(msg.getPayload(), OrderCreateMessage.class);
                 rabbitTemplate.convertAndSend(
                         RabbitMqConfig.SECKILL_ORDER_EXCHANGE,
                         RabbitMqConfig.SECKILL_ORDER_ROUTING_KEY,
-                        msg.getPayload()
+                        payload
                 );
 
                 localMessageService.markPublished(msg.getMessageId());
@@ -108,8 +119,8 @@ public class OutboxRetryScheduler {
      * 前序补偿链路（{@code OrderCreateConsumer} 的消费异常/业务拒绝补偿、秒杀入口的
      * 事务回滚补偿）都覆盖不到这条路径：消息从未被成功投递，消费端自然不会补偿。
      *
-     * <p>回补走 INCRBY 因而天然幂等；且与消费端补偿互斥（判死的消息不会被消费），
-     * 不存在重复回补。
+     * <p>回补走按 messageId 去重的一次性 Lua 脚本：同一判死消息即使被重复扫描，
+     * Redis 库存也最多加回一次；库存 key 不存在时不会凭空 SET 库存。
      *
      * @param message 被判死的发件箱消息
      * @param reason  判死原因，仅用于日志归因
@@ -123,9 +134,14 @@ public class OutboxRetryScheduler {
                 return;
             }
             int quantity = payload.quantity() != null && payload.quantity() > 0 ? payload.quantity() : 1;
-            giftStockRedisService.compensateStock(payload.giftId(), quantity);
-            log.warn("[Outbox补偿] 消息判死（{}），已回补 Redis 预扣库存: messageId={}, giftId={}, quantity={}",
-                    reason, message.getMessageId(), payload.giftId(), quantity);
+            int result = giftStockRedisService.compensateStockOnce(payload.giftId(), quantity, message.getMessageId());
+            if (result == 1) {
+                log.warn("[Outbox补偿] 消息判死（{}），已一次性回补 Redis 预扣库存: messageId={}, giftId={}, quantity={}",
+                        reason, message.getMessageId(), payload.giftId(), quantity);
+            } else {
+                log.warn("[Outbox补偿] 消息判死（{}），库存未由本路径回补: messageId={}, result={}",
+                        reason, message.getMessageId(), result);
+            }
         } catch (Exception e) {
             log.warn("[Outbox补偿] 判死消息库存回补失败，交由定时对账兜底: messageId={}, err={}",
                     message.getMessageId(), e.getMessage());

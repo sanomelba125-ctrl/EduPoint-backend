@@ -17,10 +17,11 @@ import java.util.List;
 public interface LocalMessageMapper extends BaseMapper<LocalMessage> {
 
     /**
-     * 查询待重试的消息列表 (状态为 0 且重试时间到达且未超过最大重试次数)
+     * 查询待重试的消息列表 (状态为 0 且重试时间到达，包含已达到最大重试次数的记录，
+     * 由调度器负责将其判死并补偿，否则第 maxRetries 次失败后记录将永远无法进入判死分支)
      */
     @Select("SELECT * FROM local_message " +
-            "WHERE status = 0 AND next_retry_time <= #{now} AND retry_count < #{maxRetries} " +
+            "WHERE status = 0 AND next_retry_time <= #{now} AND retry_count <= #{maxRetries} " +
             "ORDER BY next_retry_time ASC LIMIT #{limit}")
     List<LocalMessage> selectPendingMessages(@Param("now") LocalDateTime now,
                                              @Param("maxRetries") int maxRetries,
@@ -65,6 +66,19 @@ public interface LocalMessageMapper extends BaseMapper<LocalMessage> {
     int incrementRetry(@Param("messageId") String messageId,
                        @Param("nextRetryTime") LocalDateTime nextRetryTime,
                        @Param("reason") String reason);
+
+    /**
+     * 修复「消费端已有终态，但本地消息状态没来得及更新」的窗口。
+     * 例如订单已提交、消费日志 status=1 已写入，但 markConsumed 失败；
+     * 下一轮调度通过消费日志把本地消息补齐为完成/失败，避免永久计入在途预扣。
+     */
+    @Update("UPDATE local_message m " +
+            "JOIN mq_consume_log c ON c.message_id = m.message_id " +
+            "AND c.consumer_name = 'OrderCreateConsumer' " +
+            "SET m.status = CASE WHEN c.status = 1 THEN 2 WHEN c.status = 2 THEN 3 ELSE m.status END, " +
+            "    m.fail_reason = CASE WHEN c.status = 2 THEN COALESCE(m.fail_reason, '消费端已判定业务失败') ELSE m.fail_reason END " +
+            "WHERE m.status IN (0, 1) AND c.status IN (1, 2)")
+    int repairTerminalStatusFromConsumeLog();
 
     /**
      * 统计当前待投递积压消息总数 (status = 0)

@@ -927,6 +927,9 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         // 6. Redis + Lua 原子预扣库存 (P1-1 阻断 99% 的无效流量打入数据库)
         //    预扣成功后立即注册回滚补偿：Redis DECRBY 不参与本地事务，
         //    若后续发件箱落库/事务提交失败，必须回补，否则这笔库存被永久占用（少卖）。
+        //    messageId 预先生成，回滚补偿也走一次性幂等脚本，避免异常回调重复加库存。
+
+        String messageId = UUID.randomUUID().toString();
 
         if (giftStockRedisService != null) {
             boolean preDeductOk = giftStockRedisService.preDeductStock(gift.getId(), quantity);
@@ -940,13 +943,14 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
 
             final Long preDeductGiftId = gift.getId();
             final int preDeductQuantity = quantity;
+            final String compensationMessageId = messageId;
             AfterCommitExecutor.compensateOnRollback(
-                    () -> giftStockRedisService.compensateStock(preDeductGiftId, preDeductQuantity));
+                    () -> giftStockRedisService.compensateStockOnce(
+                            preDeductGiftId, preDeductQuantity, compensationMessageId));
         }
 
         // 7. 构造强类型消息契约与本地发件箱持久化 (P1-2 & P1-3)
 
-        String messageId = UUID.randomUUID().toString();
         String orderNo = generateOrderNo();
         ReceiverInfo receiver = resolveReceiver(dto, student);
         OrderCreateMessage msg = new OrderCreateMessage(
@@ -977,7 +981,7 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
                 rabbitTemplate.convertAndSend(
                         RabbitMqConfig.SECKILL_ORDER_EXCHANGE,
                         RabbitMqConfig.SECKILL_ORDER_ROUTING_KEY,
-                        JSON.toJSONString(msg)
+                        msg
                 );
                 localMessageService.markPublished(messageId);
             } catch (Exception e) {
@@ -1103,5 +1107,10 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         StudentGiftVO vo = new StudentGiftVO();
         org.springframework.beans.BeanUtils.copyProperties(order, vo);
         return vo;
+    }
+
+    @Override
+    public boolean existsOrderByRequestId(Long studentId, String requestId) {
+        return findOrderByRequestId(requestId, studentId) != null;
     }
 }

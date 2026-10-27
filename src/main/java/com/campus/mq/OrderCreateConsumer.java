@@ -46,7 +46,11 @@ public class OrderCreateConsumer {
 
         OrderCreateMessage msg = null;
         try {
-            msg = JSON.parseObject(rawPayload, OrderCreateMessage.class);
+            // Jackson2JsonMessageConverter 在发送 String 时会再包一层 JSON 字符串；
+            // 历史在途消息和旧重投消息可能仍是双层编码，这里兼容单层对象与双层字符串。
+            Object parsedPayload = JSON.parse(rawPayload);
+            String normalizedPayload = parsedPayload instanceof String jsonString ? jsonString : rawPayload;
+            msg = JSON.parseObject(normalizedPayload, OrderCreateMessage.class);
         } catch (Exception e) {
             log.error("[MQ消费异常] 消息格式损坏，判定为无法解析的毒消息，路由至死信队列: payload={}", rawPayload, e);
             // 毒消息同样已预扣过 Redis 库存，必须尽力回补，否则这笔库存被永久占用（少卖）。
@@ -54,7 +58,7 @@ public class OrderCreateConsumer {
             // 提取失败则只能由 StockReconciliationScheduler 的 5 分钟对账兜底。
             compensateIfParsable(rawPayload);
             // requeue = false -> 自动转入死信队列
-            channel.basicNack(deliveryTag, false, false);
+            nackSafely(channel, deliveryTag, "unparseable");
             return;
         }
 
@@ -71,56 +75,125 @@ public class OrderCreateConsumer {
             int consumed = mqConsumeLogMapper.existsConsumed(msg.messageId(), CONSUMER_NAME);
             if (consumed > 0) {
                 log.warn("[MQ幂等防重] 消息已被消费过，直接 ACK 忽略重复消费: messageId={}", msg.messageId());
-                channel.basicAck(deliveryTag, false);
+                // 补偿上一轮可能发生的「订单已提交，但本地消息未标记完成」状态
+                markConsumedSafely(msg.messageId());
+                ackSafely(channel, deliveryTag, msg.messageId());
                 return;
             }
 
-            // 2. 事务落库处理
-            boolean success = studentGiftService.processAsyncOrder(msg);
+            // 2. 事务落库处理。成功提交后，后续标记/ACK 失败绝不能反向回补库存。
+            boolean success;
+            try {
+                success = studentGiftService.processAsyncOrder(msg);
+            } catch (Exception businessException) {
+                boolean orderPersisted;
+                try {
+                    orderPersisted = studentGiftService.existsOrderByRequestId(msg.studentId(), msg.requestId());
+                } catch (Exception verifyException) {
+                    log.error("[MQ消费异常] 落库抛异常且无法确认订单是否已提交，转死信等待人工核查，不盲目补偿库存: "
+                                    + "messageId={}, requestId={}, cause={}, verifyError={}",
+                            msg.messageId(), msg.requestId(), businessException.getMessage(), verifyException.getMessage());
+                    nackSafely(channel, deliveryTag, msg.messageId());
+                    return;
+                }
+
+                if (!orderPersisted) {
+                    log.error("[MQ消费异常] 订单事务未提交，执行一次性库存补偿后转死信: messageId={}, requestId={}",
+                            msg.messageId(), msg.requestId(), businessException);
+                    compensateOnce(msg, "订单事务未提交");
+                    nackSafely(channel, deliveryTag, msg.messageId());
+                    return;
+                }
+
+                // 极端边界：事务实际已提交，但代理仍抛异常。此时订单已落库，禁止回补库存。
+                log.warn("[MQ消费异常] 检测到订单已落库，按成功路径收尾并禁止库存补偿: messageId={}, requestId={}",
+                        msg.messageId(), msg.requestId());
+                success = true;
+            }
 
             if (success) {
-                // 记录消费幂等表
-                try {
-                    mqConsumeLogMapper.insertConsumeLog(msg.messageId(), CONSUMER_NAME, "GIFT_ORDER_CREATE", msg.requestId(), 1);
-                } catch (Exception ex) {
-                    log.warn("[MQ幂等记录] 插入消费记录撞唯一约束(并发幂等已保障): messageId={}", msg.messageId());
-                }
-
-                // 标记本地消息表为完成
-                localMessageService.markConsumed(msg.messageId());
-
-                // 手动确认消息
-                channel.basicAck(deliveryTag, false);
-                log.info("[MQ异步落库] 订单事务处理完毕并确认 ACK: messageId={}, requestId={}", msg.messageId(), msg.requestId());
+                recordConsumeLogSafely(msg, 1);
+                markConsumedSafely(msg.messageId());
+                ackSafely(channel, deliveryTag, msg.messageId());
+                log.info("[MQ异步落库] 订单事务处理完毕并确认 ACK: messageId={}, requestId={}",
+                        msg.messageId(), msg.requestId());
             } else {
-                // 业务拒绝 (如余额不足或账户冻结): 触发反向回补库存并拒绝重新入队
-                log.warn("[MQ业务拒绝] 异步落库因业务校验未通过，触发 Redis 库存反向回补: messageId={}", msg.messageId());
-                giftStockRedisService.compensateStock(msg.giftId(), msg.quantity());
-                try {
-                    mqConsumeLogMapper.insertConsumeLog(msg.messageId(), CONSUMER_NAME, "GIFT_ORDER_CREATE", msg.requestId(), 2);
-                } catch (Exception ex) {
-                    log.debug("[MQ业务拒绝] 记录失败流水异常(可能已存在幂等记录): messageId={}, error={}", msg.messageId(), ex.getMessage());
-                }
-                localMessageService.markFailed(msg.messageId(), "业务校验未通过");
-                channel.basicAck(deliveryTag, false);
+                // 业务拒绝 (如余额不足或账户冻结)：库存只回补一次，后续任何标记/ACK 异常都不得再次回补。
+                log.warn("[MQ业务拒绝] 异步落库因业务校验未通过，触发一次性库存回补: messageId={}",
+                        msg.messageId());
+                compensateOnce(msg, "业务校验未通过");
+                recordConsumeLogSafely(msg, 2);
+                markFailedSafely(msg.messageId(), "业务校验未通过");
+                ackSafely(channel, deliveryTag, msg.messageId());
             }
         } catch (Exception e) {
-            log.error("[MQ消费异常] 消费执行发生未捕获异常: messageId={}, err={}", msg != null ? msg.messageId() : "null", e.getMessage(), e);
-            // 反向回补预扣的库存，避免少卖
-            if (msg != null) {
-                giftStockRedisService.compensateStock(msg.giftId(), msg.quantity());
-            }
-            // 路由至死信队列，绝不无限次重投阻塞消费者
-            channel.basicNack(deliveryTag, false, false);
+            // 此处只处理无法判断业务是否落库的协调异常：不回补库存，转死信人工核查，
+            // 避免把已成交订单的预扣再次加回 Redis。
+            log.error("[MQ消费异常] 消费协调阶段发生异常，转死信且不盲目补偿库存: messageId={}, err={}",
+                    msg != null ? msg.messageId() : "null", e.getMessage(), e);
+            nackSafely(channel, deliveryTag, msg != null ? msg.messageId() : "null");
         } finally {
             MDC.remove("traceId");
         }
     }
 
+    private void recordConsumeLogSafely(OrderCreateMessage msg, int status) {
+        try {
+            mqConsumeLogMapper.insertConsumeLog(
+                    msg.messageId(), CONSUMER_NAME, "GIFT_ORDER_CREATE", msg.requestId(), status);
+        } catch (Exception ex) {
+            log.warn("[MQ幂等记录] 写入消费记录失败(不改变已提交的订单事实): messageId={}, status={}, err={}",
+                    msg.messageId(), status, ex.getMessage());
+        }
+    }
+
+    private void markConsumedSafely(String messageId) {
+        try {
+            localMessageService.markConsumed(messageId);
+        } catch (Exception e) {
+            log.warn("[MQ本地消息] 标记消费完成失败，等待重投时补记: messageId={}, err={}",
+                    messageId, e.getMessage());
+        }
+    }
+
+    private void markFailedSafely(String messageId, String reason) {
+        try {
+            localMessageService.markFailed(messageId, reason);
+        } catch (Exception e) {
+            log.warn("[MQ本地消息] 标记业务失败失败: messageId={}, err={}", messageId, e.getMessage());
+        }
+    }
+
+    private void ackSafely(Channel channel, long deliveryTag, String messageId) {
+        try {
+            channel.basicAck(deliveryTag, false);
+        } catch (Exception e) {
+            // 不能因为 ACK 失败而回补库存；消息重投后会命中消费幂等表。
+            log.warn("[MQ ACK] 手动确认失败，消息可能重投但订单不会重复落库: messageId={}, err={}",
+                    messageId, e.getMessage());
+        }
+    }
+
+    private void nackSafely(Channel channel, long deliveryTag, String messageId) {
+        try {
+            channel.basicNack(deliveryTag, false, false);
+        } catch (Exception e) {
+            log.warn("[MQ NACK] 拒绝消息失败: messageId={}, err={}", messageId, e.getMessage());
+        }
+    }
+
+    private void compensateOnce(OrderCreateMessage msg, String reason) {
+        int result = giftStockRedisService.compensateStockOnce(msg.giftId(), msg.quantity(), msg.messageId());
+        if (result != 1) {
+            log.warn("[MQ库存补偿] 未完成本次回补，result={}, reason={}, messageId={}",
+                    result, reason, msg.messageId());
+        }
+    }
+
     /**
      * 毒消息场景下的尽力库存回补：反序列化失败时 {@code msg} 为 null，无法走强类型分支。
-     * <p>用正则从原始 JSON 载荷中提取 {@code giftId} 与 {@code quantity} 后回补预扣的库存，
-     * 避免「消息损坏进死信 + Redis 库存被永久占用」的少卖。
+     * <p>用正则从原始 JSON 载荷中提取 {@code messageId/giftId/quantity} 后按 messageId 幂等回补，
+     * 避免「消息损坏进死信 + Redis 库存被永久占用」的少卖，也避免同一毒消息重复投递时重复加库存。
      * <p>提取失败（如载荷被截断）时仅告警，兜底交由 {@code StockReconciliationScheduler}
      * 以 MySQL 为准的定时对账修复。
      *
@@ -131,10 +204,12 @@ public class OrderCreateConsumer {
             return;
         }
         try {
+            String messageIdRaw = extractJsonField(rawPayload, "messageId");
             String giftIdRaw = extractJsonField(rawPayload, "giftId");
             String quantityRaw = extractJsonField(rawPayload, "quantity");
-            if (giftIdRaw == null || quantityRaw == null) {
-                log.warn("[MQ毒消息] 未能从损坏载荷中提取 giftId/quantity，库存回补跳过，交由定时对账兜底: payload={}", rawPayload);
+            if (messageIdRaw == null || giftIdRaw == null || quantityRaw == null) {
+                log.warn("[MQ毒消息] 未能从损坏载荷中提取 messageId/giftId/quantity，库存回补跳过，交由定时对账兜底: payload={}",
+                        rawPayload);
                 return;
             }
             long giftId = Long.parseLong(giftIdRaw.trim());
@@ -143,8 +218,9 @@ public class OrderCreateConsumer {
                 log.warn("[MQ毒消息] 损坏载荷中 quantity 非法，库存回补跳过: giftId={}, quantity={}", giftId, quantity);
                 return;
             }
-            giftStockRedisService.compensateStock(giftId, quantity);
-            log.info("[MQ毒消息] 已尽力回补预扣库存: giftId={}, quantity={}", giftId, quantity);
+            int result = giftStockRedisService.compensateStockOnce(giftId, quantity, messageIdRaw.trim());
+            log.info("[MQ毒消息] 已按 messageId 幂等回补库存: giftId={}, quantity={}, messageId={}, result={}",
+                    giftId, quantity, messageIdRaw, result);
         } catch (Exception ex) {
             log.warn("[MQ毒消息] 损坏载荷库存回补失败，交由定时对账兜底: payload={}, err={}", rawPayload, ex.getMessage());
         }

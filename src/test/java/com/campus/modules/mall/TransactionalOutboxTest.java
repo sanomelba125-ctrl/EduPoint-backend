@@ -125,10 +125,7 @@ public class TransactionalOutboxTest {
     @Test
     @DisplayName("P1-3: 定时任务自动扫描超时未投递消息并补发 MQ")
     void testOutboxRetryScheduler_ScanAndResend() {
-        LocalMessage pendingMsg = new LocalMessage();
-        pendingMsg.setMessageId("msg-retry-001");
-        pendingMsg.setBizType("GIFT_ORDER_CREATE");
-        pendingMsg.setPayload("{\"giftId\":1,\"studentId\":1001}");
+        LocalMessage pendingMsg = inflightMessage("msg-retry-001", 1L, 2);
         pendingMsg.setRetryCount(1);
         pendingMsg.setStatus(0);
 
@@ -137,12 +134,15 @@ public class TransactionalOutboxTest {
 
         outboxRetryScheduler.retryPendingMessages();
 
-        // 验证重新发送到交换机
+        // 验证重新发送强类型消息对象，而不是二次编码的 JSON 字符串
+        ArgumentCaptor<OrderCreateMessage> payloadCaptor = ArgumentCaptor.forClass(OrderCreateMessage.class);
         verify(rabbitTemplate, times(1)).convertAndSend(
                 eq(RabbitMqConfig.SECKILL_ORDER_EXCHANGE),
                 eq(RabbitMqConfig.SECKILL_ORDER_ROUTING_KEY),
-                eq(pendingMsg.getPayload())
+                payloadCaptor.capture()
         );
+        assertEquals("msg-retry-001", payloadCaptor.getValue().messageId());
+        assertEquals(Long.valueOf(1L), payloadCaptor.getValue().giftId());
         // 验证投递成功后更新状态为已发送
         verify(localMessageMapper, times(1)).markAsPublished(pendingMsg.getMessageId());
     }
@@ -194,12 +194,26 @@ public class TransactionalOutboxTest {
 
         // 判死的消息不再重投：重投成功会把状态推进为 PUBLISHED，此处必须不发生
         verify(localMessageMapper, never()).markAsPublished(anyString());
-        // 但必须回补它在秒杀入口预扣的 Redis 库存
-        verify(giftStockRedisService, times(1)).compensateStock(7L, 2);
+        // 但必须按 messageId 一次性回补它在秒杀入口预扣的 Redis 库存
+        verify(giftStockRedisService, times(1)).compensateStockOnce(7L, 2, "msg-dead-001");
         verify(localMessageMapper, times(1)).markAsFailed(eq("msg-dead-001"), eq(3), anyString());
         // 且必须上报 Outbox 判死度量指标与积压 Gauge
         verify(metricsCollector, times(1)).recordOutboxDead();
         verify(metricsCollector, atLeastOnce()).updateOutboxBacklog(anyLong());
+    }
+
+    @Test
+    @DisplayName("P0-4: 调度器先用消费终态日志修复本地消息，避免在途预扣虚高")
+    void testOutboxRetryScheduler_RepairsTerminalStatusFromConsumeLog() {
+        when(localMessageMapper.repairTerminalStatusFromConsumeLog()).thenReturn(2);
+        when(localMessageMapper.countPendingBacklog()).thenReturn(0L);
+        when(localMessageMapper.selectPendingMessages(any(LocalDateTime.class), eq(5), eq(50)))
+                .thenReturn(List.of());
+
+        outboxRetryScheduler.retryPendingMessages();
+
+        verify(localMessageMapper, times(1)).repairTerminalStatusFromConsumeLog();
+        verify(metricsCollector, times(1)).updateOutboxBacklog(0L);
     }
 
     @Test

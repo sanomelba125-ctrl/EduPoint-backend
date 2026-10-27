@@ -127,6 +127,15 @@ public class LocalMessageService {
     }
 
     /**
+     * 用消费终态日志修复本地消息状态，兜底 markConsumed/markFailed 丢失。
+     *
+     * @return 修复行数
+     */
+    public int repairTerminalStatusFromConsumeLog() {
+        return localMessageMapper.repairTerminalStatusFromConsumeLog();
+    }
+
+    /**
      * 统计当前待处理发件箱积压量 (status = 0) (R4 修复)
      */
     public long countPendingBacklog() {

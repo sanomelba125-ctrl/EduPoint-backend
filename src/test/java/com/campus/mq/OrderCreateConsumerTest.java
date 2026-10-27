@@ -105,8 +105,83 @@ public class OrderCreateConsumerTest {
 
         // 确认不会再调用订单创建
         verify(studentGiftService, never()).processAsyncOrder(any());
+        // 重投时也要补齐本地消息完成态，避免 Outbox 永久停在 status=1
+        verify(localMessageService, times(1)).markConsumed(eq(msg.messageId()));
         // 直接 ACK，防止阻塞后续消息
         verify(channel, times(1)).basicAck(eq(deliveryTag), eq(false));
+    }
+
+    @Test
+    @DisplayName("P0-4: 订单已提交但 markConsumed 失败 - 不得回补库存")
+    void testHandleOrderCreate_SuccessButMarkConsumedFails_NoCompensation() throws IOException {
+        OrderCreateMessage msg = sampleMsg();
+        Message amqpMessage = createAmqpMessage(JSON.toJSONString(msg));
+
+        when(mqConsumeLogMapper.existsConsumed(eq(msg.messageId()), anyString())).thenReturn(0);
+        when(studentGiftService.processAsyncOrder(any(OrderCreateMessage.class))).thenReturn(true);
+        doThrow(new RuntimeException("local_message update failed"))
+                .when(localMessageService).markConsumed(eq(msg.messageId()));
+
+        consumer.handleOrderCreate(amqpMessage, channel, deliveryTag);
+
+        verify(giftStockRedisService, never()).compensateStockOnce(anyLong(), anyInt(), anyString());
+        verify(giftStockRedisService, never()).compensateStock(anyLong(), anyInt());
+        verify(channel, times(1)).basicAck(eq(deliveryTag), eq(false));
+    }
+
+    @Test
+    @DisplayName("P0-4: 订单已提交但 ACK 失败 - 不得回补库存")
+    void testHandleOrderCreate_SuccessButAckFails_NoCompensation() throws IOException {
+        OrderCreateMessage msg = sampleMsg();
+        Message amqpMessage = createAmqpMessage(JSON.toJSONString(msg));
+
+        when(mqConsumeLogMapper.existsConsumed(eq(msg.messageId()), anyString())).thenReturn(0);
+        when(studentGiftService.processAsyncOrder(any(OrderCreateMessage.class))).thenReturn(true);
+        doThrow(new IOException("channel closed")).when(channel).basicAck(eq(deliveryTag), eq(false));
+
+        consumer.handleOrderCreate(amqpMessage, channel, deliveryTag);
+
+        verify(giftStockRedisService, never()).compensateStockOnce(anyLong(), anyInt(), anyString());
+        verify(giftStockRedisService, never()).compensateStock(anyLong(), anyInt());
+        verify(channel, never()).basicNack(anyLong(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("P0-4: 事务抛异常但订单实际已落库 - 按成功收尾，不回补库存")
+    void testHandleOrderCreate_ExceptionButOrderPersisted_NoCompensation() throws IOException {
+        OrderCreateMessage msg = sampleMsg();
+        Message amqpMessage = createAmqpMessage(JSON.toJSONString(msg));
+
+        when(mqConsumeLogMapper.existsConsumed(eq(msg.messageId()), anyString())).thenReturn(0);
+        when(studentGiftService.processAsyncOrder(any(OrderCreateMessage.class)))
+                .thenThrow(new RuntimeException("commit response lost"));
+        when(studentGiftService.existsOrderByRequestId(eq(msg.studentId()), eq(msg.requestId()))).thenReturn(true);
+
+        consumer.handleOrderCreate(amqpMessage, channel, deliveryTag);
+
+        verify(giftStockRedisService, never()).compensateStockOnce(anyLong(), anyInt(), anyString());
+        verify(localMessageService, times(1)).markConsumed(eq(msg.messageId()));
+        verify(channel, times(1)).basicAck(eq(deliveryTag), eq(false));
+        verify(channel, never()).basicNack(anyLong(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("P0-4: 事务抛异常且无法确认订单状态 - 转死信，不盲目补偿")
+    void testHandleOrderCreate_ExceptionAndVerifyFails_NoCompensation() throws IOException {
+        OrderCreateMessage msg = sampleMsg();
+        Message amqpMessage = createAmqpMessage(JSON.toJSONString(msg));
+
+        when(mqConsumeLogMapper.existsConsumed(eq(msg.messageId()), anyString())).thenReturn(0);
+        when(studentGiftService.processAsyncOrder(any(OrderCreateMessage.class)))
+                .thenThrow(new RuntimeException("db commit failed"));
+        when(studentGiftService.existsOrderByRequestId(eq(msg.studentId()), eq(msg.requestId())))
+                .thenThrow(new RuntimeException("db unavailable"));
+
+        consumer.handleOrderCreate(amqpMessage, channel, deliveryTag);
+
+        verify(giftStockRedisService, never()).compensateStockOnce(anyLong(), anyInt(), anyString());
+        verify(giftStockRedisService, never()).compensateStock(anyLong(), anyInt());
+        verify(channel, times(1)).basicNack(eq(deliveryTag), eq(false), eq(false));
     }
 
     @Test
@@ -120,10 +195,45 @@ public class OrderCreateConsumerTest {
 
         consumer.handleOrderCreate(amqpMessage, channel, deliveryTag);
 
-        // 验证反向回补 Redis 库存
-        verify(giftStockRedisService, times(1)).compensateStock(eq(msg.giftId()), eq(msg.quantity()));
+        // 验证反向回补 Redis 库存（按 messageId 幂等）
+        verify(giftStockRedisService, times(1)).compensateStockOnce(eq(msg.giftId()), eq(msg.quantity()), eq(msg.messageId()));
+        verify(giftStockRedisService, never()).compensateStock(anyLong(), anyInt());
         verify(localMessageService, times(1)).markFailed(eq(msg.messageId()), eq("业务校验未通过"));
         verify(channel, times(1)).basicAck(eq(deliveryTag), eq(false));
+    }
+
+    @Test
+    @DisplayName("P0-2: Jackson 二次编码的 JSON 字符串 - 自动解包后正常消费，不得误投死信")
+    void testHandleOrderCreate_DoubleEncodedJson_UnwrappedAndConsumed() throws IOException {
+        OrderCreateMessage msg = sampleMsg();
+        String singleEncoded = JSON.toJSONString(msg);
+        Message amqpMessage = createAmqpMessage(JSON.toJSONString(singleEncoded));
+
+        when(mqConsumeLogMapper.existsConsumed(eq(msg.messageId()), anyString())).thenReturn(0);
+        when(studentGiftService.processAsyncOrder(any(OrderCreateMessage.class))).thenReturn(true);
+
+        consumer.handleOrderCreate(amqpMessage, channel, deliveryTag);
+
+        verify(studentGiftService, times(1)).processAsyncOrder(any(OrderCreateMessage.class));
+        verify(channel, times(1)).basicAck(eq(deliveryTag), eq(false));
+        verify(channel, never()).basicNack(anyLong(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("P0-4: 业务拒绝后 ACK 失败 - 库存仍只补偿一次")
+    void testHandleOrderCreate_BusinessFailureAndAckFails_CompensatesOnce() throws IOException {
+        OrderCreateMessage msg = sampleMsg();
+        Message amqpMessage = createAmqpMessage(JSON.toJSONString(msg));
+
+        when(mqConsumeLogMapper.existsConsumed(eq(msg.messageId()), anyString())).thenReturn(0);
+        when(studentGiftService.processAsyncOrder(any(OrderCreateMessage.class))).thenReturn(false);
+        doThrow(new IOException("channel closed")).when(channel).basicAck(eq(deliveryTag), eq(false));
+
+        consumer.handleOrderCreate(amqpMessage, channel, deliveryTag);
+
+        verify(giftStockRedisService, times(1)).compensateStockOnce(eq(msg.giftId()), eq(msg.quantity()), eq(msg.messageId()));
+        verify(giftStockRedisService, never()).compensateStock(anyLong(), anyInt());
+        verify(localMessageService, times(1)).markFailed(eq(msg.messageId()), eq("业务校验未通过"));
     }
 
     @Test
@@ -147,11 +257,13 @@ public class OrderCreateConsumerTest {
         when(mqConsumeLogMapper.existsConsumed(eq(msg.messageId()), anyString())).thenReturn(0);
         when(studentGiftService.processAsyncOrder(any(OrderCreateMessage.class)))
                 .thenThrow(new RuntimeException("Database connection timeout"));
+        when(studentGiftService.existsOrderByRequestId(eq(msg.studentId()), eq(msg.requestId()))).thenReturn(false);
 
         consumer.handleOrderCreate(amqpMessage, channel, deliveryTag);
 
-        // 验证库存反向补偿，避免少卖
-        verify(giftStockRedisService, times(1)).compensateStock(eq(msg.giftId()), eq(msg.quantity()));
+        // 验证库存按 messageId 幂等反向补偿，避免少卖
+        verify(giftStockRedisService, times(1)).compensateStockOnce(eq(msg.giftId()), eq(msg.quantity()), eq(msg.messageId()));
+        verify(giftStockRedisService, never()).compensateStock(anyLong(), anyInt());
         // 拒绝并进入死信队列
         verify(channel, times(1)).basicNack(eq(deliveryTag), eq(false), eq(false));
     }

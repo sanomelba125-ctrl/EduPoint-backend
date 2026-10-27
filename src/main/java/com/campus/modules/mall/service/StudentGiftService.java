@@ -87,4 +87,10 @@ public interface StudentGiftService extends IService<StudentGift> {
      * 按 requestId 查询当前学生的秒杀订单，用于前端轮询排队结果 (防横向越权)
      */
     StudentGiftVO getSeckillResultByRequestId(String requestId, Long studentId);
+
+    /**
+     * 判断指定学生的 requestId 是否已经落单。
+     * 供 MQ 消费端在事务异常边界确认「订单是否其实已提交」，避免误回补库存。
+     */
+    boolean existsOrderByRequestId(Long studentId, String requestId);
 }
