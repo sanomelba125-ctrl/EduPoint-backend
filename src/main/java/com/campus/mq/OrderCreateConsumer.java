@@ -101,6 +101,9 @@ public class OrderCreateConsumer {
                     log.error("[MQ消费异常] 订单事务未提交，执行一次性库存补偿后转死信: messageId={}, requestId={}",
                             msg.messageId(), msg.requestId(), businessException);
                     compensateOnce(msg, "订单事务未提交");
+                    // 已确认不会落库：写入失败标记，让轮询接口返回明确的失败原因，
+                    // 否则客户端会永久停留在「排队中」，用户既不知道结果也无法重试。
+                    markSeckillFailedSafely(msg, "系统繁忙，本次兑换未完成，请稍后重试");
                     nackSafely(channel, deliveryTag, msg.messageId());
                     return;
                 }
@@ -161,6 +164,21 @@ public class OrderCreateConsumer {
             localMessageService.markFailed(messageId, reason);
         } catch (Exception e) {
             log.warn("[MQ本地消息] 标记业务失败失败: messageId={}, err={}", messageId, e.getMessage());
+        }
+    }
+
+    /**
+     * 写入「秒杀已确定失败」标记，供轮询接口返回终局。
+     *
+     * <p>只在订单<b>确定不会落库</b>时调用。若无法确认事务是否已提交（例如连查订单都失败），
+     * 不能写标记，否则会把可能已成交的订单误报为失败。
+     */
+    private void markSeckillFailedSafely(OrderCreateMessage msg, String reason) {
+        try {
+            studentGiftService.markSeckillFailed(msg.studentId(), msg.requestId(), reason);
+        } catch (Exception e) {
+            log.warn("[MQ秒杀结果] 写入失败标记异常，客户端将停留在处理中: messageId={}, err={}",
+                    msg.messageId(), e.getMessage());
         }
     }
 

@@ -63,6 +63,12 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
     /** 学生档案也无手机号时的兜底联系号码。 */
     private static final String DEFAULT_RECEIVER_PHONE = "13911110006";
 
+    /** 秒杀失败标记的 Redis key 前缀：seckill:fail:{studentId}:{requestId} */
+    private static final String SECKILL_FAIL_KEY_PREFIX = "seckill:fail:";
+
+    /** 失败标记保留时长：覆盖客户端轮询窗口即可，过期后按处理中兜底，不会长期占用内存。 */
+    private static final java.time.Duration SECKILL_FAIL_TTL = java.time.Duration.ofMinutes(30);
+
     /** 校验学生可参与兑换并返回其档案；不存在或已冻结一律拒绝。 */
     private Student requireExchangeableStudent(Long studentId) {
         Student student = studentMapper.selectById(studentId);
@@ -334,18 +340,34 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         Long orderId = order.getId();
         String giftName = gift.getName();
         String studentName = student.getName();
+
+        // 11. 延时关单消息同样纳入事务性发件箱。
+        //     跨进程投递不可能与本地事务原子，但把「要发一条关单消息」这件事和订单写在同一个事务里，
+        //     就能保证「订单存在 ⇒ 关单消息必被投递」：瞬时投递失败、Broker NACK、应用宕机
+        //     都会由 OutboxRetryScheduler 重投，不再取决于一次 try/catch 的运气。
+        //     payload 用 HashMap 而非 Map.of：后者是 JDK 私有不可变实现，Jackson 会把它写进
+        //     __TypeId__ header，消费端反序列化时既无法实例化也无法识别。
+        String delayMessageId = UUID.randomUUID().toString();
+        Map<String, Object> delayPayload = new HashMap<>();
+        delayPayload.put("orderId", orderId);
+        delayPayload.put("pickupCode", pickupCode);
+        delayPayload.put("studentId", studentId);
+        delayPayload.put("orderNo", orderNo);
+        if (localMessageService != null) {
+            localMessageService.savePendingMessage(delayMessageId, "GIFT_ORDER_DELAY", orderNo, delayPayload, MDC.get("traceId"));
+        }
+
         AfterCommitExecutor.run(() -> {
             giftIdempotentService.markSlotDone(studentId, requestId, orderId);
 
             // 投递延时死信关单消息 (超时未提货由死信队列自动关单并原路返还积分与库存)
 
             try {
-                rabbitTemplate.convertAndSend(RabbitMqConfig.GIFT_ORDER_EXCHANGE,
-                        RabbitMqConfig.GIFT_ORDER_DELAY_ROUTING_KEY,
-                        Map.of("orderId", orderId, "pickupCode", pickupCode, "studentId", studentId));
-                log.info("礼品订单延时关单消息投递成功: orderId={}, orderNo={}", orderId, orderNo);
+                com.campus.mq.MqPublishSupport.publish(rabbitTemplate, RabbitMqConfig.GIFT_ORDER_EXCHANGE,
+                        RabbitMqConfig.GIFT_ORDER_DELAY_ROUTING_KEY, delayPayload, delayMessageId);
+                log.info("礼品订单延时关单消息已提交至 Broker 待确认: orderId={}, orderNo={}", orderId, orderNo);
             } catch (Exception e) {
-                log.warn("礼品订单延时关单消息投递失败: orderId={}, error={}", orderId, e.getMessage());
+                log.warn("礼品订单延时关单消息投递失败，将由发件箱定时任务重投: orderId={}, error={}", orderId, e.getMessage());
             }
 
             // 保存系统通知并触发 WebSocket 通知推送给在线管理端与学生端
@@ -976,14 +998,18 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         localMessageService.savePendingMessage(messageId, "GIFT_ORDER_CREATE", orderNo, msg, MDC.get("traceId"));
 
         // 8. 投递 MQ 削峰队列（提交后执行，避免事务回滚时消息已发出；瞬时投递失败不阻断，发件箱定时任务自动补偿）
+        //    这里只负责「送出去」，不负责「判定送达」：本地消息置为已投递由 PublishConfirmHandler
+        //    在收到 Broker 的 basic.ack 之后完成；NACK 或不可路由会被退回待重投，
+        //    避免「发送调用没报错但队列根本没收到」导致订单永不落库、Redis 库存被永久占用。
         AfterCommitExecutor.run(() -> {
             try {
-                rabbitTemplate.convertAndSend(
+                com.campus.mq.MqPublishSupport.publish(
+                        rabbitTemplate,
                         RabbitMqConfig.SECKILL_ORDER_EXCHANGE,
                         RabbitMqConfig.SECKILL_ORDER_ROUTING_KEY,
-                        msg
+                        msg,
+                        messageId
                 );
-                localMessageService.markPublished(messageId);
             } catch (Exception e) {
                 log.warn("[秒杀下单] MQ 提交后投递异常，将由本地发件箱定时任务自动补偿重试: messageId={}", messageId, e);
             }
@@ -1016,12 +1042,14 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         Student student = studentMapper.selectById(msg.studentId());
         if (student == null || (student.getStatus() != null && student.getStatus() == StudentStatus.DISABLED.getCode())) {
             log.warn("[异步落库] 学生账号异常或冻结: studentId={}", msg.studentId());
+            markSeckillFailed(msg.studentId(), msg.requestId(), "学籍账号状态异常，本次兑换未完成，请联系学工管理员");
             return false;
         }
 
         Gift gift = giftMapper.selectById(msg.giftId());
         if (gift == null || (gift.getDeleted() != null && gift.getDeleted() == 1)) {
             log.warn("[异步落库] 礼品不存在: giftId={}", msg.giftId());
+            markSeckillFailed(msg.studentId(), msg.requestId(), "礼品不存在或已下架，本次兑换未完成");
             return false;
         }
 
@@ -1029,6 +1057,8 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         int currentBalance = student.getCurrentPoints() != null ? student.getCurrentPoints() : 0;
         if (currentBalance < totalPointsCost) {
             log.warn("[异步落库] 可用积分不足: currentBalance={}, cost={}", currentBalance, totalPointsCost);
+            markSeckillFailed(msg.studentId(), msg.requestId(),
+                    String.format("可用积分不足（需要 %d 积分），本次兑换未完成", totalPointsCost));
             return false;
         }
 
@@ -1042,6 +1072,7 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         }
         if (updatedStock == 0) {
             log.warn("[异步落库] 乐观锁更新数据库库存失败: giftId={}", msg.giftId());
+            markSeckillFailed(msg.studentId(), msg.requestId(), "礼品库存不足或抢购人数过多，本次兑换未完成");
             return false;
         }
 
@@ -1078,14 +1109,29 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         );
         Long orderId = order.getId();
         String orderNo = order.getOrderNo();
+
+        // 与同步兑换一致：延时关单消息先落发件箱（同事务），再在提交后投递。
+        // 秒杀订单是异步落库的，若这一步仍靠一次性 try/catch，一旦投递失败订单就永远不会被自动关单。
+        String delayMessageId = UUID.randomUUID().toString();
+        Map<String, Object> delayPayload = new HashMap<>();
+        delayPayload.put("orderId", orderId);
+        delayPayload.put("pickupCode", pickupCode);
+        delayPayload.put("studentId", msg.studentId());
+        delayPayload.put("orderNo", orderNo);
+        if (localMessageService != null) {
+            localMessageService.savePendingMessage(delayMessageId, "GIFT_ORDER_DELAY", orderNo, delayPayload, MDC.get("traceId"));
+        }
+
         AfterCommitExecutor.run(() -> {
             giftIdempotentService.markSlotDone(msg.studentId(), msg.requestId(), orderId);
+            // 订单已提交：清掉可能残留的失败标记，让轮询立刻返回成功态而不是旧失败原因
+            clearSeckillFailure(msg.studentId(), msg.requestId());
             try {
-                rabbitTemplate.convertAndSend(RabbitMqConfig.GIFT_ORDER_EXCHANGE,
-                        RabbitMqConfig.GIFT_ORDER_DELAY_ROUTING_KEY,
-                        Map.of("orderId", orderId, "pickupCode", pickupCode, "studentId", msg.studentId()));
+                com.campus.mq.MqPublishSupport.publish(rabbitTemplate, RabbitMqConfig.GIFT_ORDER_EXCHANGE,
+                        RabbitMqConfig.GIFT_ORDER_DELAY_ROUTING_KEY, delayPayload, delayMessageId);
+                log.info("[异步落库] 延时关单消息已提交至 Broker 待确认: orderId={}, orderNo={}", orderId, orderNo);
             } catch (Exception e) {
-                log.warn("秒杀订单延时关单消息投递异常: orderId={}", orderId, e);
+                log.warn("[异步落库] 延时关单消息投递失败，将由发件箱定时任务重投: orderId={}, err={}", orderId, e.getMessage());
             }
         });
         log.info("[异步落库] 秒杀订单成功落库: orderNo={}, studentId={}, orderId={}", orderNo, msg.studentId(), orderId);
@@ -1093,20 +1139,95 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
     }
 
     @Override
-    public StudentGiftVO getSeckillResultByRequestId(String requestId, Long studentId) {
+    public SeckillResultVO getSeckillResultByRequestId(String requestId, Long studentId) {
         if (!StringUtils.hasText(requestId) || studentId == null) {
-            return null;
+            return SeckillResultVO.builder()
+                    .status(SeckillResultVO.STATUS_FAILED)
+                    .failReason("缺少秒杀请求标识，请重新进入礼品详情页后再兑换")
+                    .build();
         }
+        String trimmedRequestId = requestId.trim();
         StudentGift order = this.getOne(new LambdaQueryWrapper<StudentGift>()
-                .eq(StudentGift::getRequestId, requestId.trim())
+                .eq(StudentGift::getRequestId, trimmedRequestId)
                 .eq(StudentGift::getStudentId, studentId)
                 .last("LIMIT 1"));
-        if (order == null) {
+        if (order != null) {
+            // 同一 requestId 曾失败后重试成功：清掉残留的失败标记，避免后续轮询看到旧失败原因
+            clearSeckillFailure(studentId, trimmedRequestId);
+            Gift gift = giftMapper.selectById(order.getGiftId());
+            Integer remainPoints = studentMapper.selectCurrentPoints(studentId);
+            return SeckillResultVO.builder()
+                    .status(SeckillResultVO.STATUS_SUCCESS)
+                    .orderId(order.getId())
+                    .orderNo(order.getOrderNo())
+                    .pickupCode(order.getPickupCode())
+                    .giftId(order.getGiftId())
+                    .giftName(gift != null ? gift.getName() : null)
+                    .quantity(order.getQuantity())
+                    .pointsCost(order.getPointsCost())
+                    .remainPoints(remainPoints != null ? remainPoints : 0)
+                    .createTime(order.getCreateTime())
+                    .build();
+        }
+
+        // 查不到订单时不能一律回「处理中」：库存/积分/账号校验失败、发件箱判死都不会落单，
+        // 必须用失败标记给出终局，否则客户端永久排队、用户既不知道结果也无法重试。
+        String failReason = getSeckillFailureReason(studentId, trimmedRequestId);
+        if (StringUtils.hasText(failReason)) {
+            return SeckillResultVO.builder()
+                    .status(SeckillResultVO.STATUS_FAILED)
+                    .failReason(failReason)
+                    .build();
+        }
+        return SeckillResultVO.builder()
+                .status(SeckillResultVO.STATUS_PROCESSING)
+                .build();
+    }
+
+    @Override
+    public void markSeckillFailed(Long studentId, String requestId, String reason) {
+        if (studentId == null || !StringUtils.hasText(requestId)) {
+            return;
+        }
+        try {
+            redis.opsForValue().set(
+                    seckillFailKey(studentId, requestId),
+                    StringUtils.hasText(reason) ? reason : "秒杀处理失败，请稍后重试",
+                    SECKILL_FAIL_TTL);
+        } catch (Exception e) {
+            // 标记写不进去只会让客户端停在「处理中」（旧行为），不应影响失败处理本身
+            log.warn("[秒杀结果] 写入失败标记异常，客户端将停留在处理中: studentId={}, requestId={}, err={}",
+                    studentId, requestId, e.getMessage());
+        }
+    }
+
+    @Override
+    public String getSeckillFailureReason(Long studentId, String requestId) {
+        if (studentId == null || !StringUtils.hasText(requestId)) {
             return null;
         }
-        StudentGiftVO vo = new StudentGiftVO();
-        org.springframework.beans.BeanUtils.copyProperties(order, vo);
-        return vo;
+        try {
+            return redis.opsForValue().get(seckillFailKey(studentId, requestId));
+        } catch (Exception e) {
+            log.warn("[秒杀结果] 读取失败标记异常，按处理中返回: studentId={}, requestId={}, err={}",
+                    studentId, requestId, e.getMessage());
+            return null;
+        }
+    }
+
+    /** 清理秒杀失败标记（订单已成功落库或需要重新开始一次兑换意图时）。 */
+    private void clearSeckillFailure(Long studentId, String requestId) {
+        try {
+            redis.delete(seckillFailKey(studentId, requestId));
+        } catch (Exception e) {
+            log.debug("[秒杀结果] 清理失败标记异常: studentId={}, requestId={}, err={}",
+                    studentId, requestId, e.getMessage());
+        }
+    }
+
+    /** 秒杀失败标记的 Redis key：按学生维度隔离，避免越权读到他人的失败原因。 */
+    private String seckillFailKey(Long studentId, String requestId) {
+        return SECKILL_FAIL_KEY_PREFIX + studentId + ":" + requestId.trim();
     }
 
     @Override

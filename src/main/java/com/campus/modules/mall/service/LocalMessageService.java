@@ -22,6 +22,14 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class LocalMessageService {
 
+    /**
+     * 发件箱消息的最大投递重试次数（单一来源）。
+     *
+     * <p>调度器的查询上界、发布确认回退时的封顶值都必须引用它，
+     * 任何一处写死不同的数字都会造成「超过上界后再也扫不到」的永久卡死。
+     */
+    public static final int MAX_PUBLISH_RETRIES = 5;
+
     private final LocalMessageMapper localMessageMapper;
 
     /**
@@ -81,6 +89,50 @@ public class LocalMessageService {
      */
     public List<LocalMessage> getPendingMessages(int maxRetries, int limit) {
         return localMessageMapper.selectPendingMessages(LocalDateTime.now(), maxRetries, limit);
+    }
+
+    /**
+     * 把消息退回「待投递」并累加重试次数（发布确认失败路径使用）。
+     *
+     * @param messageId     消息 ID
+     * @param reason        失败原因，写入 fail_reason 便于排查
+     * @param nextRetryTime 下一次允许重投的时间
+     * @return 实际回退行数；0 表示消息已是终态或不存在
+     */
+    public int resetToPending(String messageId, String reason, LocalDateTime nextRetryTime) {
+        return localMessageMapper.resetToPending(messageId, nextRetryTime, reason, MAX_PUBLISH_RETRIES);
+    }
+
+    /**
+     * 兜底重投「已投递但长期没有消费记录」的秒杀下单消息。
+     *
+     * <p>发布确认只解决「Broker 是否收到」，不解决「消息是否最终被消费」：
+     * 队列落盘前宕机、镜像切换丢消息、消费端长期停机，都会让消息停在 status=1
+     * 永不重投。这里按「创建时间早于阈值 + 消费日志缺失」把它们捞回来重投，
+     * 消费端幂等表保证不会重复落单。
+     *
+     * @param staleAfter 超过该时长仍无消费记录即视为可疑
+     * @param limit      单轮最多处理条数
+     * @return 本轮回退重投的条数
+     */
+    public int requeueStalePublishedMessages(java.time.Duration staleAfter, int limit) {
+        LocalDateTime deadline = LocalDateTime.now().minus(staleAfter);
+        List<LocalMessage> stale = localMessageMapper.selectStalePublishedMessages(
+                deadline, "OrderCreateConsumer", limit);
+        if (stale == null || stale.isEmpty()) {
+            return 0;
+        }
+        int requeued = 0;
+        for (LocalMessage message : stale) {
+            int changed = localMessageMapper.resetToPending(message.getMessageId(),
+                    LocalDateTime.now(), "已投递但长期无消费记录，触发兜底重投", MAX_PUBLISH_RETRIES);
+            if (changed > 0) {
+                requeued++;
+                log.warn("[Outbox兜底] 消息已投递却长期无消费记录，已退回待重投: messageId={}, bizId={}",
+                        message.getMessageId(), message.getBizId());
+            }
+        }
+        return requeued;
     }
 
     /**

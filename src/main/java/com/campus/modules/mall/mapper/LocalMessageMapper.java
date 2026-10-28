@@ -68,6 +68,42 @@ public interface LocalMessageMapper extends BaseMapper<LocalMessage> {
                        @Param("reason") String reason);
 
     /**
+     * 把消息退回「待投递」并累加重试次数。
+     *
+     * <p>用于发布侧可靠性失败：Broker NACK、消息不可路由（basic.return）、
+     * 或长期停留在「已投递」却查不到任何消费记录。只允许从 0/1 回退，
+     * 已确认消费(2) 与已判死(3) 是终态，不能被晚到的确认回调改写。
+     *
+     * <p>重试次数用 {@code LEAST(...)} 封顶：若允许无限累加，一旦超过调度器的
+     * {@code retry_count <= maxRetries} 查询上界，消息就再也不会被扫描到，
+     * 既不会重投也不会判死补偿，比不重投更糟。
+     */
+    @Update("UPDATE local_message SET status = 0, retry_count = LEAST(retry_count + 1, #{maxRetries}), " +
+            "next_retry_time = #{nextRetryTime}, fail_reason = #{reason}, update_time = NOW() " +
+            "WHERE message_id = #{messageId} AND status IN (0, 1)")
+    int resetToPending(@Param("messageId") String messageId,
+                       @Param("nextRetryTime") LocalDateTime nextRetryTime,
+                       @Param("reason") String reason,
+                       @Param("maxRetries") int maxRetries);
+
+    /**
+     * 查询「已投递但长时间没有消费记录」的秒杀下单消息。
+     *
+     * <p>发布确认只能证明 Broker 收到了消息，不能证明消息最终被消费：
+     * 队列在写入磁盘前宕机、消息在镜像切换中丢失、消费端长时间不启动，
+     * 都会让消息停在 status=1 而永不重投。这里以「创建超过阈值 + 消费日志缺失」
+     * 作为兜底判据把它们捞出来重投，消费端幂等表保证重复投递不会重复落单。
+     */
+    @Select("SELECT m.* FROM local_message m " +
+            "LEFT JOIN mq_consume_log c ON c.message_id = m.message_id AND c.consumer_name = #{consumerName} " +
+            "WHERE m.biz_type = 'GIFT_ORDER_CREATE' AND m.status = 1 " +
+            "AND m.create_time <= #{createdBefore} AND c.message_id IS NULL " +
+            "ORDER BY m.create_time ASC LIMIT #{limit}")
+    List<LocalMessage> selectStalePublishedMessages(@Param("createdBefore") LocalDateTime createdBefore,
+                                                    @Param("consumerName") String consumerName,
+                                                    @Param("limit") int limit);
+
+    /**
      * 修复「消费端已有终态，但本地消息状态没来得及更新」的窗口。
      * 例如订单已提交、消费日志 status=1 已写入，但 markConsumed 失败；
      * 下一轮调度通过消费日志把本地消息补齐为完成/失败，避免永久计入在途预扣。

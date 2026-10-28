@@ -8,7 +8,7 @@ import com.campus.common.constant.UserRole;
 import com.campus.common.result.Result;
 import com.campus.modules.mall.dto.GiftExchangeDTO;
 import com.campus.modules.mall.dto.GiftExchangeVO;
-import com.campus.modules.mall.dto.StudentGiftVO;
+import com.campus.modules.mall.dto.SeckillResultVO;
 import com.campus.modules.mall.service.StudentGiftService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -58,16 +58,25 @@ public class SeckillController {
     }
 
     /**
-     * 轮询秒杀下单处理结果
+     * 轮询秒杀下单处理结果。
+     *
+     * <p>返回三态而非「有/无订单」：PROCESSING 继续等、SUCCESS 展示提货码、
+     * FAILED 明确告知失败原因。缺了 FAILED，业务校验失败或消息判死的订单会让客户端永久排队。
      */
     @Operation(summary = "轮询秒杀订单处理结果")
     @SaCheckRole(value = {UserRole.STUDENT}, mode = SaMode.OR)
     @GetMapping("/result/{requestId}")
-    public Result<StudentGiftVO> querySeckillResult(@PathVariable("requestId") String requestId) {
+    public Result<SeckillResultVO> querySeckillResult(@PathVariable("requestId") String requestId) {
         Long studentId = AuthUtil.requireStudentId();
-        StudentGiftVO vo = studentGiftService.getSeckillResultByRequestId(requestId, studentId);
-        return vo != null
-                ? Result.success("订单落库成功", vo)
-                : Result.success("排队处理中", null);
+        SeckillResultVO vo = studentGiftService.getSeckillResultByRequestId(requestId, studentId);
+        String message;
+        if (SeckillResultVO.STATUS_SUCCESS.equals(vo.getStatus())) {
+            message = "订单落库成功";
+        } else if (SeckillResultVO.STATUS_FAILED.equals(vo.getStatus())) {
+            message = "订单处理失败";
+        } else {
+            message = "排队处理中";
+        }
+        return Result.success(message, vo);
     }
 }

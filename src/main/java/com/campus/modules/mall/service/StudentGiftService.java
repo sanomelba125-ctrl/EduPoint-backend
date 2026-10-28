@@ -84,9 +84,36 @@ public interface StudentGiftService extends IService<StudentGift> {
     boolean processAsyncOrder(OrderCreateMessage msg);
 
     /**
-     * 按 requestId 查询当前学生的秒杀订单，用于前端轮询排队结果 (防横向越权)
+     * 按 requestId 查询秒杀订单处理结果，供前端轮询排队状态 (防横向越权)。
+     *
+     * <p>返回三态而非「有/无订单」：命中订单为 SUCCESS；查不到订单但存在失败标记为 FAILED；
+     * 两者都没有才是 PROCESSING。缺了 FAILED 这一态，业务校验失败或消息判死的订单会让客户端
+     * 永久停在「排队中」，用户既拿不到结果也无法重试。
+     *
+     * @param requestId 秒杀请求的幂等标识
+     * @param studentId 当前登录学生 ID
+     * @return 处理结果，永不为 null
      */
-    StudentGiftVO getSeckillResultByRequestId(String requestId, Long studentId);
+    SeckillResultVO getSeckillResultByRequestId(String requestId, Long studentId);
+
+    /**
+     * 记录一次秒杀处理失败，供轮询接口向客户端返回明确的失败原因。
+     *
+     * <p>只在「已确定不会落库」时调用（库存/积分/账号校验未通过、投递判死）；
+     * 订单是否真的落库尚不确定时不写，避免把可能成功的订单误报为失败。
+     *
+     * @param studentId 学生 ID
+     * @param requestId 秒杀请求的幂等标识
+     * @param reason    面向用户的失败原因
+     */
+    void markSeckillFailed(Long studentId, String requestId, String reason);
+
+    /**
+     * 读取秒杀失败原因，用于轮询接口与诊断。
+     *
+     * @return 失败原因；不存在失败标记时返回 null
+     */
+    String getSeckillFailureReason(Long studentId, String requestId);
 
     /**
      * 判断指定学生的 requestId 是否已经落单。

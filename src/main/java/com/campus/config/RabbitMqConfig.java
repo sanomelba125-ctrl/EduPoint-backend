@@ -59,11 +59,16 @@ public class RabbitMqConfig {
 
     /**
      * 配置 RabbitTemplate 并注入 MDC traceId 前置处理器 (P3-2 全链路透传)
+     *
+     * <p>发布侧可靠性闭环交给 {@link com.campus.mq.PublishConfirmHandler}：
+     * 只有 Broker 回了 basic.ack 且消息没有被 basic.return，本地发件箱才置为「已投递」；
+     * NACK / 不可路由一律退回待重投，避免「以为发出去了，其实队列根本没收到」的静默丢消息。
      */
     @Bean
     public org.springframework.amqp.rabbit.core.RabbitTemplate rabbitTemplate(
             org.springframework.amqp.rabbit.connection.ConnectionFactory connectionFactory,
-            MessageConverter messageConverter) {
+            MessageConverter messageConverter,
+            com.campus.mq.PublishConfirmHandler publishConfirmHandler) {
         org.springframework.amqp.rabbit.core.RabbitTemplate template = new org.springframework.amqp.rabbit.core.RabbitTemplate(connectionFactory);
         template.setMessageConverter(messageConverter);
         template.setBeforePublishPostProcessors(message -> {
@@ -76,12 +81,8 @@ public class RabbitMqConfig {
         // 关键可靠性加固：开启 mandatory=true，确保遇到无法路由的消息时由 Broker 回退 basic.return 并触发 returnsCallback，避免静默丢消息
         template.setMandatory(true);
         // 统一在基础设施配置类中注册全局 Publisher Confirm 与 Returns 回调，避免业务类侵入污染
-        template.setConfirmCallback((correlation, confirmed, reason) -> {
-            if (!confirmed) {
-                log.error("RabbitMQ publisher confirm failed: correlation={}, reason={}", correlation, reason);
-            }
-        });
-        template.setReturnsCallback(returned -> log.error("RabbitMQ returned an unroutable message: {}", returned));
+        template.setConfirmCallback(publishConfirmHandler);
+        template.setReturnsCallback(publishConfirmHandler);
         return template;
     }
 

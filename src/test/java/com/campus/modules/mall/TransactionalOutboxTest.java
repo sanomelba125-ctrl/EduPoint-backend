@@ -16,6 +16,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.amqp.core.MessagePostProcessor;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 import java.time.LocalDateTime;
@@ -44,6 +46,9 @@ public class TransactionalOutboxTest {
     @Mock
     private CampusMetricsCollector metricsCollector;
 
+    @Mock
+    private com.campus.modules.mall.service.StudentGiftService studentGiftService;
+
     private LocalMessageService localMessageService;
     private OutboxRetryScheduler outboxRetryScheduler;
 
@@ -51,7 +56,7 @@ public class TransactionalOutboxTest {
     void setUp() {
         localMessageService = new LocalMessageService(localMessageMapper);
         outboxRetryScheduler = new OutboxRetryScheduler(
-                localMessageService, rabbitTemplate, giftStockRedisService, metricsCollector);
+                localMessageService, rabbitTemplate, giftStockRedisService, metricsCollector, studentGiftService);
     }
 
     @Test
@@ -139,12 +144,15 @@ public class TransactionalOutboxTest {
         verify(rabbitTemplate, times(1)).convertAndSend(
                 eq(RabbitMqConfig.SECKILL_ORDER_EXCHANGE),
                 eq(RabbitMqConfig.SECKILL_ORDER_ROUTING_KEY),
-                payloadCaptor.capture()
+                payloadCaptor.capture(),
+                any(org.springframework.amqp.core.MessagePostProcessor.class),
+                any(org.springframework.amqp.rabbit.connection.CorrelationData.class)
         );
         assertEquals("msg-retry-001", payloadCaptor.getValue().messageId());
         assertEquals(Long.valueOf(1L), payloadCaptor.getValue().giftId());
-        // 验证投递成功后更新状态为已发送
-        verify(localMessageMapper, times(1)).markAsPublished(pendingMsg.getMessageId());
+        // 关键：发送调用返回不代表 Broker 已收到，状态推进必须交给发布确认回调。
+        // 调度器自己 markPublished 会把 NACK/不可路由都当成成功，消息从此不再重投。
+        verify(localMessageMapper, never()).markAsPublished(anyString());
     }
 
     @Test
@@ -203,6 +211,59 @@ public class TransactionalOutboxTest {
     }
 
     @Test
+    @DisplayName("P1-关单补偿: 延时关单消息由发件箱重投到延时交换机，而不是秒杀下单交换机")
+    void testOutboxRetryScheduler_DispatchesDelayMessage() {
+        LocalMessage delayMessage = new LocalMessage();
+        delayMessage.setMessageId("delay-msg-001");
+        delayMessage.setBizType("GIFT_ORDER_DELAY");
+        delayMessage.setBizId("ORD-DELAY-0001");
+        delayMessage.setPayload("{\"orderId\":123,\"pickupCode\":\"PK12345678\",\"studentId\":1001}");
+        delayMessage.setStatus(0);
+        delayMessage.setRetryCount(0);
+
+        when(localMessageMapper.selectPendingMessages(any(LocalDateTime.class), eq(5), eq(50)))
+                .thenReturn(List.of(delayMessage));
+
+        outboxRetryScheduler.retryPendingMessages();
+
+        ArgumentCaptor<Object> payloadCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(rabbitTemplate, times(1)).convertAndSend(
+                eq(RabbitMqConfig.GIFT_ORDER_EXCHANGE),
+                eq(RabbitMqConfig.GIFT_ORDER_DELAY_ROUTING_KEY),
+                payloadCaptor.capture(),
+                any(MessagePostProcessor.class),
+                any(CorrelationData.class));
+        Object payload = payloadCaptor.getValue();
+        assertTrue(payload instanceof Map, "延时关单消息应以 Map 形态重投，而不是被包装成字符串");
+        assertEquals(123, ((Map<?, ?>) payload).get("orderId"));
+        // 关单消息从不预扣库存，重投不得触发库存回补
+        verify(giftStockRedisService, never()).compensateStockOnce(anyLong(), anyInt(), anyString());
+    }
+
+    @Test
+    @DisplayName("P1-关单补偿: 延时关单消息判死只告警，不回补库存（关单消息不含预扣）")
+    void testOutboxRetryScheduler_DelayDead_DoesNotCompensateStock() {
+        LocalMessage dead = new LocalMessage();
+        dead.setMessageId("delay-dead-001");
+        dead.setBizType("GIFT_ORDER_DELAY");
+        dead.setBizId("ORD-DELAY-0002");
+        dead.setPayload("{\"orderId\":456,\"pickupCode\":\"PK12345678\",\"studentId\":1001}");
+        dead.setStatus(0);
+        dead.setRetryCount(5);
+
+        when(localMessageMapper.selectPendingMessages(any(LocalDateTime.class), eq(5), eq(50)))
+                .thenReturn(List.of(dead));
+
+        outboxRetryScheduler.retryPendingMessages();
+
+        verify(giftStockRedisService, never()).compensateStockOnce(anyLong(), anyInt(), anyString());
+        verify(localMessageMapper, times(1)).markAsFailed(eq("delay-dead-001"), eq(3), anyString());
+        verify(metricsCollector, times(1)).recordOutboxDead();
+        // 秒杀失败标记只属于下单消息，关单消息判死不应误写
+        verify(studentGiftService, never()).markSeckillFailed(anyLong(), anyString(), anyString());
+    }
+
+    @Test
     @DisplayName("P0-4: 调度器先用消费终态日志修复本地消息，避免在途预扣虚高")
     void testOutboxRetryScheduler_RepairsTerminalStatusFromConsumeLog() {
         when(localMessageMapper.repairTerminalStatusFromConsumeLog()).thenReturn(2);
@@ -238,7 +299,9 @@ public class TransactionalOutboxTest {
         when(localMessageMapper.selectPendingMessages(any(LocalDateTime.class), eq(5), eq(50)))
                 .thenReturn(List.of(pendingMsg));
         doThrow(new RuntimeException("RabbitMQ connection timed out"))
-                .when(rabbitTemplate).convertAndSend(anyString(), anyString(), any(Object.class));
+                .when(rabbitTemplate).convertAndSend(anyString(), anyString(), any(Object.class),
+                        any(org.springframework.amqp.core.MessagePostProcessor.class),
+                        any(org.springframework.amqp.rabbit.connection.CorrelationData.class));
 
         outboxRetryScheduler.retryPendingMessages();
 
