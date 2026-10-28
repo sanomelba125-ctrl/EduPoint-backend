@@ -256,7 +256,11 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
             throw new BusinessException(ResultCode.POINTS_NOT_ENOUGH.getCode(), String.format("可用积分不足！当前余额: %d 积分，本次兑换需要: %d 积分", currentBalance, totalPointsCost));
         }
 
-        // 6. 校验库存并执行原子乐观锁扣减（P1-7: 统一乐观锁冲突重试策略，最大重试 3 次 + 指数退避）
+        // 6. 条件原子扣减库存。
+        //    不再用 version 做 CAS 重试：本方法在 REPEATABLE READ 事务内，
+        //    冲突后重新 selectById 读到的仍是事务快照里的旧 version，重试永远失败，
+        //    会把「并发写」误报成「库存不足/冲突」。stock >= quantity 与 UPDATE 同行执行，
+        //    由 InnoDB 行锁串行化，等价且不会误判。
         if (gift.getStock() == null || gift.getStock() < quantity) {
             if (gift.getStock() != null && gift.getStock() <= 0) {
                 throw new BusinessException(ResultCode.GIFT_STOCK_EMPTY.getCode(), "礼品库存已被抢光！");
@@ -264,28 +268,10 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
             throw new BusinessException(ResultCode.GIFT_STOCK_EMPTY.getCode(), String.format("礼品可用库存不足！当前仅剩 %d 件", gift.getStock() != null ? gift.getStock() : 0));
         }
 
-        int updatedStock = 0;
-        Gift candidateGift = gift;
-        for (int attempt = 0; attempt < 3; attempt++) {
-            updatedStock = giftMapper.reduceStockWithOptimisticLock(candidateGift.getId(), quantity, candidateGift.getVersion());
-            if (updatedStock > 0) {
-                break;
-            }
-            log.warn("礼品兑换触发乐观锁冲突重试, attempt: {}, giftId: {}, version: {}", attempt + 1, candidateGift.getId(), candidateGift.getVersion());
-            candidateGift = giftMapper.selectById(candidateGift.getId());
-            if (candidateGift == null || candidateGift.getStock() == null || candidateGift.getStock() < quantity) {
-                break;
-            }
-            try {
-                Thread.sleep(50L * (attempt + 1));
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
+        int updatedStock = giftMapper.deductStockIfEnough(gift.getId(), quantity);
         if (updatedStock == 0) {
-            log.warn("礼品兑换触发乐观锁冲突重试耗尽, giftId: {}, version: {}", gift.getId(), gift.getVersion());
-            throw new BusinessException(ResultCode.CONFLICT.getCode(), "当前抢兑人数较多导致冲突，请刷新后重试！");
+            log.warn("[礼品兑换] 条件扣减库存失败（并发下已被抢完）: giftId={}, quantity={}", gift.getId(), quantity);
+            throw new BusinessException(ResultCode.GIFT_STOCK_EMPTY.getCode(), "礼品库存已被抢光！");
         }
 
         // 7. 原子扣减学生可用积分（total_points 累计积分保持不变，确保光荣榜排名不掉）
@@ -1062,16 +1048,14 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
             return false;
         }
 
-        // 条件乐观锁扣减 MySQL 库存 (重试 3 次)
-        int updatedStock = 0;
-        for (int attempt = 0; attempt < 3; attempt++) {
-            updatedStock = giftMapper.reduceStockWithOptimisticLock(gift.getId(), msg.quantity(), gift.getVersion());
-            if (updatedStock > 0) break;
-            gift = giftMapper.selectById(msg.giftId());
-            if (gift == null || gift.getStock() < msg.quantity()) break;
-        }
+        // 条件原子扣减 MySQL 库存：stock >= quantity 与 UPDATE 同行执行，由行锁串行化。
+        // 这里曾用 version 乐观锁 + 3 次重试，但本方法处于 REPEATABLE READ 事务中，
+        // 重试时 selectById 读到的仍是事务快照的旧 version，并发消费者一多就必然重试耗尽，
+        // 把「扣减成功但版本已变」误判成「库存不足」——实测消费并发=4 时 86% 订单被误杀。
+        int updatedStock = giftMapper.deductStockIfEnough(gift.getId(), msg.quantity());
         if (updatedStock == 0) {
-            log.warn("[异步落库] 乐观锁更新数据库库存失败: giftId={}", msg.giftId());
+            log.warn("[异步落库] 条件扣减数据库库存失败（库存已被抢完）: giftId={}, quantity={}",
+                    msg.giftId(), msg.quantity());
             markSeckillFailed(msg.studentId(), msg.requestId(), "礼品库存不足或抢购人数过多，本次兑换未完成");
             return false;
         }
@@ -1096,7 +1080,26 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         order.setPickupCode(pickupCode);
         order.setStatus(OrderStatus.PENDING);
         order.setRefundPointsStatus(0);
-        this.save(order);
+        // 提货码唯一性最终由 uk_pickup_code 保证：生成阶段的 selectCount 在 REPEATABLE READ 下
+        // 看不到并发事务尚未提交的码，多消费者同时落库时仍可能撞码。
+        // MySQL 的重复键错误只回滚失败的那条 INSERT，事务本身仍可继续，
+        // 因此这里换一枚提货码重试即可，不必整单回滚进死信（否则用户会被判失败且库存白回补）。
+        for (int attempt = 0; ; attempt++) {
+            try {
+                this.save(order);
+                break;
+            } catch (DuplicateKeyException e) {
+                boolean pickupCodeConflict = e.getMostSpecificCause() != null
+                        && e.getMostSpecificCause().getMessage() != null
+                        && e.getMostSpecificCause().getMessage().contains("uk_pickup_code");
+                if (!pickupCodeConflict || attempt >= 2) {
+                    throw e;
+                }
+                log.warn("[异步落库] 提货码撞唯一键，换码重试: orderNo={}, attempt={}", order.getOrderNo(), attempt + 1);
+                order.setId(null);
+                order.setPickupCode(generateUniquePickupCode());
+            }
+        }
         pointLedger.record(
                 student.getId(),
                 com.campus.modules.mall.entity.PointRecordType.GIFT_EXCHANGE.getCode(),

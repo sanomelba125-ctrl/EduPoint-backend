@@ -10,13 +10,22 @@ import org.apache.ibatis.annotations.Update;
 public interface GiftMapper extends BaseMapper<Gift> {
 
     /**
-     * 乐观锁与库存下限双重原子扣减
+     * 条件原子扣减库存：以「库存够」为唯一前提，由 InnoDB 行锁串行化并发扣减。
+     *
+     * <p><b>为什么不再用 version 做 CAS</b>：兑换主流程运行在 REPEATABLE READ 事务里，
+     * 版本号冲突后重新 {@code selectById} 读到的仍是<b>本事务快照</b>中的旧 version，
+     * 永远看不到其他消费者已提交的新版本，重试必然全部失败。
+     * 单消费者时冲突几乎为零所以没暴露；消费并发调到 4 后实测 86% 的订单被误判为「库存不足」。
+     *
+     * <p>{@code stock >= quantity} 与 {@code UPDATE} 在同一条语句内由行锁保证原子，
+     * 效果等价于乐观锁且不会误判；{@code version} 仍自增，供其它读路径感知变更。
+     *
+     * @return 受影响行数，0 表示库存不足或礼品不存在
      */
     @Update("UPDATE gift SET stock = stock - #{quantity}, version = version + 1 " +
-            "WHERE id = #{id} AND stock >= #{quantity} AND version = #{version} AND deleted = 0")
-    int reduceStockWithOptimisticLock(@Param("id") Long id,
-                                      @Param("quantity") Integer quantity,
-                                      @Param("version") Integer version);
+            "WHERE id = #{id} AND stock >= #{quantity} AND deleted = 0")
+    int deductStockIfEnough(@Param("id") Long id,
+                            @Param("quantity") Integer quantity);
 
     /**
      * 取消订单时原子恢复库存

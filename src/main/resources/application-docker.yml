@@ -6,8 +6,9 @@ spring:
     password: rootpassword
     hikari:
       initialization-fail-timeout: 30000
-      minimum-idle: 5
-      maximum-pool-size: 20
+      # 与秒杀线程池核心线程数(32)对齐，详见 application-dev.yml 同项注释
+      minimum-idle: 16
+      maximum-pool-size: 48
       connection-timeout: 30000
       idle-timeout: 600000
       max-lifetime: 1800000
@@ -37,6 +38,9 @@ spring:
       simple:
         acknowledge-mode: manual
         prefetch: 10
+        # 消费者并发度，与 application-dev.yml 保持一致
+        concurrency: 4
+        max-concurrency: 8
 
 # MyBatis-Plus 配置 (纯注解开发，已清理空转的 XML 扫描与实体别名配置)
 mybatis-plus:

@@ -6,8 +6,10 @@ spring:
     password: rootpassword # 请根据本地实际数据库密码修改
     hikari:
       initialization-fail-timeout: -1
-      minimum-idle: 5
-      maximum-pool-size: 20
+      # 与秒杀线程池核心线程数(32)对齐：单笔秒杀事务全程持有一条连接，
+      # 32 个并发事务 + 消费端 4 个并发事务 + 定时任务，取 48 留足余量（MySQL max_connections=151）
+      minimum-idle: 16
+      maximum-pool-size: 48
       connection-timeout: 30000
       idle-timeout: 600000
       max-lifetime: 1800000
@@ -42,6 +44,10 @@ spring:
       simple:
         acknowledge-mode: manual
         prefetch: 10
+        # 单消费者实测吞吐仅 22 笔/秒（瓶颈是消费事务提交的 fsync 与 gift 行锁），
+        # 4 个并发消费者 + 最多 8 个应对积压；prefetch=10 保证每个消费者手上有活干又不独占消息
+        concurrency: 4
+        max-concurrency: 8
         auto-startup: ${RABBITMQ_LISTENER_AUTO_STARTUP:true}
 
 # MyBatis-Plus 配置 (纯注解开发，开启 Slf4jImpl SQL 日志用于开发诊断)

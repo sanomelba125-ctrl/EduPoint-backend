@@ -121,7 +121,7 @@ class StudentGiftExchangeTest {
         assertTrue(ex.getMessage().contains("可用积分不足"), "异常信息应包含“可用积分不足”，实际为: " + ex.getMessage());
 
         // 确保不会触发库存扣减与积分扣减动作
-        verify(giftMapper, never()).reduceStockWithOptimisticLock(anyLong(), anyInt(), anyInt());
+        verify(giftMapper, never()).deductStockIfEnough(anyLong(), anyInt());
         verify(studentMapper, never()).deductCurrentPoints(anyLong(), anyInt());
         verify(studentGiftMapper, never()).insert(any(StudentGift.class));
         verifyNoInteractions(pointLedger);
@@ -161,14 +161,14 @@ class StudentGiftExchangeTest {
         assertTrue(ex.getMessage().contains("库存已被抢光"), "异常信息应包含“库存已被抢光”，实际为: " + ex.getMessage());
 
         // 确保未执行库存扣减与积分扣减
-        verify(giftMapper, never()).reduceStockWithOptimisticLock(anyLong(), anyInt(), anyInt());
+        verify(giftMapper, never()).deductStockIfEnough(anyLong(), anyInt());
         verify(studentMapper, never()).deductCurrentPoints(anyLong(), anyInt());
         verify(studentGiftMapper, never()).insert(any(StudentGift.class));
     }
 
     @Test
-    @DisplayName("测试并发抢兑乐观锁冲突拦截：版本号冲突导致扣库存失败，验证抛出冲突重试提示并阻断")
-    void testExchangeGift_OptimisticLockConflict_ShouldThrowException() {
+    @DisplayName("测试并发抢兑库存被抢完：条件扣减返回 0 行时按库存不足拦截，且不扣积分、不落单")
+    void testExchangeGift_StockTakenByOthers_ShouldThrowStockEmpty() {
         Long studentId = 103L;
         Long giftId = 3L;
 
@@ -188,8 +188,8 @@ class StudentGiftExchangeTest {
         gift.setDeleted(0);
         when(giftMapper.selectById(giftId)).thenReturn(gift);
 
-        // 模拟并发更新导致乐观锁 version 校验失败，返回 0 行
-        when(giftMapper.reduceStockWithOptimisticLock(eq(giftId), eq(1), eq(3))).thenReturn(0);
+        // 模拟并发抢占：读取时还有 5 件，落库扣减时已被别人买走，条件更新影响 0 行
+        when(giftMapper.deductStockIfEnough(eq(giftId), eq(1))).thenReturn(0);
 
         GiftExchangeDTO dto = new GiftExchangeDTO();
         dto.setGiftId(giftId);
@@ -199,10 +199,10 @@ class StudentGiftExchangeTest {
             studentGiftService.exchangeGift(dto, studentId);
         });
 
-        assertTrue(ex.getMessage().contains("冲突") || ex.getMessage().contains("重试"),
-                "异常信息应包含冲突提示，实际为: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("抢光") || ex.getMessage().contains("不足"),
+                "异常信息应提示库存不足，实际为: " + ex.getMessage());
 
-        // 乐观锁失败后，不能继续扣除学生积分
+        // 扣库存失败后，不能继续扣除学生积分
         verify(studentMapper, never()).deductCurrentPoints(anyLong(), anyInt());
         verify(studentGiftMapper, never()).insert(any(StudentGift.class));
     }
@@ -232,7 +232,7 @@ class StudentGiftExchangeTest {
         when(giftMapper.selectById(giftId)).thenReturn(gift);
 
         // 1. 模拟乐观锁扣库存成功
-        when(giftMapper.reduceStockWithOptimisticLock(eq(giftId), eq(1), eq(1))).thenReturn(1);
+        when(giftMapper.deductStockIfEnough(eq(giftId), eq(1))).thenReturn(1);
 
         // 2. 模拟原子扣积分成功，扣减后剩余 20 积分
         when(studentMapper.deductCurrentPoints(eq(studentId), eq(80))).thenReturn(1);
@@ -268,7 +268,7 @@ class StudentGiftExchangeTest {
         assertTrue(result.getPickupCode().startsWith("PK"), "提货码必须以 PK 开头");
 
         // 验证关键原子操作均被正确调用
-        verify(giftMapper, times(1)).reduceStockWithOptimisticLock(eq(giftId), eq(1), eq(1));
+        verify(giftMapper, times(1)).deductStockIfEnough(eq(giftId), eq(1));
         verify(studentMapper, times(1)).deductCurrentPoints(eq(studentId), eq(80));
         verify(studentGiftMapper, times(1)).insert(any(StudentGift.class));
         verify(pointLedger, times(1)).record(
@@ -457,7 +457,7 @@ class StudentGiftExchangeTest {
         });
 
         assertTrue(ex.getMessage().contains("兑换令牌已失效或已被使用"));
-        verify(giftMapper, never()).reduceStockWithOptimisticLock(anyLong(), anyInt(), anyInt());
+        verify(giftMapper, never()).deductStockIfEnough(anyLong(), anyInt());
         verify(studentMapper, never()).deductCurrentPoints(anyLong(), anyInt());
     }
 
@@ -497,7 +497,7 @@ class StudentGiftExchangeTest {
         assertEquals("PK999988", vo.getPickupCode());
         assertEquals(100, vo.getPointsCost());
         // 验证不会走扣减与落库
-        verify(giftMapper, never()).reduceStockWithOptimisticLock(anyLong(), anyInt(), anyInt());
+        verify(giftMapper, never()).deductStockIfEnough(anyLong(), anyInt());
         verify(studentMapper, never()).deductCurrentPoints(anyLong(), anyInt());
         verify(studentGiftMapper, never()).insert(any(StudentGift.class));
     }
@@ -520,6 +520,6 @@ class StudentGiftExchangeTest {
         });
 
         assertTrue(ex.getMessage().contains("兑换请求正在处理中，请勿重复提交"));
-        verify(giftMapper, never()).reduceStockWithOptimisticLock(anyLong(), anyInt(), anyInt());
+        verify(giftMapper, never()).deductStockIfEnough(anyLong(), anyInt());
     }
 }

@@ -270,7 +270,7 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
         }
         // 注意：Gift 实体的 stock / totalStock 标注了 updateStrategy = FieldStrategy.NEVER，
         // 这里 updateById 生成的 SQL 不会带这两列，所以改名称/图片/积分不会冲掉并发兑换已扣减的实时库存。
-        // 库存变更只走 GiftMapper 上的原子 SQL（补货 restock / 兑换 reduceStockWithOptimisticLock / 退单 increaseStock）。
+        // 库存变更只走 GiftMapper 上的原子 SQL（补货 restock / 兑换 deductStockIfEnough / 退单 increaseStock）。
         if (updateDTO.getStatus() != null) {
             gift.setStatus(updateDTO.getStatus());
         }
