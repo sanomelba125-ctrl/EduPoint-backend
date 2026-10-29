@@ -954,6 +954,11 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
             throw new BusinessException(ResultCode.CONFLICT.getCode(), "当前秒杀请求正在处理中，请勿重复提交！");
         }
 
+        // 占位成功但后续业务失败/事务回滚时必须释放，否则同一 requestId 会被锁到 TTL 到期（30s），
+        // 客户端在令牌过期、积分不足、库存不足等可重试场景下会连续收到「正在处理中」而无法重试。
+        // 普通兑换入口（exchangeGift）一直有这一行，秒杀入口漏了——2026-10-29 P1-6。
+        giftIdempotentService.releaseSlotOnRollback(studentId, requestId);
+
         // 3. 防重令牌核验
 
         String tokenToVerify = StringUtils.hasText(dto.getExchangeToken())

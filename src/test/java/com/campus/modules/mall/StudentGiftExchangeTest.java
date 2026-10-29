@@ -16,6 +16,7 @@ import com.campus.modules.student.mapper.StudentMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -463,6 +464,34 @@ class StudentGiftExchangeTest {
         // 取消事务已经提交，外部副作用失败只能记录日志，绝不能让接口报错或回滚
         assertDoesNotThrow(() -> studentGiftService.studentCancelOrder(orderId, studentId));
         verify(giftMapper, times(1)).increaseStock(eq(giftId), eq(1));
+    }
+
+    @Test
+    @DisplayName("P1-6：秒杀入口占位成功后必须注册回滚释放，否则同一 requestId 被锁满 TTL（30s）无法重试")
+    void testSeckillExchange_ShouldRegisterSlotReleaseOnRollback() {
+        Long studentId = 111L;
+        Long giftId = 3L;
+        String requestId = "SEC-P16-REQ";
+
+        when(giftIdempotentService.tryAcquireSlot(eq(studentId), eq(requestId))).thenReturn(true);
+        // 令牌已过期/已被使用：属于客户端可立即重试的场景
+        when(giftIdempotentService.verifyAndConsumeToken(eq(studentId), eq(giftId), anyString())).thenReturn(false);
+
+        GiftExchangeDTO dto = new GiftExchangeDTO();
+        dto.setGiftId(giftId);
+        dto.setQuantity(1);
+        dto.setRequestId(requestId);
+        dto.setExchangeToken("EXPIRED-TOKEN");
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> studentGiftService.seckillExchange(dto, studentId));
+        assertTrue(ex.getMessage().contains("兑换令牌已失效"), "异常信息应为令牌失效，实际为: " + ex.getMessage());
+
+        // 释放必须在「拿到占位之后、业务失败之前」注册，否则事务回滚时没人清 key
+        InOrder inOrder = inOrder(giftIdempotentService);
+        inOrder.verify(giftIdempotentService).tryAcquireSlot(eq(studentId), eq(requestId));
+        inOrder.verify(giftIdempotentService).releaseSlotOnRollback(eq(studentId), eq(requestId));
+        inOrder.verify(giftIdempotentService).verifyAndConsumeToken(eq(studentId), eq(giftId), anyString());
     }
 
     @Test
