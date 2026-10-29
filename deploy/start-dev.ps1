@@ -21,8 +21,22 @@ Write-Host ""
 # 0. 检查并启动 Docker 中间件 (MySQL, Redis, RabbitMQ)
 Write-Host "[0/3] 检查并启动 Docker 中间件 (MySQL, Redis, RabbitMQ)..." -ForegroundColor Yellow
 Set-Location $rootDir
-if (-not (Test-Path (Join-Path $rootDir ".env"))) {
-    Write-Host "  -> [警告] 未找到 .env；若容器未启动，请复制 .env.example 为 .env 并填写密码" -ForegroundColor Yellow
+$envFile = Join-Path $rootDir ".env"
+if (-not (Test-Path $envFile)) {
+    # compose 里用的是 ${VAR:?must be set in .env}，缺 .env 会在插值阶段直接报错退出，
+    # 一键启动连 [0/3] 都过不去。但要区分两种情况：本机已有容器时绝不能自动生成，
+    # 否则 compose 会按新口令重建容器，而数据卷里的 MySQL root 密码不会跟着变，后端直接连不上。
+    $existingContainer = (cmd /c "docker ps -a --filter name=campus-mysql --format {{.Names}}" 2>$null)
+    if ($existingContainer) {
+        Write-Host "  -> [错误] 未找到 .env，但本机已存在 campus-* 容器，已中止以避免重建容器。" -ForegroundColor Red
+        Write-Host "     请手动创建 .env（参考 .env.example），密码必须与现有容器保持一致；" -ForegroundColor Red
+        Write-Host "     若确实要重建环境，请先 docker rm -f campus-mysql campus-redis campus-rabbitmq 并确认数据可丢弃。" -ForegroundColor Red
+        exit 1
+    }
+    Copy-Item (Join-Path $rootDir ".env.example") $envFile -Force
+    Write-Host "  -> [警告] 未找到 .env，已从 .env.example 自动生成（示例弱口令，仅供本地开发）" -ForegroundColor Yellow
+} elseif (Select-String -Path $envFile -Pattern "your_strong_" -SimpleMatch -Quiet) {
+    Write-Host "  -> [警告] .env 仍是 .env.example 的示例口令，请勿用于生产或公网环境" -ForegroundColor Yellow
 }
 cmd /c "docker compose up -d mysql redis rabbitmq"
 if ($LASTEXITCODE -ne 0) {
