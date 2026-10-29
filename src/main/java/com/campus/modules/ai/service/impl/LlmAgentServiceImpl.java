@@ -11,6 +11,7 @@ import com.campus.modules.ai.client.dto.LlmChatRequest;
 import com.campus.modules.ai.client.dto.LlmChatResponse;
 import com.campus.modules.ai.client.dto.LlmStreamConsumer;
 import com.campus.modules.ai.config.AiConfig;
+import com.campus.modules.ai.service.AiIntentClassifier;
 import com.campus.modules.ai.service.AiMessageService;
 import com.campus.modules.ai.service.LlmAgentService;
 import lombok.RequiredArgsConstructor;
@@ -206,13 +207,15 @@ public class LlmAgentServiceImpl implements LlmAgentService {
 
     @Override
     public void streamLocalAgentAnswer(SseEmitter emitter, String question, Long studentId, String conversationId) {
-        String q = question.toLowerCase();
-        boolean queryPoints = q.contains("积分") || q.contains("分") || q.contains("余额") || q.contains("流水") || q.contains("明细");
-        boolean queryOrders = q.contains("礼品") || q.contains("兑换") || q.contains("订单") || q.contains("提货") || q.contains("核销");
-        boolean queryActivities = q.contains("活动") || q.contains("打卡") || q.contains("报名") || q.contains("候补") || q.contains("排队");
-        boolean queryCertificates = q.contains("证书") || q.contains("结项") || q.contains("荣誉") || q.contains("证明") || q.contains("验真");
+        // 意图分流统一走 AiIntentClassifier（2026-10-29 P0-4）：
+        // 旧实现用 q.contains("分") 判断积分意图，会把「分析」「分钟」「分享」全部误判；
+        // 同时「怎么参加活动拿积分」会因为命中「活动/积分」被答成个人台账。
+        // 规则咨询（怎么/如何/规则/流程）一律走知识库，不查个人数据。
+        AiIntentClassifier.Intent intent = AiIntentClassifier.isHowTo(question)
+                ? AiIntentClassifier.Intent.KNOWLEDGE
+                : AiIntentClassifier.detectPersonalIntent(question);
 
-        if (studentId == null && (queryPoints || queryOrders || queryActivities || queryCertificates)) {
+        if (studentId == null && intent != AiIntentClassifier.Intent.KNOWLEDGE) {
             String loginNotice = """
                     同学你好！你咨询的内容涉及**个人私有业务数据**（如个人积分、兑换订单、活动报名或荣誉证书）。
 
@@ -225,25 +228,25 @@ public class LlmAgentServiceImpl implements LlmAgentService {
         String answer;
         JSONObject toolEvent = null;
 
-        if (queryPoints) {
+        if (intent == AiIntentClassifier.Intent.POINTS) {
             ToolExecutionRecord record = toolRegistry.executeTool("local_pts_" + System.currentTimeMillis(),
                     "query_my_points", "{\"limit\": 5}", studentId);
             emitToolProgress(emitter, record);
             answer = buildPointsAnswer(record);
             toolEvent = toToolEvent(record);
-        } else if (queryOrders) {
+        } else if (intent == AiIntentClassifier.Intent.ORDERS) {
             ToolExecutionRecord record = toolRegistry.executeTool("local_ord_" + System.currentTimeMillis(),
                     "query_my_orders", "{\"limit\": 5}", studentId);
             emitToolProgress(emitter, record);
             answer = buildOrdersAnswer(record);
             toolEvent = toToolEvent(record);
-        } else if (queryActivities) {
+        } else if (intent == AiIntentClassifier.Intent.ACTIVITIES) {
             ToolExecutionRecord record = toolRegistry.executeTool("local_act_" + System.currentTimeMillis(),
                     "query_my_activities", "{\"limit\": 5}", studentId);
             emitToolProgress(emitter, record);
             answer = buildActivitiesAnswer(record);
             toolEvent = toToolEvent(record);
-        } else if (queryCertificates) {
+        } else if (intent == AiIntentClassifier.Intent.CERTIFICATES) {
             ToolExecutionRecord record = toolRegistry.executeTool("local_cert_" + System.currentTimeMillis(),
                     "query_my_certificates", "{\"limit\": 5}", studentId);
             emitToolProgress(emitter, record);
@@ -523,7 +526,11 @@ public class LlmAgentServiceImpl implements LlmAgentService {
                 1. 当用户询问通用规则与平台解答时，可调用知识库检索工具：search_platform_knowledge 检索官方规则知识。
                 2. 获得工具返回的业务事实 JSON 数据后，必须严格以该事实为依据，组织结构清晰、温暖热情的 Markdown 答复。严禁凭空捏造数据。
                 3. 工具失败或无结果时如实告知，不要编造数据。
-                4. 当用户询问个人私有数据（如个人积分余额、兑换订单、提货码、报名记录、证书等），请回答"个人数据查询已由系统本地安全处理，请查看上方查询结果"。不要尝试调用个人查询工具或编造个人数据。
+                4. 当用户询问个人私有数据（个人积分余额、兑换订单、提货码、报名记录、证书等）时，你**没有权限也不允许**查询或编造，
+                   更不要调用任何个人查询工具。请统一这样回复并引导用户重问：
+                   「你的个人数据由系统在本地安全查询，不会发送给外部模型。请把问题说得更具体一点再问一次，
+                   例如『我的积分』『我的订单』『我的活动』『我的证书』，我会直接从你的账户里查给你。」
+                   注意：不要回答「请查看上方查询结果」——那条路径已经不再由模型驱动，说了只会让用户看到空白。
                 5. 问候、感谢和能力介绍等问题通常不需要工具，直接友好回复即可。""";
     }
 

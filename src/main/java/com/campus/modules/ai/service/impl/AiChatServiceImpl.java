@@ -118,12 +118,16 @@ public class AiChatServiceImpl implements AiChatService {
         sendDone(emitter);
     }
 
+    /**
+     * 判断是否在问「我自己的」业务数据，决定走本地工具还是外部大模型。
+     *
+     * <p>判定规则已抽到 {@link com.campus.modules.ai.service.AiIntentClassifier}：
+     * 旧实现是 {@code question.contains("我")}，会把「我怎么参加活动拿积分」误判成个人查询，
+     * 又漏掉「查询积分流水」这种不带「我」的个人查询（导致模型回一句「请查看上方查询结果」而上方什么都没有）。
+     * 规则必须能单测，所以不再内联在这里。</p>
+     */
     private boolean isPersonalQuery(String question) {
-        if (!StringUtils.hasText(question)) return false;
-        String q = question.toLowerCase();
-        return q.contains("我") || q.contains("咱") || q.contains("自己") || q.contains("本人")
-                || q.contains("余额") || q.contains("多少分") || q.contains("剩多少") || q.contains("有几")
-                || q.contains("查查") || q.contains("帮我查") || q.contains("提货码") || q.contains("我的");
+        return com.campus.modules.ai.service.AiIntentClassifier.isPersonalQuery(question);
     }
 
     private void streamKnowledgeAnswer(SseEmitter emitter, QaKnowledge item) {
