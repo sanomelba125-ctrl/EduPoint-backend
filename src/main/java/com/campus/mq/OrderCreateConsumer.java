@@ -24,6 +24,12 @@ import java.nio.charset.StandardCharsets;
 /**
  * 秒杀订单异步削峰消费者 (P1-2 & P1-4)
  * 具备: 手动 ACK + 业务强幂等表 + 毒消息死信路由 (DLX) + 失败反向库存补偿
+ *
+ * <p><b>为什么这里必须显式写 {@code ackMode = "MANUAL"}</b>：全局
+ * {@code spring.rabbitmq.listener.simple.acknowledge-mode} 的默认值在 2026-10-29 已改为 {@code auto}
+ * （为了让漏配 ACK 的新监听器最多重复投递、而不是静默堆在 Unacked）。
+ * 本消费者是资金链路，必须在订单事务提交后由业务代码决定 ack / nack：
+ * 先落库再确认，nack 时路由死信人工核查，绝不能让容器在方法返回时就自动确认。</p>
  */
 @Slf4j
 @Component
@@ -37,7 +43,7 @@ public class OrderCreateConsumer {
     private final GiftStockRedisService giftStockRedisService;
     private final MqConsumeLogMapper mqConsumeLogMapper;
 
-    @RabbitListener(queues = RabbitMqConfig.SECKILL_ORDER_QUEUE)
+    @RabbitListener(queues = RabbitMqConfig.SECKILL_ORDER_QUEUE, ackMode = "MANUAL")
     public void handleOrderCreate(Message amqpMessage,
                                   Channel channel,
                                   @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag) throws IOException {

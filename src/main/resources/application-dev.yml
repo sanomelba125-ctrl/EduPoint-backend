@@ -42,7 +42,8 @@ spring:
     password: guest
     listener:
       simple:
-        acknowledge-mode: manual
+        # 与 application.yml 保持一致：默认自动确认，需要手动的监听器在注解上显式声明 ackMode="MANUAL"
+        acknowledge-mode: auto
         prefetch: 10
         # 单消费者实测吞吐仅 22 笔/秒（瓶颈是消费事务提交的 fsync 与 gift 行锁），
         # 4 个并发消费者 + 最多 8 个应对积压；prefetch=10 保证每个消费者手上有活干又不独占消息

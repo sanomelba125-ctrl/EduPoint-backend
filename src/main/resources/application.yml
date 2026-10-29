@@ -22,7 +22,11 @@ spring:
       mandatory: true
     listener:
       simple:
-        acknowledge-mode: manual
+        # 默认自动确认：方法正常返回即 ack，抛异常则 nack。
+        # 资金链路（OrderCreateConsumer）在注解上显式覆盖为 ackMode="MANUAL"。
+        # 反过来配（全局 manual + 监听器漏写 ack）会让消息永久停在 Unacked，
+        # 攒满 prefetch×concurrency 后整条队列停止投递且重启全量重放（2026-10-29 实测的线上事故）。
+        acknowledge-mode: auto
 
 
 # Sa-Token 配置

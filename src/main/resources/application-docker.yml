@@ -36,7 +36,8 @@ spring:
     password: guest
     listener:
       simple:
-        acknowledge-mode: manual
+        # 与 application.yml 保持一致：默认自动确认，需要手动的监听器在注解上显式声明 ackMode="MANUAL"
+        acknowledge-mode: auto
         prefetch: 10
         # 消费者并发度，与 application-dev.yml 保持一致
         concurrency: 4
