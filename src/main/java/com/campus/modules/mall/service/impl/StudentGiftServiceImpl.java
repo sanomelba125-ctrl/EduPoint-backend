@@ -631,6 +631,10 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         if (stockRows <= 0) {
             log.warn("[取消订单/库存回补告警] 礼品库存回补未生效(受影响行数为0): orderId={}, orderNo={}, giftId={}, quantity={}",
                     order.getId(), order.getOrderNo(), order.getGiftId(), order.getQuantity());
+        } else {
+            // MySQL 加回去只完成了一半：秒杀入口读的是 Redis 的可用库存，
+            // 不同步回补就会变成「MySQL 有、Redis 没有」的永久死库存（2026-10-29 P0-1）。
+            compensateRedisStockAfterCancel(order);
         }
 
         // 2. 返还积分并记录流水台账
@@ -659,6 +663,57 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         }
 
         return true;
+    }
+
+    /**
+     * 取消 / 管理员驳回 / 超时关单后，把可用库存同步回补到 Redis（2026-10-29 P0-1）。
+     *
+     * <p><b>为什么必须补：</b>秒杀入口 {@code preDeductStock} 只认 {@code gift:stock:{giftId}}，
+     * 而 {@code increaseStock} 只改 MySQL。旧实现下退单后 MySQL 加回 1 件、Redis 不变，
+     * 这一件在秒杀侧永远卖不出去。对账 {@code reconcileStock} 见到
+     * {@code redis < 实存 - 在途} 也只会打「疑似少卖」告警、不会上修——上修本身是不安全的：
+     * Redis 预扣与 MySQL 落库之间存在时间窗，把差额补回去会掩盖真实在途预扣，直接造成超卖。
+     * 所以必须在这里把源头补齐，而不是让对账去猜。实测 2026-10-29 线上 gift1 已因此少了 3 件。</p>
+     *
+     * <p><b>为什么放在 afterCommit：</b>{@code increaseStock} 与这次 Redis 回补不在同一个事务里。
+     * 若在提交前就把 Redis 加回去，事务一旦回滚，MySQL 没加、Redis 却多了，等于凭空制造超卖。</p>
+     *
+     * <p><b>幂等：</b>用 {@code cancel:{orderId}} 作为去重键，命中 Lua 的「已存在即跳过」，
+     * 即便状态守卫被绕过、消息重复投递或人工重试，同一订单也最多回补一次。</p>
+     *
+     * <p><b>库存 key 不存在（返回 -1）时不回补</b>：下一次秒杀会按 MySQL 实存懒加载预热，
+     * 而 MySQL 已经包含本次回补量；此时凭空 SET 反而会覆盖并发线程已扣减的在途库存。</p>
+     *
+     * @param order 已完成取消状态流转的订单（调用方保证已通过状态守卫）
+     */
+    private void compensateRedisStockAfterCancel(StudentGift order) {
+        if (giftStockRedisService == null || order.getGiftId() == null) {
+            return;
+        }
+        Integer quantity = order.getQuantity();
+        if (quantity == null || quantity <= 0) {
+            return;
+        }
+        Long giftId = order.getGiftId();
+        Long orderId = order.getId();
+        String dedupeId = "cancel:" + orderId;
+        com.campus.common.tx.AfterCommitExecutor.run(() -> {
+            int result = giftStockRedisService.compensateStockOnce(giftId, quantity, dedupeId);
+            if (result == 1) {
+                log.info("[取消订单/Redis回补] 已同步回补秒杀可用库存: orderId={}, giftId={}, quantity={}",
+                        orderId, giftId, quantity);
+            } else if (result == 0) {
+                log.info("[取消订单/Redis回补] 该订单已回补过，幂等跳过: orderId={}", orderId);
+            } else if (result == -1) {
+                log.warn("[取消订单/Redis回补] 库存 key 不存在，跳过回补；下次秒杀按 MySQL 实存预热时已包含本次回补量: "
+                        + "orderId={}, giftId={}", orderId, giftId);
+            } else {
+                log.error("[取消订单/Redis回补] 回补执行异常，交由 5 分钟对账告警兜底: orderId={}, giftId={}",
+                        orderId, giftId);
+            }
+            // 礼品详情缓存里可能带着旧库存，双删一次让移动端立刻看到新值
+            giftStockRedisService.evictGiftCacheWithDoubleDelete(giftId);
+        });
     }
 
     @Override

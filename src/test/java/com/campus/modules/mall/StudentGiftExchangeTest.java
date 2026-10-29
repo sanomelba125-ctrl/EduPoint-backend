@@ -311,6 +311,10 @@ class StudentGiftExchangeTest {
 
         // 验证礼品库存原子恢复 +1
         verify(giftMapper, times(1)).increaseStock(eq(giftId), eq(1));
+        // P0-1：MySQL 加回去只是第一步，秒杀入口读的是 Redis，必须同步回补，
+        // 否则这一件在秒杀侧永远卖不出去（实测线上 gift1 因此少了 3 件）
+        verify(giftStockRedisService, times(1)).compensateStockOnce(eq(giftId), eq(1), eq("cancel:" + orderId));
+        verify(giftStockRedisService, times(1)).evictGiftCacheWithDoubleDelete(eq(giftId));
         // 验证积分原路返还 +80
         verify(studentMapper, times(1)).addCurrentPoints(eq(studentId), eq(80));
         // 验证记录退分流水台账
@@ -358,12 +362,107 @@ class StudentGiftExchangeTest {
 
         // 验证礼品库存原子恢复 +2
         verify(giftMapper, times(1)).increaseStock(eq(giftId), eq(2));
+        // P0-1：管理员驳回同样要回补 Redis，回补件数取订单数量而不是 1
+        verify(giftStockRedisService, times(1)).compensateStockOnce(eq(giftId), eq(2), eq("cancel:" + orderId));
+        verify(giftStockRedisService, times(1)).evictGiftCacheWithDoubleDelete(eq(giftId));
         // 验证积分原路返还 +160
         verify(studentMapper, times(1)).addCurrentPoints(eq(studentId), eq(160));
         // 验证记录退分流水台账
         verify(pointLedger, times(1)).record(
                 eq(studentId), eq(4), eq(160), eq(210), anyString(), eq("ORD202609180006"), eq(orderId), eq(adminId)
         );
+    }
+
+    @Test
+    @DisplayName("P0-1 反向：MySQL 库存回补未生效（受影响行数 0）时不得回补 Redis，避免凭空造出库存")
+    void testCancelOrder_IncreaseStockFailed_ShouldNotCompensateRedis() {
+        Long studentId = 108L;
+        Long orderId = 503L;
+        Long giftId = 7L;
+
+        StudentGift order = new StudentGift();
+        order.setId(orderId);
+        order.setOrderNo("ORD202610290003");
+        order.setStudentId(studentId);
+        order.setGiftId(giftId);
+        order.setQuantity(1);
+        order.setPointsCost(50);
+        order.setStatus(1);
+
+        when(studentGiftMapper.selectById(orderId)).thenReturn(order);
+        when(studentGiftMapper.cancelOrderWithStatusGuard(eq(orderId), eq(1), eq(1), any(LocalDateTime.class), anyString(), isNull()))
+                .thenReturn(1);
+        // 礼品已被删除等场景：MySQL 根本没加回去
+        when(giftMapper.increaseStock(eq(giftId), eq(1))).thenReturn(0);
+
+        assertDoesNotThrow(() -> studentGiftService.studentCancelOrder(orderId, studentId));
+
+        // MySQL 没加、Redis 就更不能加，否则就是超卖
+        verify(giftStockRedisService, never()).compensateStockOnce(anyLong(), anyInt(), anyString());
+        verify(giftStockRedisService, never()).evictGiftCacheWithDoubleDelete(anyLong());
+    }
+
+    @Test
+    @DisplayName("P0-1：24h 超时关单同样要把库存回补到 Redis，并按订单数量回补")
+    void testExpireOrder_ShouldCompensateRedisStock() {
+        Long studentId = 109L;
+        Long orderId = 504L;
+        Long giftId = 8L;
+
+        StudentGift order = new StudentGift();
+        order.setId(orderId);
+        order.setOrderNo("ORD202610290004");
+        order.setStudentId(studentId);
+        order.setGiftId(giftId);
+        order.setQuantity(3);
+        order.setPointsCost(150);
+        order.setStatus(1);
+
+        when(studentGiftMapper.selectById(orderId)).thenReturn(order);
+        // 超时关单传 operatorId = 0L
+        when(studentGiftMapper.cancelOrderWithStatusGuard(eq(orderId), eq(1), eq(1), any(LocalDateTime.class), anyString(), eq(0L)))
+                .thenReturn(1);
+        when(giftMapper.increaseStock(eq(giftId), eq(3))).thenReturn(1);
+
+        Student student = new Student();
+        student.setId(studentId);
+        student.setCurrentPoints(0);
+        student.setDeleted(0);
+        when(studentMapper.selectById(studentId)).thenReturn(student);
+        when(studentMapper.selectCurrentPoints(eq(studentId))).thenReturn(150);
+
+        assertDoesNotThrow(() -> studentGiftService.expireOrder(orderId));
+
+        verify(giftMapper, times(1)).increaseStock(eq(giftId), eq(3));
+        verify(giftStockRedisService, times(1)).compensateStockOnce(eq(giftId), eq(3), eq("cancel:" + orderId));
+    }
+
+    @Test
+    @DisplayName("P0-1 容错：Redis 回补抛异常时不能影响已经生效的取消事务")
+    void testCancelOrder_RedisCompensationFails_ShouldNotBreakCancel() {
+        Long studentId = 110L;
+        Long orderId = 505L;
+        Long giftId = 9L;
+
+        StudentGift order = new StudentGift();
+        order.setId(orderId);
+        order.setOrderNo("ORD202610290005");
+        order.setStudentId(studentId);
+        order.setGiftId(giftId);
+        order.setQuantity(1);
+        order.setPointsCost(30);
+        order.setStatus(1);
+
+        when(studentGiftMapper.selectById(orderId)).thenReturn(order);
+        when(studentGiftMapper.cancelOrderWithStatusGuard(eq(orderId), eq(1), eq(1), any(LocalDateTime.class), anyString(), isNull()))
+                .thenReturn(1);
+        when(giftMapper.increaseStock(eq(giftId), eq(1))).thenReturn(1);
+        when(giftStockRedisService.compensateStockOnce(eq(giftId), eq(1), eq("cancel:" + orderId)))
+                .thenThrow(new IllegalStateException("redis down"));
+
+        // 取消事务已经提交，外部副作用失败只能记录日志，绝不能让接口报错或回滚
+        assertDoesNotThrow(() -> studentGiftService.studentCancelOrder(orderId, studentId));
+        verify(giftMapper, times(1)).increaseStock(eq(giftId), eq(1));
     }
 
     @Test
