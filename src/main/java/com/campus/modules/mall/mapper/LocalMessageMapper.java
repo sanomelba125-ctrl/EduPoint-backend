@@ -91,15 +91,24 @@ public interface LocalMessageMapper extends BaseMapper<LocalMessage> {
      *
      * <p>发布确认只能证明 Broker 收到了消息，不能证明消息最终被消费：
      * 队列在写入磁盘前宕机、消息在镜像切换中丢失、消费端长时间不启动，
-     * 都会让消息停在 status=1 而永不重投。这里以「创建超过阈值 + 消费日志缺失」
-     * 作为兜底判据把它们捞出来重投，消费端幂等表保证重复投递不会重复落单。
+     * 都会让消息停在 status=1 而永不重投。这里以「<b>最近一次状态变更</b>超过阈值 + 消费日志缺失」
+     * 作为兜底判据把它们捞出来重投，消费端幂等表保证重复投递不会重复落单。</p>
+     *
+     * <p><b>为什么用 {@code update_time} 而不是 {@code create_time}（2026-10-29 修复）：</b>
+     * {@code create_time} 一旦写入永不变化，而重投链路会把它一路刷新——
+     * {@code resetToPending} 显式写 {@code update_time = NOW()}，{@code markAsPublished}
+     * 把 status 0→1 时列上的 {@code ON UPDATE CURRENT_TIMESTAMP} 也会自动刷新。
+     * 旧写法按 {@code create_time} 判断，一条创建于 1 小时前的消息被捞回重投、5 秒后再次变成
+     * status=1（此时消费端可能还没写消费日志），下一轮扫描立刻又命中，25 秒内连投 5 次
+     * 直接把 {@code retry_count} 顶到上限判死并触发库存回补。
+     * 换成 {@code update_time} 后，每次重投都会重置 10 分钟观察窗，判死需要 5 个完整周期。</p>
      */
     @Select("SELECT m.* FROM local_message m " +
             "LEFT JOIN mq_consume_log c ON c.message_id = m.message_id AND c.consumer_name = #{consumerName} " +
             "WHERE m.biz_type = 'GIFT_ORDER_CREATE' AND m.status = 1 " +
-            "AND m.create_time <= #{createdBefore} AND c.message_id IS NULL " +
-            "ORDER BY m.create_time ASC LIMIT #{limit}")
-    List<LocalMessage> selectStalePublishedMessages(@Param("createdBefore") LocalDateTime createdBefore,
+            "AND m.update_time <= #{staleBefore} AND c.message_id IS NULL " +
+            "ORDER BY m.update_time ASC LIMIT #{limit}")
+    List<LocalMessage> selectStalePublishedMessages(@Param("staleBefore") LocalDateTime staleBefore,
                                                     @Param("consumerName") String consumerName,
                                                     @Param("limit") int limit);
 

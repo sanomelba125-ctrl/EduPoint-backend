@@ -108,10 +108,14 @@ public class LocalMessageService {
      *
      * <p>发布确认只解决「Broker 是否收到」，不解决「消息是否最终被消费」：
      * 队列落盘前宕机、镜像切换丢消息、消费端长期停机，都会让消息停在 status=1
-     * 永不重投。这里按「创建时间早于阈值 + 消费日志缺失」把它们捞回来重投，
+     * 永不重投。这里按「**最近一次状态变更**早于阈值 + 消费日志缺失」把它们捞回来重投，
      * 消费端幂等表保证不会重复落单。
      *
-     * @param staleAfter 超过该时长仍无消费记录即视为可疑
+     * <p>判据用 {@code update_time} 而非 {@code create_time}：重投会把 update_time 刷新到当下，
+     * 于是每次兜底都重新获得一个完整观察窗；否则一条老消息会在 25 秒内被连投 5 次直接判死
+     * （2026-10-29 修复，详见 {@code LocalMessageMapper#selectStalePublishedMessages}）。
+     *
+     * @param staleAfter 超过该时长仍未发生状态变更且无消费记录，即视为可疑
      * @param limit      单轮最多处理条数
      * @return 本轮回退重投的条数
      */
