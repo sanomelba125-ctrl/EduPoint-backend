@@ -52,6 +52,13 @@ public class SeckillThreadPoolConfig {
         executor.setQueueCapacity(queueCapacity);
         executor.setKeepAliveSeconds(60);
         executor.setThreadNamePrefix("seckill-async-");
+        // 跨线程传递 MDC traceId（2026-10-29 P1-5）。
+        // 请求进入时 TraceIdFilter 把 traceId 放进 Tomcat 线程的 MDC，而秒杀在这里切到
+        // seckill-async-* 线程池执行；不装 TaskDecorator 的话工作线程 MDC 恒为空，
+        // 于是 local_message.trace_id 落 null、MQ 消息头 x-trace-id 也不会被
+        // RabbitMqConfig 的 beforePublishPostProcessor 填上，整条异步链路断链。
+        // TraceUtil.wrap 会捕获提交时的 MDC 快照、执行完恢复原值，不会污染池化线程。
+        executor.setTaskDecorator(com.campus.common.util.TraceUtil::wrap);
         // 拒绝策略：调用者运行策略 (CallerRunsPolicy)，平滑降级并反压调用方
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
         // 预热核心线程：避免爬坡阶段现建线程，把建线程开销计入首屏请求延迟
