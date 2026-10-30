@@ -68,7 +68,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
         Activity activity = new Activity();
         copy(dto, activity);
         activity.setParticipantCount(0);
-        activity.setStatus(resolveStatus(dto.getStartTime(), dto.getEndTime()));
+        activity.setStatusEnum(resolveStatus(dto.getStartTime(), dto.getEndTime()));
         activity.setCreatedBy(adminId);
         activity.setUpdatedBy(adminId);
         activity.setDeleted(0);
@@ -91,7 +91,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
         }
         copy(dto, activity);
         if (!Objects.equals(activity.getStatus(), com.campus.modules.activity.enums.ActivityStatus.CLOSED.getCode())) {
-            activity.setStatus(resolveStatus(dto.getStartTime(), dto.getEndTime()));
+            activity.setStatusEnum(resolveStatus(dto.getStartTime(), dto.getEndTime()));
         }
         activity.setUpdatedBy(adminId);
         updateById(activity);
@@ -106,7 +106,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
         if (activity == null || Objects.equals(activity.getDeleted(), 1)) {
             throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "活动不存在");
         }
-        activity.setStatus(com.campus.modules.activity.enums.ActivityStatus.CLOSED);
+        activity.setStatusEnum(com.campus.modules.activity.enums.ActivityStatus.CLOSED);
         activity.setUpdatedBy(adminId);
         updateById(activity);
         activityCacheService.evict(activity.getId());

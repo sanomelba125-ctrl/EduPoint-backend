@@ -238,6 +238,35 @@ class AiFunctionCallingTest {
     }
 
     @Test
+    @DisplayName("测试 QueryActivitiesTool: 活动已被删除的报名/候补记录不再渲染成空标题卡片")
+    void testQueryActivitiesToolSkipsOrphanRecords() {
+        // 报名表与候补表不会随活动删除级联清理，回表为 null 是常态脏数据
+        StudentActivity orphanSignup = new StudentActivity();
+        orphanSignup.setId(501L);
+        orphanSignup.setActivityId(901L);
+        orphanSignup.setStatus(1);
+        orphanSignup.setSignupTime(LocalDateTime.now());
+        when(studentActivityMapper.selectList(any())).thenReturn(List.of(orphanSignup));
+
+        ActivityWaitlist orphanWait = new ActivityWaitlist();
+        orphanWait.setId(502L);
+        orphanWait.setActivityId(902L);
+        orphanWait.setStatus(1);
+        orphanWait.setQueueNumber(1);
+        orphanWait.setWaitTime(LocalDateTime.now());
+        when(waitlistMapper.selectList(any())).thenReturn(List.of(orphanWait));
+
+        when(activityMapper.selectById(any())).thenReturn(null);
+
+        String result = queryActivitiesTool.execute(101L, new JSONObject());
+        JSONObject json = JSON.parseObject(result);
+
+        assertTrue(json.getBooleanValue("success"));
+        assertEquals(0, json.getJSONArray("activities").size(), "孤儿记录必须全部丢弃");
+        assertEquals(0, json.getIntValue("returnedCount"));
+    }
+
+    @Test
     @DisplayName("测试 QueryCertificatesTool: 校验结项荣誉证书及防伪编号返回")
     void testQueryCertificatesTool() {
         CertificateMyVO cert = new CertificateMyVO();

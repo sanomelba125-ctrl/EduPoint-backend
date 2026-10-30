@@ -207,13 +207,14 @@ public class LlmAgentServiceImpl implements LlmAgentService {
 
     @Override
     public void streamLocalAgentAnswer(SseEmitter emitter, String question, Long studentId, String conversationId) {
-        // 意图分流统一走 AiIntentClassifier（2026-10-29 P0-4）：
-        // 旧实现用 q.contains("分") 判断积分意图，会把「分析」「分钟」「分享」全部误判；
-        // 同时「怎么参加活动拿积分」会因为命中「活动/积分」被答成个人台账。
-        // 规则咨询（怎么/如何/规则/流程）一律走知识库，不查个人数据。
-        AiIntentClassifier.Intent intent = AiIntentClassifier.isHowTo(question)
-                ? AiIntentClassifier.Intent.KNOWLEDGE
-                : AiIntentClassifier.detectPersonalIntent(question);
+        // 意图分流的唯一依据是 isPersonalQuery（2026-10-30 统一）：
+        // 本方法有两条调用来源——① 入口判定为个人查询时直接调用；② 大模型不可用时的兜底。
+        // 兜底时若仍按 detectPersonalIntent 决定，只要句子里出现「活动」「礼品」就会被答成
+        // 个人台账：「活动报名时间」会返回「我的活动」列表，「礼品核销有效期」会返回我的订单。
+        // 旧实现还额外用 isHowTo 兜规则咨询，同样属于「两处路由各写一套」的隐患，一并收敛。
+        AiIntentClassifier.Intent intent = AiIntentClassifier.isPersonalQuery(question)
+                ? AiIntentClassifier.detectPersonalIntent(question)
+                : AiIntentClassifier.Intent.KNOWLEDGE;
 
         if (studentId == null && intent != AiIntentClassifier.Intent.KNOWLEDGE) {
             String loginNotice = """

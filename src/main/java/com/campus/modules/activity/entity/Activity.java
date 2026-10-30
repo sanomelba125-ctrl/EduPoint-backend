@@ -126,12 +126,12 @@ public class Activity {
         this.status = status;
     }
 
-    @com.fasterxml.jackson.annotation.JsonIgnore
-    public void setStatus(com.campus.modules.activity.enums.ActivityStatus status) {
-        this.status = status != null ? status.getCode() : null;
-    }
-
+    // 注意：不要为 status 再写一个「参数是枚举」的 setStatus 重载。
+    // Jackson 把重载视为同一属性 status 的冲突 setter，一旦给其中一个加 @JsonIgnore，
+    // 整个 status 属性会连同 getter 一起被丢弃——线上表现就是「我的活动」接口
+    // 根本不返回 status，而移动端正是靠它判断已报名/候补中。
+    // 需要枚举入参请用 setStatusEnum(...)。
     public void setStatusEnum(com.campus.modules.activity.enums.ActivityStatus status) {
-        setStatus(status);
+        setStatus(status != null ? status.getCode() : null);
     }
 }

@@ -97,6 +97,62 @@ class AiIntentClassifierTest {
     }
 
     @Test
+    @DisplayName("收紧边界①：公开信息咨询不能被「短句即个人查询」吞掉（8 字阈值太宽）")
+    void shortPublicInfoQuestionsMustNotBePersonal() {
+        // 这几句都是 6~9 字、不含「怎么/什么」的公开信息咨询。
+        // 旧阈值 TERSE_LENGTH=8 会把它们一律判成个人查询，然后拿「我的活动/我的订单」去回答。
+        String[] publicInfoQuestions = {
+                "活动报名时间",
+                "礼品核销有效期",
+                "现场扫码打卡",
+                "活动地点在哪",
+                "看看这周的活动安排",
+                "活动还剩几分钟结束",
+                "积分排行榜怎么看"
+        };
+        for (String question : publicInfoQuestions) {
+            assertFalse(AiIntentClassifier.isPersonalQuery(question),
+                    "「" + question + "」问的是公开信息，不能用个人台账回答");
+        }
+    }
+
+    @Test
+    @DisplayName("收紧边界②：口语化「我+动作」不能漏判（只认「我的」会漏掉一整类说法）")
+    void colloquialSelfReferenceMustBePersonal() {
+        // 这些句子没有「我的」，长度也超过 4 字，但意思非常明确：查我自己的东西。
+        // 漏判的后果是被知识库按「提货码」「报名」等单关键词截胡，回一段通用规则 FAQ。
+        String[] colloquialPersonal = {
+                "我兑换的礼品提货码",
+                "我刚兑换的礼品提货码呢",
+                "我报名成功的活动呢",
+                "我打卡了吗",
+                "我还剩几个积分",
+                "我参加的活动的积分到账了吗",
+                "我昨天兑换的订单到哪了"
+        };
+        for (String question : colloquialPersonal) {
+            assertTrue(AiIntentClassifier.isPersonalQuery(question),
+                    "「" + question + "」是明显的个人数据查询，漏判会让用户拿不到自己的提货码/活动");
+        }
+    }
+
+    @Test
+    @DisplayName("收紧边界③：求建议/表意愿的句子不得走个人台账")
+    void advisoryQuestionsMustNotBePersonal() {
+        String[] advisory = {
+                "我想报名这周的活动",
+                "我想参加活动",
+                "我想兑换礼品",
+                "推荐几个活动",
+                "帮我分析一下我的积分消费"
+        };
+        for (String question : advisory) {
+            assertFalse(AiIntentClassifier.isPersonalQuery(question),
+                    "「" + question + "」要的是建议，不是自己的台账");
+        }
+    }
+
+    @Test
     @DisplayName("P0-4：旧实现用 contains(\"分\") 误判的词，不能再被当成积分查询")
     void bareFenMustNotBeTreatedAsPoints() {
         // 「分析」「分钟」「分享」都含「分」，但它们不是积分查询

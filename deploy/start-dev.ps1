@@ -34,7 +34,26 @@ if (-not (Test-Path $envFile)) {
         exit 1
     }
     Copy-Item (Join-Path $rootDir ".env.example") $envFile -Force
-    Write-Host "  -> [警告] 未找到 .env，已从 .env.example 自动生成（示例弱口令，仅供本地开发）" -ForegroundColor Yellow
+    # 新机器上容器是用 .env 里的口令初始化的，而后端 dev profile 读的是 application-dev.yml 里
+    # 固定的 rootpassword / redispassword / guest。若直接用 .env.example 的强口令占位符，
+    # 会出现「容器起来了但后端连不上」。所以这里把 6 个变量换成与后端配置一致的本地开发值
+    # （后两个签名密钥与 application-local.yml 的默认值相同；改这里要同步改那两个 yml）。
+    $localDevEnv = [ordered]@{
+        'MYSQL_ROOT_PASSWORD'     = 'rootpassword'
+        'REDIS_PASSWORD'          = 'redispassword'
+        'RABBITMQ_USER'           = 'guest'
+        'RABBITMQ_PASS'           = 'guest'
+        'ACTIVITY_QR_SIGN_SECRET' = 'EduPoint@QrSign#2026-LocalDevOnly'
+        'MALL_PICKUP_SIGN_SECRET' = 'EduPoint@PickupSign#2026-LocalDevOnly'
+    }
+    $envText = Get-Content -LiteralPath $envFile -Raw -Encoding UTF8
+    foreach ($key in $localDevEnv.Keys) {
+        $envText = $envText -replace "(?m)^$key=.*$", "$key=$($localDevEnv[$key])"
+    }
+    # 必须写无 BOM 的 UTF-8：带 BOM 时第一个变量名会变成 "\ufeffMYSQL_ROOT_PASSWORD"，
+    # docker compose 读不到它，等于没配。
+    [System.IO.File]::WriteAllText($envFile, $envText, [System.Text.UTF8Encoding]::new($false))
+    Write-Host "  -> [提示] 未找到 .env，已按本地开发口令生成（与 application-dev.yml 一致，仅限本机开发）" -ForegroundColor Yellow
 } elseif (Select-String -Path $envFile -Pattern "your_strong_" -SimpleMatch -Quiet) {
     Write-Host "  -> [警告] .env 仍是 .env.example 的示例口令，请勿用于生产或公网环境" -ForegroundColor Yellow
 }

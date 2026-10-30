@@ -140,6 +140,41 @@ class AiChatServiceRefactorTest {
     }
 
     @Test
+    @DisplayName("大模型不可用时的本地兜底：公开信息咨询不得被答成个人活动台账")
+    void testLocalFallbackMustNotAnswerPublicInfoWithPersonalLedger() {
+        // 关闭外部大模型，强制走本地兜底分支（这正是无 Key 环境的真实路径）
+        aiConfig.setEnabled(false);
+
+        AiChatRequest req = new AiChatRequest();
+        req.setQuestion("活动报名时间");
+        req.setConversationId("conv_fallback");
+
+        SseEmitter emitter = chatService.streamChat(req, 100L);
+        assertNotNull(emitter);
+
+        // 必须走知识库检索
+        verify(toolRegistry, timeout(3000)).executeTool(any(), eq("search_platform_knowledge"), any(), any());
+        // 绝不能因为句子里有「活动」两个字就去查我的活动
+        verify(toolRegistry, never()).executeTool(any(), eq("query_my_activities"), any(), any());
+    }
+
+    @Test
+    @DisplayName("大模型不可用时的本地兜底：口语化个人查询仍要命中对应工具")
+    void testLocalFallbackStillServesColloquialPersonalQuery() {
+        aiConfig.setEnabled(false);
+
+        AiChatRequest req = new AiChatRequest();
+        req.setQuestion("我兑换的礼品提货码");
+        req.setConversationId("conv_fallback2");
+
+        SseEmitter emitter = chatService.streamChat(req, 100L);
+        assertNotNull(emitter);
+
+        verify(toolRegistry, timeout(3000)).executeTool(any(), eq("query_my_orders"), any(), any());
+        verify(toolRegistry, never()).executeTool(any(), eq("search_platform_knowledge"), any(), any());
+    }
+
+    @Test
     @DisplayName("AiMessageService: 清空指定会话历史")
     void testClearChatHistory() {
         when(messageMapper.delete(any(LambdaQueryWrapper.class))).thenReturn(3);

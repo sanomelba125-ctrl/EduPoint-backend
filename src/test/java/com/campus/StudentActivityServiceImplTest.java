@@ -818,6 +818,37 @@ class StudentActivityServiceImplTest {
     }
 
     @Test
+    @DisplayName("我的记录：报名所属活动已被物理删除时该条记录被过滤（不留空标题卡片）")
+    void myList_shouldDropSignupOfMissingActivity() {
+        StudentActivity orphan = record(31L, STUDENT_ID, ACTIVITY_ID, 1);
+        orphan.setSignupTime(LocalDateTime.now());
+        when(studentActivityMapper.selectList(any())).thenReturn(new ArrayList<>(List.of(orphan)));
+        // 活动已物理删除：selectBatchIds 与 selectById 都拿不到
+        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(null);
+
+        IPage<MyActivityVO> result = service.myList(1, 10, 1);
+
+        assertTrue(result.getRecords().isEmpty(), "活动不存在时不能渲染成空标题卡片");
+        assertEquals(0, result.getTotal());
+    }
+
+    @Test
+    @DisplayName("我的记录：报名所属活动被软删时该条记录同样被过滤")
+    void myList_shouldDropSignupOfDeletedActivity() {
+        StudentActivity own = record(31L, STUDENT_ID, ACTIVITY_ID, 1);
+        own.setSignupTime(LocalDateTime.now());
+        when(studentActivityMapper.selectList(any())).thenReturn(new ArrayList<>(List.of(own)));
+        Activity deleted = activity(ACTIVITY_ID, 1, 0);
+        deleted.setDeleted(1);
+        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(deleted);
+
+        IPage<MyActivityVO> result = service.myList(1, 10, 1);
+
+        assertTrue(result.getRecords().isEmpty());
+        assertEquals(0, result.getTotal());
+    }
+
+    @Test
     @DisplayName("我的记录：内存分页边界钳制（页码下限 1、每页上限 100）且切片正确")
     void myList_shouldClampPagingAndSliceRecords() {
         List<StudentActivity> records = new ArrayList<>();

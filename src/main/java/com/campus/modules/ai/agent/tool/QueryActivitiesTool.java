@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 工具 3: 查询学生已报名、已打卡或排队候补中的校园活动
@@ -120,12 +121,19 @@ public class QueryActivitiesTool implements AiTool {
 
                 List<StudentActivity> activities = studentActivityMapper.selectList(wrapper);
                 for (StudentActivity sa : activities) {
-                    JSONObject item = new JSONObject();
                     Activity act = activityMapper.selectById(sa.getActivityId());
-                    item.put("activityTitle", act != null ? act.getTitle() : "校园活动");
-                    item.put("category", act != null ? act.getCategory() : "");
-                    item.put("locationName", act != null ? act.getLocationName() : "");
-                    item.put("rewardPoints", act != null ? act.getPoints() : 0);
+                    // 活动被删除后不会级联清理报名表，回表为 null；软删同理。
+                    // 渲染成「【校园活动】（奖励积分: 0）- 活动地点：(空)」比不显示更糟，直接跳过。
+                    if (!isActivityVisible(act)) {
+                        log.debug("查询活动工具：跳过无主报名记录 studentActivityId={}, activityId={}",
+                                sa.getId(), sa.getActivityId());
+                        continue;
+                    }
+                    JSONObject item = new JSONObject();
+                    item.put("activityTitle", act.getTitle());
+                    item.put("category", text(act.getCategory()));
+                    item.put("locationName", text(act.getLocationName()));
+                    item.put("rewardPoints", act.getPoints() != null ? act.getPoints() : 0);
                     item.put("status", sa.getStatus());
                     item.put("statusText", formatActivityStatus(sa.getStatus()));
                     item.put("signupTime", sa.getSignupTime() != null ? sa.getSignupTime().format(DATE_TIME_FORMATTER) : "");
@@ -149,12 +157,17 @@ public class QueryActivitiesTool implements AiTool {
 
                 for (ActivityWaitlist w : waitlists) {
                     if (list.size() >= limit) break;
-                    JSONObject item = new JSONObject();
                     Activity act = activityMapper.selectById(w.getActivityId());
-                    item.put("activityTitle", act != null ? act.getTitle() : "校园活动");
-                    item.put("category", act != null ? act.getCategory() : "");
-                    item.put("locationName", act != null ? act.getLocationName() : "");
-                    item.put("rewardPoints", act != null ? act.getPoints() : 0);
+                    if (!isActivityVisible(act)) {
+                        log.debug("查询活动工具：跳过无主候补记录 waitlistId={}, activityId={}",
+                                w.getId(), w.getActivityId());
+                        continue;
+                    }
+                    JSONObject item = new JSONObject();
+                    item.put("activityTitle", act.getTitle());
+                    item.put("category", text(act.getCategory()));
+                    item.put("locationName", text(act.getLocationName()));
+                    item.put("rewardPoints", act.getPoints() != null ? act.getPoints() : 0);
                     item.put("status", 4);
 
                     // 计算当前实际排位顺位
@@ -180,6 +193,21 @@ public class QueryActivitiesTool implements AiTool {
             log.error("执行 QueryActivitiesTool 异常: studentId={}", studentId, e);
             return AiToolResults.error("查询活动与候补记录服务出现异常: " + e.getMessage());
         }
+    }
+
+    /**
+     * 活动是否仍然可见：存在且未被软删。
+     *
+     * <p>报名表与候补表不会随活动删除级联清理，回表必然出现 {@code null}；
+     * 渲染成「【校园活动】（奖励积分: 0）- 活动地点：(空)」比不显示更糟，所以一律跳过。</p>
+     */
+    private boolean isActivityVisible(Activity activity) {
+        return activity != null && !Objects.equals(activity.getDeleted(), 1);
+    }
+
+    /** JSON 里不要塞 null：渲染层的 %s 会把 null 打成字面量「null」 */
+    private String text(String value) {
+        return value != null ? value : "";
     }
 
     private String formatActivityStatus(Integer status) {

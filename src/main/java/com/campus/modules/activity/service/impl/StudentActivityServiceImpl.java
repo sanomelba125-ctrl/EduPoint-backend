@@ -155,7 +155,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                 rec.setStudentId(sid);
                 rec.setActivityId(aid);
                 rec.setSignupTime(LocalDateTime.now());
-                rec.setStatus(StudentActivityStatus.REGISTERED);
+                rec.setStatusEnum(StudentActivityStatus.REGISTERED);
                 rec.setPointsAwarded(0);
                 rec.setDeleted(0);
                 if (rec.getId() == null) {
@@ -195,7 +195,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             w.setActivityId(aid);
             w.setStudentId(sid);
             w.setQueueNumber(max + 1);
-            w.setStatus(ActivityWaitlistStatus.WAITING);
+            w.setStatusEnum(ActivityWaitlistStatus.WAITING);
             w.setWaitTime(LocalDateTime.now());
             w.setPromotedTime(null);
             w.setDeleted(0);
@@ -241,7 +241,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                         throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "活动已开始或已结束，无法取消报名");
                     }
                 }
-                rec.setStatus(StudentActivityStatus.CANCELLED);
+                rec.setStatusEnum(StudentActivityStatus.CANCELLED);
                 updateById(rec);
                 activityMapper.decrementParticipant(activityId);
                 promote(activityId);
@@ -254,7 +254,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                     .eq(ActivityWaitlist::getStatus, ActivityWaitlistStatus.WAITING.getCode())
                     .eq(ActivityWaitlist::getDeleted, 0));
             if (w != null) {
-                w.setStatus(ActivityWaitlistStatus.CANCELLED);
+                w.setStatusEnum(ActivityWaitlistStatus.CANCELLED);
                 waitlistMapper.updateById(w);
                 refreshActivityCacheAfterCommit(activityId);
                 return "已退出候补队列";
@@ -291,7 +291,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                 }
                 if (hasConflict) {
                     log.info("候补转正检测到时间重叠冲突，自动跳过该候选人并顺延递补: studentId={}, activityId={}", w.getStudentId(), aid);
-                    w.setStatus(ActivityWaitlistStatus.CANCELLED);
+                    w.setStatusEnum(ActivityWaitlistStatus.CANCELLED);
                     waitlistMapper.updateById(w);
                     promote(aid);
                     return null;
@@ -307,7 +307,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             rec.setStudentId(w.getStudentId());
             rec.setActivityId(aid);
             rec.setSignupTime(LocalDateTime.now());
-            rec.setStatus(StudentActivityStatus.REGISTERED);
+            rec.setStatusEnum(StudentActivityStatus.REGISTERED);
             rec.setPointsAwarded(0);
             rec.setDeleted(0);
             if (rec.getId() == null) {
@@ -315,7 +315,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             } else {
                 updateById(rec);
             }
-            w.setStatus(ActivityWaitlistStatus.PROMOTED);
+            w.setStatusEnum(ActivityWaitlistStatus.PROMOTED);
             w.setPromotedTime(LocalDateTime.now());
             waitlistMapper.updateById(w);
 
@@ -358,7 +358,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
 
             int points = a.getPoints() == null ? 0 : a.getPoints();
             LocalDateTime now = LocalDateTime.now();
-            rec.setStatus(StudentActivityStatus.COMPLETED);
+            rec.setStatusEnum(StudentActivityStatus.COMPLETED);
             rec.setCheckinTime(now);
             rec.setCheckinLatitude(dto.getCheckinLatitude());
             rec.setCheckinLongitude(dto.getCheckinLongitude());
@@ -444,11 +444,19 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
         Map<Long, Activity> activityMap = getActivitiesByIds(activityIds);
 
         for (StudentActivity record : ownRecords) {
-            records.add(toMyActivityVO(record, null, activityMap.get(record.getActivityId())));
+            Activity activity = activityMap.get(record.getActivityId());
+            // 活动被物理删除或软删后回表为 null：绝不能组装成「无标题空卡片」。
+            // 这类记录是历史脏数据（活动删除时没有级联清理报名表），直接跳过比渲染空卡片安全。
+            if (!isActivityVisible(activity)) {
+                log.debug("我的活动：跳过无主报名记录 studentActivityId={}, activityId={}",
+                        record.getId(), record.getActivityId());
+                continue;
+            }
+            records.add(toMyActivityVO(record, null, activity));
         }
         for (ActivityWaitlist waitlist : waitlists) {
             Activity activity = activityMap.get(waitlist.getActivityId());
-            if (activity != null && !Objects.equals(activity.getDeleted(), 1)) {
+            if (isActivityVisible(activity)) {
                 records.add(toMyActivityVO(null, waitlist, activity));
             }
         }
@@ -460,6 +468,17 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
         Page<MyActivityVO> result = new Page<>(current, pageSize, total);
         result.setRecords(records.subList(from, to));
         return result;
+    }
+
+    /**
+     * 活动是否仍然可见：存在且未被软删。
+     *
+     * <p>报名表与候补表是历史累积的，活动被删除时不会级联清理子表，
+     * 于是「我的活动」回表必然出现 {@code null}。渲染成空标题卡片比直接跳过更糟，
+     * 所以报名与候补两条路径共用这一个判定。</p>
+     */
+    private boolean isActivityVisible(Activity activity) {
+        return activity != null && !Objects.equals(activity.getDeleted(), 1);
     }
 
     private Map<Long, Activity> getActivitiesByIds(Set<Long> activityIds) {
