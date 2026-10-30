@@ -304,7 +304,7 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         order.setReceiverPhone(receiver.phone());
         order.setReceiverAddress(receiver.address());
         order.setPickupCode(pickupCode);
-        order.setStatus(OrderStatus.PENDING);
+        order.setStatusEnum(OrderStatus.PENDING);
         order.setRefundPointsStatus(0);
         try {
             this.save(order);
@@ -1138,7 +1138,7 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
         order.setReceiverPhone(msg.receiverPhone());
         order.setReceiverAddress(msg.receiverAddress());
         order.setPickupCode(pickupCode);
-        order.setStatus(OrderStatus.PENDING);
+        order.setStatusEnum(OrderStatus.PENDING);
         order.setRefundPointsStatus(0);
         // 提货码唯一性最终由 uk_pickup_code 保证：生成阶段的 selectCount 在 REPEATABLE READ 下
         // 看不到并发事务尚未提交的码，多消费者同时落库时仍可能撞码。

@@ -387,7 +387,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                 c.setTitle(a.getCertificateTitle());
                 c.setIssuer(a.getCertificateIssuer());
                 c.setIssueTime(now);
-                c.setStatus(CertificateStatus.VALID);
+                c.setStatusEnum(CertificateStatus.VALID);
                 c.setVerifyCount(0);
                 c.setDeleted(0);
                 certificateService.save(c);

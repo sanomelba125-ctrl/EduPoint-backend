@@ -153,6 +153,53 @@ class AiIntentClassifierTest {
     }
 
     @Test
+    @DisplayName("收紧边界④：单字「查」不得把公开对象截胡（查活动 ≠ 查我的活动）")
+    void bareChaMustNotHijackPublicObjects() {
+        // 这些句子都在问「平台上有哪些活动/礼品」，不是「我报名了哪些」。
+        // 旧规则只要有「查」就判个人查询，会被答成「你当前暂无已报名或候补中的活动」。
+        String[] publicQueries = {
+                "查询志愿活动",
+                "查活动",
+                "查询校园活动",
+                "查礼品",
+                "查询近期讲座"
+        };
+        for (String question : publicQueries) {
+            assertFalse(AiIntentClassifier.isPersonalQuery(question),
+                    "「" + question + "」是在逛公开大厅，不能用个人台账回答");
+        }
+    }
+
+    @Test
+    @DisplayName("收紧边界⑤：「查/看 + 个人对象」仍必须判为个人查询")
+    void queryWithPersonalObjectIsStillPersonal() {
+        String[] personalQueries = {
+                "查积分",
+                "查订单",
+                "查看提货码",
+                "查一下证书",
+                "查我的余额"
+        };
+        for (String question : personalQueries) {
+            assertTrue(AiIntentClassifier.isPersonalQuery(question),
+                    "「" + question + "」是查自己的数据，漏判会让用户拿不到结果");
+        }
+    }
+
+    @Test
+    @DisplayName("收紧边界⑥：极短裸词只在「天然属于个人」的对象上生效")
+    void terseWordOnlyWorksForPersonalObjects() {
+        assertTrue(AiIntentClassifier.isPersonalQuery("积分"), "「积分」几乎只可能是查自己余额");
+        assertTrue(AiIntentClassifier.isPersonalQuery("订单"));
+        assertTrue(AiIntentClassifier.isPersonalQuery("提货码"));
+
+        // 「活动」「礼品」「打卡」本身就是公开目录词，光说两个字更可能是在逛大厅
+        assertFalse(AiIntentClassifier.isPersonalQuery("活动"), "「活动」应去查活动大厅而不是我的记录");
+        assertFalse(AiIntentClassifier.isPersonalQuery("礼品"), "「礼品」应去礼品商城");
+        assertFalse(AiIntentClassifier.isPersonalQuery("打卡"));
+    }
+
+    @Test
     @DisplayName("P0-4：旧实现用 contains(\"分\") 误判的词，不能再被当成积分查询")
     void bareFenMustNotBeTreatedAsPoints() {
         // 「分析」「分钟」「分享」都含「分」，但它们不是积分查询

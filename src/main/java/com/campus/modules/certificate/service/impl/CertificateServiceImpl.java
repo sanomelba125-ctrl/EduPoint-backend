@@ -98,7 +98,7 @@ public class CertificateServiceImpl extends ServiceImpl<CertificateMapper, Certi
         if (!Integer.valueOf(CertificateStatus.VALID.getCode()).equals(certificate.getStatus())) {
             throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "仅有效证书可以撤销");
         }
-        certificate.setStatus(CertificateStatus.REVOKED);
+        certificate.setStatusEnum(CertificateStatus.REVOKED);
         certificate.setRevokeReason(revokeReason.trim());
         certificate.setRevokedBy(adminId);
         certificate.setRevokedTime(LocalDateTime.now());

@@ -2,6 +2,7 @@ package com.campus.mq;
 
 import com.campus.config.RabbitMqConfig;
 import com.campus.modules.activity.service.ActivityCacheService;
+import com.campus.modules.mall.service.LocalMessageService;
 import com.campus.modules.mall.service.StudentGiftService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -47,6 +48,7 @@ public class CampusMessageConsumer {
 
     private final ActivityCacheService activityCacheService;
     private final StudentGiftService studentGiftService;
+    private final LocalMessageService localMessageService;
 
     @RabbitListener(queues = RabbitMqConfig.ACTIVITY_CACHE_REFRESH_QUEUE,
             ackMode = "AUTO",
@@ -106,16 +108,25 @@ public class CampusMessageConsumer {
      * 「超过关单时效仍未提货」的订单并调用 {@code expireOrder} 保证。
      * 若这里改成抛异常让 Broker 重投，一条无法处理的毒消息会在 prefetch 窗口内被立即反复投递，
      * 把日志和 CPU 打成热循环，反而挤占正常消息。24 小时的关单延迟再多等 10 分钟没有业务影响。</p>
+     *
+     * <p><b>发件箱状态闭环（2026-10-30 补）：</b>延时关单消息同样走事务性发件箱，
+     * 但这里原来只调 {@code expireOrder}、从不回写 {@code local_message.status}，
+     * 于是所有 {@code GIFT_ORDER_DELAY} 记录永远停在 1（已投递待确认），
+     * {@code repairTerminalStatusFromConsumeLog} 也只修 {@code OrderCreateConsumer}，
+     * 那条记录等于永久在途。现在按结果回写：处理成功 → 2（已消费），
+     * 处理失败或载荷非法 → 3（已放弃，带 fail_reason），与「不重投」的语义保持一致。</p>
      */
     @RabbitListener(queues = RabbitMqConfig.GIFT_EXPIRE_QUEUE,
             ackMode = "AUTO",
             autoStartup = "${spring.rabbitmq.listener.simple.auto-startup:true}")
     public void handleGiftOrderExpire(Map<String, Object> message,
-                                      @Header(value = "x-trace-id", required = false) String traceId) {
+                                      @Header(value = "x-trace-id", required = false) String traceId,
+                                      @Header(value = "x-message-id", required = false) String messageId) {
         bindTraceId(traceId, message);
         try {
             if (message == null) {
                 log.warn("[MQ 延时关单] 收到空消息体，跳过自动关单");
+                markOutboxAbandoned(messageId, null, "延时关单消息体为空");
                 return;
             }
             Object orderIdVal = message.get("orderId");
@@ -127,24 +138,72 @@ public class CampusMessageConsumer {
                     orderId = Long.parseLong(orderIdVal.toString());
                 } catch (NumberFormatException e) {
                     log.warn("[MQ 延时关单] 解析 orderId 格式异常，本条作废: val={}, error={}", orderIdVal, e.getMessage());
+                    markOutboxAbandoned(messageId, orderIdVal, "orderId 格式非法: " + orderIdVal);
                     return;
                 }
             }
             log.info("[MQ 延时关单] 检查到礼品提货码已超时未核销: orderId={}, pickupCode={}, 执行自动退单与积分回滚",
                     orderId, message.get("pickupCode"));
-            if (orderId != null) {
-                try {
-                    studentGiftService.expireOrder(orderId);
-                } catch (Exception e) {
-                    log.error("[MQ 延时关单] 自动关单执行失败，本条不重投，交由 GiftOrderTimeoutScheduler 兜底: orderId={}",
-                            orderId, e);
-                }
+            if (orderId == null) {
+                markOutboxAbandoned(messageId, null, "延时关单消息缺少 orderId");
+                return;
+            }
+            try {
+                studentGiftService.expireOrder(orderId);
+                // expireOrder 内部对「订单不存在 / 已非待提货」是幂等静默返回，同样算处理完成
+                markOutboxConsumed(messageId, orderId);
+            } catch (Exception e) {
+                log.error("[MQ 延时关单] 自动关单执行失败，本条不重投，交由 GiftOrderTimeoutScheduler 兜底: orderId={}",
+                        orderId, e);
+                markOutboxAbandoned(messageId, orderId, "自动关单执行失败: " + e.getMessage());
             }
         } catch (Exception e) {
             // 兜底：连消息体解析都失败（毒消息）。直接确认丢弃，避免无限重投。
             log.error("[MQ 延时关单] 消息无法处理，已确认丢弃以避免热循环，等待定时任务兜底: payload={}", safePayload(message), e);
+            markOutboxAbandoned(messageId, null, "延时关单消息无法解析: " + e.getMessage());
         } finally {
             MDC.remove("traceId");
+        }
+    }
+
+    /**
+     * 回写发件箱「已消费」终态。
+     *
+     * <p>{@code markConsumed} 的 SQL 是 {@code SET status=2 WHERE message_id=?}，
+     * 不带前置状态条件，重复执行天然幂等，消息重投也不会出错。</p>
+     */
+    private void markOutboxConsumed(String messageId, Object orderId) {
+        if (!StringUtils.hasText(messageId)) {
+            // 老版本生产者或手工发送的消息可能没有该头，业务已经完成，不能因此报错
+            log.warn("[MQ 延时关单] 消息缺少 x-message-id 头，跳过发件箱回写（订单本身不受影响）: orderId={}", orderId);
+            return;
+        }
+        try {
+            localMessageService.markConsumed(messageId);
+            log.info("[MQ 延时关单] 发件箱状态已闭环: messageId={}, orderId={}, status=2", messageId, orderId);
+        } catch (Exception e) {
+            log.warn("[MQ 延时关单] 回写发件箱已消费状态失败（订单已正常关单，不影响业务）: messageId={}, err={}",
+                    messageId, e.getMessage());
+        }
+    }
+
+    /**
+     * 回写发件箱「已放弃」终态（status=3）。
+     *
+     * <p>本监听器明确不重投，所以失败必须落成终态，否则记录会永远停在「已投递待确认」，
+     * 运维看到的在途数量会只增不减。业务侧由 {@code GiftOrderTimeoutScheduler} 兜底。</p>
+     */
+    private void markOutboxAbandoned(String messageId, Object orderId, String reason) {
+        if (!StringUtils.hasText(messageId)) {
+            log.warn("[MQ 延时关单] 消息缺少 x-message-id 头，跳过发件箱终态回写: orderId={}, reason={}", orderId, reason);
+            return;
+        }
+        try {
+            localMessageService.markFailed(messageId, reason);
+            log.warn("[MQ 延时关单] 发件箱状态已置为放弃: messageId={}, orderId={}, status=3, reason={}",
+                    messageId, orderId, reason);
+        } catch (Exception e) {
+            log.warn("[MQ 延时关单] 回写发件箱失败状态异常: messageId={}, err={}", messageId, e.getMessage());
         }
     }
 

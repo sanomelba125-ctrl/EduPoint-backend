@@ -247,7 +247,7 @@ public class StudentServiceImpl extends ServiceImpl<StudentMapper, Student> impl
         student.setAvatar(StringUtils.hasText(createDTO.getAvatar()) ? createDTO.getAvatar().trim() : null);
         student.setTotalPoints(0);
         student.setCurrentPoints(0);
-        student.setStatus(StudentStatus.NORMAL); // 默认正常启用
+        student.setStatusEnum(StudentStatus.NORMAL); // 默认正常启用
         student.setDeleted(0);
 
         save(student);

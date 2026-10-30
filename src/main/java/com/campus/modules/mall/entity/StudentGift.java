@@ -87,12 +87,11 @@ public class StudentGift {
         this.status = status;
     }
 
-    @com.fasterxml.jackson.annotation.JsonIgnore
-    public void setStatus(com.campus.modules.mall.enums.OrderStatus status) {
-        this.status = status != null ? status.getCode() : null;
-    }
-
+    // 注意：不要为 status 再写一个「参数是枚举」的 setStatus 重载。
+    // Jackson 把重载视为同一属性 status 的冲突 setter，一旦给其中一个加 @JsonIgnore，
+    // 整个 status 属性会连同 getter 一起被丢弃——接口会直接少字段。
+    // 需要枚举入参请用 setStatusEnum(...)。
     public void setStatusEnum(com.campus.modules.mall.enums.OrderStatus status) {
-        setStatus(status);
+        setStatus(status != null ? status.getCode() : null);
     }
 }

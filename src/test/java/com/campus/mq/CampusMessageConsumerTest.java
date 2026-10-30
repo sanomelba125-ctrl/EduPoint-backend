@@ -1,6 +1,7 @@
 package com.campus.mq;
 
 import com.campus.modules.activity.service.ActivityCacheService;
+import com.campus.modules.mall.service.LocalMessageService;
 import com.campus.modules.mall.service.StudentGiftService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -24,8 +25,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 
 /**
@@ -58,6 +62,9 @@ class CampusMessageConsumerTest {
 
     @Mock
     private StudentGiftService studentGiftService;
+
+    @Mock
+    private LocalMessageService localMessageService;
 
     @InjectMocks
     private CampusMessageConsumer consumer;
@@ -122,28 +129,44 @@ class CampusMessageConsumerTest {
         doThrow(new IllegalStateException("db down")).when(studentGiftService).expireOrder(999L);
 
         assertDoesNotThrow(() -> consumer.handleGiftOrderExpire(
-                        Map.of("orderId", 999L, "pickupCode", "PK20261029"), "trace-expire"),
+                        Map.of("orderId", 999L, "pickupCode", "PK20261029"), "trace-expire", "mid-fail"),
                 "监听器必须吞掉业务异常：订单的最终一致性由 GiftOrderTimeoutScheduler 兜底");
 
         verify(studentGiftService).expireOrder(999L);
+        // 明确不重投，所以失败必须落成终态，否则发件箱会永远停在 status=1（已投递待确认）
+        verify(localMessageService).markFailed(eq("mid-fail"), anyString());
+        verify(localMessageService, never()).markConsumed(anyString());
         assertNull(MDC.get("traceId"), "监听器返回前必须清理 MDC，避免线程池复用串号");
     }
 
     @Test
     @DisplayName("延时关单：空消息体/非法 orderId 都不抛异常且不触发关单")
     void giftExpireHandlesMalformedPayload() {
-        assertDoesNotThrow(() -> consumer.handleGiftOrderExpire(null, null));
-        assertDoesNotThrow(() -> consumer.handleGiftOrderExpire(Map.of("orderId", "not-a-number"), null));
+        assertDoesNotThrow(() -> consumer.handleGiftOrderExpire(null, null, "mid-null"));
+        assertDoesNotThrow(() -> consumer.handleGiftOrderExpire(Map.of("orderId", "not-a-number"), null, "mid-bad"));
 
         verify(studentGiftService, never()).expireOrder(anyLong());
+        verify(localMessageService, never()).markConsumed(anyString());
     }
 
     @Test
-    @DisplayName("延时关单：正常消息体仍然照常驱动 expireOrder")
+    @DisplayName("延时关单：正常消息体仍然照常驱动 expireOrder，并把发件箱置为已消费")
     void giftExpireStillClosesOrderOnHappyPath() {
-        assertDoesNotThrow(() -> consumer.handleGiftOrderExpire(Map.of("orderId", 148L), null));
+        assertDoesNotThrow(() -> consumer.handleGiftOrderExpire(Map.of("orderId", 148L), null, "mid-ok"));
 
         verify(studentGiftService).expireOrder(148L);
+        verify(localMessageService).markConsumed("mid-ok");
+        verify(localMessageService, never()).markFailed(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("延时关单：消息没有 x-message-id 头时业务照常执行，只是跳过发件箱回写")
+    void giftExpireToleratesMissingMessageIdHeader() {
+        assertDoesNotThrow(() -> consumer.handleGiftOrderExpire(Map.of("orderId", 150L), null, null));
+
+        verify(studentGiftService).expireOrder(150L);
+        // 老版本生产者/手工发送的消息没有该头，不能因此报错或写脏状态
+        verifyNoInteractions(localMessageService);
     }
 
     @Test
