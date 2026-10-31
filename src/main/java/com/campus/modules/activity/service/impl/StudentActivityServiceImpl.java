@@ -116,7 +116,7 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             if (a == null || Objects.equals(a.getDeleted(), 1)) {
                 throw new BusinessException(ResultCode.NOT_FOUND.getCode(), "活动不存在");
             }
-            if (a.getStatus() == null || (a.getStatus() != ActivityStatus.NOT_STARTED.getCode() && a.getStatus() != ActivityStatus.IN_PROGRESS.getCode())) {
+            if (!isActivityOpenForSignup(a)) {
                 throw new BusinessException(ResultCode.ACTIVITY_EXPIRED.getCode(), "活动未开始或已结束");
             }
 
@@ -149,8 +149,8 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
             if (waiting != null && Objects.equals(waiting.getStatus(), ActivityWaitlistStatus.WAITING.getCode())) {
                 throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "您已在候补队列中");
             }
-            int reserved = reserveParticipant(a);
-            if (reserved > 0) {
+            ReserveResult reservation = reserveParticipant(a);
+            if (reservation.outcome() == ReserveOutcome.SUCCESS) {
                 StudentActivity rec = old == null ? new StudentActivity() : old;
                 rec.setStudentId(sid);
                 rec.setActivityId(aid);
@@ -166,31 +166,20 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                 refreshActivityCacheAfterCommit(aid);
                 return ActivitySignupVO.builder().status("ENROLLED").waitlist(false).message("您已成功正式报名！").build();
             }
-            if (!Objects.equals(a.getWaitlistEnabled(), 1)) {
+            if (reservation.outcome() == ReserveOutcome.CLOSED) {
+                // 并发期间活动被结束/归档：不能因为「候补开关还开着」就把学生塞进已结束活动的队列。
+                throw new BusinessException(ResultCode.ACTIVITY_EXPIRED.getCode(), "活动未开始或已结束");
+            }
+
+            Activity current = reservation.currentActivity();
+            if (current == null || !Objects.equals(current.getWaitlistEnabled(), 1)) {
                 throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "活动报名名额已满");
             }
-            // P2-7: 聚合 SQL 替代全表扫描与内存 Stream 计算 (含对未打桩单测的回落兼容)
-            Integer max = waitlistMapper.selectMaxQueueNumber(aid);
-            if (max == null || max == 0) {
-                try {
-                    List<ActivityWaitlist> activeWaitlists = waitlistMapper.selectList(new LambdaQueryWrapper<ActivityWaitlist>()
-                            .eq(ActivityWaitlist::getActivityId, aid)
-                            .eq(ActivityWaitlist::getStatus, ActivityWaitlistStatus.WAITING.getCode())
-                            .eq(ActivityWaitlist::getDeleted, 0));
-                    if (activeWaitlists != null && !activeWaitlists.isEmpty()) {
-                        max = activeWaitlists.stream()
-                                .map(ActivityWaitlist::getQueueNumber)
-                                .filter(Objects::nonNull)
-                                .max(Integer::compareTo)
-                                .orElse(0);
-                    }
-                } catch (Exception e) {
-                    log.warn("[候补排队] 兼容回落查询最大排队序号异常，使用0兜底: activityId={}, err={}", aid, e.getMessage());
-                }
-            }
-            if (max == null) {
-                max = 0;
-            }
+
+            // 名额已满才会走到这里，且 reserveParticipant 已对 activity 行加了 FOR UPDATE 锁。
+            // 「查最大序号 + 插入候补」必须在同一把行锁内完成，否则不同学生并发候补会拿到相同序号
+            // （2026-10-31 实测：5 个并发产生 4 条 queue_number=1 的候补记录）。
+            int max = Optional.ofNullable(waitlistMapper.selectTailQueueNumberForUpdate(aid)).orElse(0);
             ActivityWaitlist w = waiting == null ? new ActivityWaitlist() : waiting;
             w.setActivityId(aid);
             w.setStudentId(sid);
@@ -205,12 +194,9 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                 waitlistMapper.updateById(w);
             }
 
-            // 动态计算当前排位顺位
-            Long currentRank = waitlistMapper.selectCount(new LambdaQueryWrapper<ActivityWaitlist>()
-                    .eq(ActivityWaitlist::getActivityId, aid)
-                    .eq(ActivityWaitlist::getStatus, ActivityWaitlistStatus.WAITING.getCode())
-                    .eq(ActivityWaitlist::getDeleted, 0)
-                    .le(ActivityWaitlist::getQueueNumber, w.getQueueNumber()));
+            // 动态计算当前排位。必须用 FOR UPDATE 当前读，否则 REPEATABLE READ 快照会让
+            // 并发入队的三个人都看到「第 1 位」，即使数据库里的 queue_number 已经是 1/2/3。
+            Long currentRank = waitlistMapper.countActiveAheadForUpdate(aid, w.getQueueNumber());
             int rank = currentRank != null && currentRank > 0 ? currentRank.intValue() : 1;
             refreshActivityCacheAfterCommit(aid);
             return ActivitySignupVO.builder()
@@ -271,11 +257,13 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                     .orderByAsc(ActivityWaitlist::getQueueNumber)
                     .last("LIMIT 1"));
             Activity activity = activityMapper.selectById(aid);
-            if (w == null || activity == null || reserveParticipant(activity) == 0) {
+            if (w == null || activity == null) {
                 return null;
             }
 
-            // P2-11: 候补转正时进行时间冲突防重叠校验，若学生在此期间已报名其他冲突活动，自动跳过并顺延递补
+            // P2-11: 候补转正时先做时间冲突校验，冲突者直接取消并递补下一位。
+            // 必须在 reserveParticipant 之前判断：先占名额再发现冲突会把 participant_count
+            // 永久多加 1，且没有任何报名记录来释放它。
             if (activity.getStartTime() != null && activity.getEndTime() != null) {
                 List<Activity> enrolled = baseMapper.selectActiveEnrolledActivities(w.getStudentId(), aid);
                 boolean hasConflict = false;
@@ -296,6 +284,14 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
                     promote(aid);
                     return null;
                 }
+            }
+
+            ReserveResult reservation = reserveParticipant(activity);
+            if (reservation.outcome() != ReserveOutcome.SUCCESS) {
+                // 名额仍被别人抢占或活动已结束：候选人继续留在队首，等下一次释放再递补。
+                log.info("候补转正暂未获得名额，保留队首等待下次递补: studentId={}, activityId={}, outcome={}",
+                        w.getStudentId(), aid, reservation.outcome());
+                return null;
             }
 
             StudentActivity rec = getOne(new LambdaQueryWrapper<StudentActivity>()
@@ -598,31 +594,58 @@ public class StudentActivityServiceImpl extends ServiceImpl<StudentActivityMappe
         return value == null || value.isBlank() ? null : value.trim();
     }
 
-    private int reserveParticipant(Activity activity) {
-        Activity candidate = activity;
-        for (int attempt = 0; attempt < 3; attempt++) {
-            if (activityMapper.incrementParticipant(candidate.getId(), candidate.getVersion()) > 0) {
-                return 1;
-            }
-            Activity refreshed = activityMapper.selectById(candidate.getId());
-            if (refreshed == null || !Objects.equals(refreshed.getDeleted(), 0)
-                    || (!Objects.equals(refreshed.getStatus(), ActivityStatus.NOT_STARTED.getCode())
-                    && !Objects.equals(refreshed.getStatus(), ActivityStatus.IN_PROGRESS.getCode()))) {
-                return 0;
-            }
-            if (Objects.equals(refreshed.getVersion(), candidate.getVersion())) {
-                return 0;
-            }
-            candidate = refreshed;
-            try {
-                Thread.sleep(50L * (attempt + 1));
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
+    /**
+     * 尝试占用一个正式名额，并在失败时区分「名额满」与「活动已关闭」。
+     *
+     * <p>条件自增失败后，用一个 {@code SELECT ... FOR UPDATE} 当前读拿最新活动状态：
+     * 一方面避免 REPEATABLE READ 快照误判，另一方面把这行锁保留到事务结束，
+     * 让随后「查候补最大序号 + 插入」在并发下串行化，杜绝相同 queue_number。</p>
+     */
+    private ReserveResult reserveParticipant(Activity activity) {
+        if (activity == null || activity.getId() == null) {
+            return new ReserveResult(ReserveOutcome.CLOSED, null);
         }
-        throw new BusinessException(ResultCode.BAD_REQUEST.getCode(), "报名人数更新冲突，请重试");
+        if (activityMapper.incrementParticipantIfAvailable(activity.getId()) > 0) {
+            return new ReserveResult(ReserveOutcome.SUCCESS, null);
+        }
+
+        Activity latest = activityMapper.selectOne(new LambdaQueryWrapper<Activity>()
+                .eq(Activity::getId, activity.getId())
+                .last("FOR UPDATE"));
+        if (!isActivityOpenForSignup(latest)) {
+            return new ReserveResult(ReserveOutcome.CLOSED, latest);
+        }
+
+        // 条件自增失败后可能紧接着发生了取消/管理员扩额，而这个事务刚拿到行锁、看到的是最新值。
+        // 此时在锁内再尝试一次条件自增，避免「名额已空却把学生塞进候补，且没人再触发递补」。
+        // 这不是旧实现的快照重试：行锁已持有，latest 是当前读，且最多再试一次。
+        if (hasAvailableCapacity(latest)
+                && activityMapper.incrementParticipantIfAvailable(activity.getId()) > 0) {
+            return new ReserveResult(ReserveOutcome.SUCCESS, latest);
+        }
+        return new ReserveResult(ReserveOutcome.FULL, latest);
     }
+
+    private boolean hasAvailableCapacity(Activity activity) {
+        int limit = activity.getRegistrationLimit() == null ? 0 : activity.getRegistrationLimit();
+        int used = activity.getParticipantCount() == null ? 0 : activity.getParticipantCount();
+        return limit == 0 || used < limit;
+    }
+
+    /** 报名窗口：状态未开始/进行中、未删除且尚未到结束时间。 */
+    private boolean isActivityOpenForSignup(Activity activity) {
+        if (activity == null || Objects.equals(activity.getDeleted(), 1)) {
+            return false;
+        }
+        boolean statusOpen = Objects.equals(activity.getStatus(), ActivityStatus.NOT_STARTED.getCode())
+                || Objects.equals(activity.getStatus(), ActivityStatus.IN_PROGRESS.getCode());
+        boolean timeOpen = activity.getEndTime() == null || activity.getEndTime().isAfter(LocalDateTime.now());
+        return statusOpen && timeOpen;
+    }
+
+    private enum ReserveOutcome { SUCCESS, FULL, CLOSED }
+
+    private record ReserveResult(ReserveOutcome outcome, Activity currentActivity) {}
 
     private void publishAfterCommit(Map<String, Object> message) {
         com.campus.common.tx.AfterCommitExecutor.run(() -> {

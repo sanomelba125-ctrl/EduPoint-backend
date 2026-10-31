@@ -10,20 +10,35 @@ import org.apache.ibatis.annotations.Select;
 public interface ActivityWaitlistMapper extends BaseMapper<ActivityWaitlist> {
 
     /**
-     * P2-7: 原子聚合查询当前活动候补队列的最大排队序号（避免锁内全表扫描与内存流式计算）
+     * 锁定读取当前活动候补队列的队尾序号。
      *
-     * <p><b>为什么能命中覆盖索引（2026-10-29 修复）</b>：本查询的三个过滤列
-     * （{@code activity_id / status / deleted}）与取值列 {@code queue_number}
-     * 全部落在 V1.0.12 建的 {@code idx_act_queue_cover(activity_id, status, deleted, queue_number)} 里，
-     * 优化器可直接在索引上定位到该前缀的最大值。实测 3013 行数据下执行计划为
-     * {@code Select tables optimized away}，而修复前只能走 {@code uk_act_stu_wait(activity_id, student_id)}、
-     * {@code Extra=Using where} 逐行回表判断 {@code status/deleted}。</p>
+     * <p><b>为什么不能用 {@code SELECT MAX(...)}：</b>报名事务运行在 REPEATABLE READ 下，
+     * 一致性读使用事务第一次查询时建立的快照。即使 activity 行锁把并发串行化了，
+     * 后一个事务的普通 {@code SELECT MAX(queue_number)} 仍看不到前一个事务刚刚提交的候补行，
+     * 于是所有并发请求都会算出同一个 {@code 0 + 1 = 1}。2026-10-31 实测 3 个并发候补全部为 1。</p>
      *
-     * <p><b>不要为了"优化"删掉 {@code AND deleted = 0}</b>：删掉同样能优化掉回表，
-     * 但会把逻辑删除语义丢掉——一旦候补记录被软删就会被算进排队号。
-     * 正确做法是让索引覆盖这个条件，而不是改写查询语义。</p>
+     * <p>改为 {@code ORDER BY ... DESC LIMIT 1 FOR UPDATE}：这是当前读，会读取最新已提交版本，
+     * 并配合调用方持有的 activity 行锁保证「读取队尾 + 插入新行」串行执行。</p>
+     *
+     * <p>查询列与索引 {@code idx_act_queue_cover(activity_id, status, deleted, queue_number)}
+     * 完全匹配，仍走覆盖索引反向扫描，不产生 filesort。</p>
+     *
+     * @return 当前最大有效序号；队列为空返回 {@code null}
      */
-    @Select("SELECT COALESCE(MAX(queue_number), 0) FROM activity_waitlist " +
-            "WHERE activity_id = #{activityId} AND status = 1 AND deleted = 0")
-    Integer selectMaxQueueNumber(@Param("activityId") Long activityId);
+    @Select("SELECT queue_number FROM activity_waitlist " +
+            "WHERE activity_id = #{activityId} AND status = 1 AND deleted = 0 " +
+            "ORDER BY queue_number DESC LIMIT 1 FOR UPDATE")
+    Integer selectTailQueueNumberForUpdate(@Param("activityId") Long activityId);
+
+    /**
+     * 当前读统计「排在该序号之前（含自己）的有效候补人数」，用于返回用户可读的实时排位。
+     *
+     * <p>不能使用普通 {@code SELECT COUNT(*)}：REPEATABLE READ 下它读事务开始时的快照，
+     * 并发入队时会看不到前一个事务刚插入的候补行，导致 3 个不同序号都显示「第 1 位」。</p>
+     */
+    @Select("SELECT COUNT(*) FROM activity_waitlist " +
+            "WHERE activity_id = #{activityId} AND status = 1 AND deleted = 0 " +
+            "AND queue_number <= #{queueNumber} FOR UPDATE")
+    Long countActiveAheadForUpdate(@Param("activityId") Long activityId,
+                                   @Param("queueNumber") Integer queueNumber);
 }

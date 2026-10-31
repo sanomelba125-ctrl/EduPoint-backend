@@ -8,8 +8,26 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface ActivityMapper extends BaseMapper<Activity> {
-    @Update("UPDATE activity SET participant_count = COALESCE(participant_count,0) + 1, version = version + 1 WHERE id=#{id} AND version=#{version} AND deleted=0 AND status IN (0,1) AND (registration_limit=0 OR participant_count < registration_limit)")
-    int incrementParticipant(@Param("id") Long id, @Param("version") Integer version);
+    /**
+     * 条件原子占用一个正式报名名额。
+     *
+     * <p><b>为什么不再用 version CAS：</b>{@code signup()} 运行在 REPEATABLE READ 事务内，
+     * version 冲突后再次 {@code selectById} 读到的仍是本事务开始时的快照，看不到其他事务
+     * 已提交的新 version，重试必然全部失败。调用方随后会把「还有名额」误判成「名额已满」
+     * 并写入候补队列（2026-10-31 实测：限额 10、5 个并发只成功 1 人）。
+     * 现在把「名额是否足够」和「自增」放在同一条 UPDATE 中，由 InnoDB 行锁串行化，
+     * 不再需要基于旧快照的循环重试；锁内最多再做一次当前读条件自增，用于兜住“等待锁期间名额刚被释放”的窗口。</p>
+     *
+     * <p>{@code end_time > NOW()} 是第二道时间闸门：活动状态每分钟才流转一次，
+     * 不能只依赖 status 字段，否则结束瞬间仍可能挤出名额。</p>
+     *
+     * @return 1=成功占用；0=名额已满、活动已结束/归档或记录不存在
+     */
+    @Update("UPDATE activity SET participant_count = COALESCE(participant_count,0) + 1, version = version + 1 " +
+            "WHERE id=#{id} AND deleted=0 AND status IN (0,1) " +
+            "AND end_time > NOW() " +
+            "AND (COALESCE(registration_limit,0) = 0 OR participant_count < registration_limit)")
+    int incrementParticipantIfAvailable(@Param("id") Long id);
 
     @Update("UPDATE activity SET participant_count = GREATEST(COALESCE(participant_count,0) - 1, 0), version = version + 1 WHERE id=#{id} AND deleted=0")
     int decrementParticipant(@Param("id") Long id);

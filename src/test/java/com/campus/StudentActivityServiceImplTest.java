@@ -81,7 +81,7 @@ import static org.mockito.Mockito.when;
  *
  * 覆盖点：
  * 1. 报名三态：名额充足直接转正、名额满且开启候补入队并返回实时排位、名额满且未开候补拒绝
- * 2. 报名并发防护：Redisson 分布式锁互斥 + 活动 participant_count 乐观锁重试与失败兜底
+ * 2. 报名并发防护：Redisson 学生锁互斥 + 活动 participant_count 条件原子自增 + 锁内当前读兜底
  * 3. 取消报名：正式名额释放后自动递补候补队首，候补本人取消则直接退队
  * 4. 打卡七步校验链：活动进行中、已报名、签到码存在/未过期、防重放原子核销、GPS 围栏距离
  * 5. 打卡成功后积分入账、MQ 事件投递（事务提交后）与电子证书联动颁发
@@ -180,7 +180,7 @@ class StudentActivityServiceImplTest {
         when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(activity);
         when(studentActivityMapper.selectOne(any(), anyBoolean())).thenReturn(null);
         when(waitlistMapper.selectOne(any())).thenReturn(null);
-        when(activityMapper.incrementParticipant(ACTIVITY_ID, 0)).thenReturn(1);
+        when(activityMapper.incrementParticipantIfAvailable(ACTIVITY_ID)).thenReturn(1);
         when(studentActivityMapper.insert(any(StudentActivity.class))).thenAnswer(invocation -> {
             StudentActivity entity = invocation.getArgument(0);
             entity.setId(501L);
@@ -236,7 +236,7 @@ class StudentActivityServiceImplTest {
                 () -> service.signup(signupRequest(ACTIVITY_ID)));
         assertEquals(com.campus.common.result.ResultCode.ACTIVITY_EXPIRED.getCode(), ex.getCode());
         assertEquals("活动未开始或已结束", ex.getMessage());
-        verify(activityMapper, never()).incrementParticipant(any(), any());
+        verify(activityMapper, never()).incrementParticipantIfAvailable(any());
     }
 
     @Test
@@ -250,7 +250,7 @@ class StudentActivityServiceImplTest {
                 () -> service.signup(signupRequest(ACTIVITY_ID)));
         assertEquals(400, ex.getCode());
         assertEquals("您已报名该活动", ex.getMessage());
-        verify(activityMapper, never()).incrementParticipant(any(), any());
+        verify(activityMapper, never()).incrementParticipantIfAvailable(any());
     }
 
     @Test
@@ -273,7 +273,7 @@ class StudentActivityServiceImplTest {
         StudentActivity cancelled = record(88L, STUDENT_ID, ACTIVITY_ID, 3);
         when(studentActivityMapper.selectOne(any(), anyBoolean())).thenReturn(cancelled);
         when(waitlistMapper.selectOne(any())).thenReturn(null);
-        when(activityMapper.incrementParticipant(ACTIVITY_ID, 0)).thenReturn(1);
+        when(activityMapper.incrementParticipantIfAvailable(ACTIVITY_ID)).thenReturn(1);
         when(studentActivityMapper.updateById(any(StudentActivity.class))).thenReturn(1);
 
         ActivitySignupVO result = service.signup(signupRequest(ACTIVITY_ID));
@@ -294,13 +294,15 @@ class StudentActivityServiceImplTest {
         Activity activity = activity(ACTIVITY_ID, 1, 0);
         activity.setWaitlistEnabled(1);
         Activity refreshed = activity(ACTIVITY_ID, 1, 1);
-        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(activity, refreshed);
+        refreshed.setParticipantCount(100); // 真满员，锁内不再二次尝试
+        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(activity);
         when(studentActivityMapper.selectOne(any(), anyBoolean())).thenReturn(null);
         when(waitlistMapper.selectOne(any())).thenReturn(null);
-        when(activityMapper.incrementParticipant(any(), any())).thenReturn(0);
-        when(waitlistMapper.selectList(any())).thenReturn(new ArrayList<>(
-                List.of(waitlist(71L, 201L, ACTIVITY_ID, 1, 3), waitlist(72L, 202L, ACTIVITY_ID, 1, 7))));
-        when(waitlistMapper.selectCount(any())).thenReturn(3L);
+        when(activityMapper.incrementParticipantIfAvailable(any())).thenReturn(0);
+        // 条件自增失败后必须走 FOR UPDATE 当前读拿最新活动；随后在行锁内计算队尾
+        when(activityMapper.selectOne(any())).thenReturn(refreshed);
+        when(waitlistMapper.selectTailQueueNumberForUpdate(ACTIVITY_ID)).thenReturn(7);
+        when(waitlistMapper.countActiveAheadForUpdate(ACTIVITY_ID, 8)).thenReturn(3L);
         when(waitlistMapper.insert(any(ActivityWaitlist.class))).thenAnswer(invocation -> {
             ActivityWaitlist entity = invocation.getArgument(0);
             entity.setId(730L);
@@ -329,10 +331,12 @@ class StudentActivityServiceImplTest {
     void signup_shouldRejectWhenSeatsFullAndWaitlistDisabled() {
         Activity activity = activity(ACTIVITY_ID, 1, 0);
         activity.setWaitlistEnabled(0);
-        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(activity, activity(ACTIVITY_ID, 1, 1));
+        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(activity);
         when(studentActivityMapper.selectOne(any(), anyBoolean())).thenReturn(null);
         when(waitlistMapper.selectOne(any())).thenReturn(null);
-        when(activityMapper.incrementParticipant(any(), any())).thenReturn(0);
+        activity.setParticipantCount(100);
+        when(activityMapper.incrementParticipantIfAvailable(any())).thenReturn(0);
+        when(activityMapper.selectOne(any())).thenReturn(activity);
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.signup(signupRequest(ACTIVITY_ID)));
@@ -342,42 +346,83 @@ class StudentActivityServiceImplTest {
     }
 
     @Test
-    @DisplayName("报名：乐观锁连续 3 次冲突后抛出重试提示，且锁在异常路径下仍被释放")
-    void signup_shouldFailAfterPersistentVersionConflicts() {
-        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(
-                activity(ACTIVITY_ID, 1, 0),
-                activity(ACTIVITY_ID, 1, 1),
-                activity(ACTIVITY_ID, 1, 2),
-                activity(ACTIVITY_ID, 1, 3));
-        when(studentActivityMapper.selectOne(any(), anyBoolean())).thenReturn(null);
-        when(waitlistMapper.selectOne(any())).thenReturn(null);
-        when(activityMapper.incrementParticipant(any(), any())).thenReturn(0);
-
-        BusinessException ex = assertThrows(BusinessException.class,
-                () -> service.signup(signupRequest(ACTIVITY_ID)));
-        assertEquals(400, ex.getCode());
-        assertEquals("报名人数更新冲突，请重试", ex.getMessage());
-        verify(activityMapper, times(3)).incrementParticipant(any(), any());
-        verify(lock).unlock();
-    }
-
-    @Test
-    @DisplayName("报名：重试期间活动被归档时立即按名额不足处理，不再空转重试")
-    void signup_shouldStopRetryWhenActivityBecomesUnavailable() {
+    @DisplayName("报名：名额竞争只做一次条件自增，不在事务快照里重试")
+    void signup_shouldNotRetryVersionCasOnSeatContention() {
         Activity open = activity(ACTIVITY_ID, 1, 0);
         open.setWaitlistEnabled(0);
-        Activity archived = activity(ACTIVITY_ID, 3, 1);
-        archived.setWaitlistEnabled(0);
-        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(open, archived);
+        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(open);
         when(studentActivityMapper.selectOne(any(), anyBoolean())).thenReturn(null);
         when(waitlistMapper.selectOne(any())).thenReturn(null);
-        when(activityMapper.incrementParticipant(any(), any())).thenReturn(0);
+        open.setParticipantCount(100);
+        when(activityMapper.incrementParticipantIfAvailable(ACTIVITY_ID)).thenReturn(0);
+        when(activityMapper.selectOne(any())).thenReturn(open);
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.signup(signupRequest(ACTIVITY_ID)));
         assertEquals(400, ex.getCode());
         assertEquals("活动报名名额已满", ex.getMessage());
-        verify(activityMapper, times(1)).incrementParticipant(any(), any());
+        // 旧实现会连做 3 次 version CAS 并 Thread.sleep；新实现只做一次条件更新
+        verify(activityMapper, times(1)).incrementParticipantIfAvailable(ACTIVITY_ID);
+        verify(activityMapper, times(1)).selectOne(any());
+        verify(lock).unlock();
+    }
+
+    @Test
+    @DisplayName("报名：条件自增失败后确认活动已归档，按活动结束拒绝而非塞进候补")
+    void signup_shouldRejectWhenActivityClosedDuringReservation() {
+        Activity open = activity(ACTIVITY_ID, 1, 0);
+        Activity archived = activity(ACTIVITY_ID, 3, 1);
+        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(open);
+        when(studentActivityMapper.selectOne(any(), anyBoolean())).thenReturn(null);
+        when(waitlistMapper.selectOne(any())).thenReturn(null);
+        when(activityMapper.incrementParticipantIfAvailable(any())).thenReturn(0);
+        when(activityMapper.selectOne(any())).thenReturn(archived);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.signup(signupRequest(ACTIVITY_ID)));
+        assertEquals(ResultCode.ACTIVITY_EXPIRED.getCode(), ex.getCode());
+        assertEquals("活动未开始或已结束", ex.getMessage());
+        verify(waitlistMapper, never()).insert(any(ActivityWaitlist.class));
+    }
+
+    @Test
+    @DisplayName("报名：条件自增失败后拿到行锁发现名额已释放，应在锁内再占一次而不是塞候补")
+    void signup_shouldTakeSeatFreedWhileWaitingForRowLock() {
+        Activity before = activity(ACTIVITY_ID, 1, 0);
+        before.setRegistrationLimit(1);
+        before.setParticipantCount(1);
+        Activity after = activity(ACTIVITY_ID, 1, 1);
+        after.setRegistrationLimit(1);
+        after.setParticipantCount(0); // 等待行锁期间有人取消，名额已释放
+
+        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(before);
+        when(studentActivityMapper.selectOne(any(), anyBoolean())).thenReturn(null);
+        when(waitlistMapper.selectOne(any())).thenReturn(null);
+        when(activityMapper.incrementParticipantIfAvailable(ACTIVITY_ID)).thenReturn(0, 1);
+        when(activityMapper.selectOne(any())).thenReturn(after);
+        when(studentActivityMapper.insert(any(StudentActivity.class))).thenAnswer(inv -> {
+            ((StudentActivity) inv.getArgument(0)).setId(503L);
+            return 1;
+        });
+
+        ActivitySignupVO result = service.signup(signupRequest(ACTIVITY_ID));
+
+        assertEquals("ENROLLED", result.getStatus());
+        verify(activityMapper, times(2)).incrementParticipantIfAvailable(ACTIVITY_ID);
+        verify(waitlistMapper, never()).insert(any(ActivityWaitlist.class));
+    }
+
+    @Test
+    @DisplayName("报名：status 仍是进行中但已过 endTime 时，时间闸门直接拒绝")
+    void signup_shouldRejectWhenEndTimePassedEvenIfStatusLagging() {
+        Activity lagging = activity(ACTIVITY_ID, 1, 0);
+        lagging.setEndTime(LocalDateTime.now().minusMinutes(1));
+        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(lagging);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.signup(signupRequest(ACTIVITY_ID)));
+        assertEquals(ResultCode.ACTIVITY_EXPIRED.getCode(), ex.getCode());
+        verify(activityMapper, never()).incrementParticipantIfAvailable(any());
     }
 
     @Test
@@ -421,7 +466,7 @@ class StudentActivityServiceImplTest {
         ActivityWaitlist first = waitlist(71L, 201L, ACTIVITY_ID, 1, 3);
         when(waitlistMapper.selectOne(any())).thenReturn(first);
         when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(activity(ACTIVITY_ID, 1, 0));
-        when(activityMapper.incrementParticipant(any(), any())).thenReturn(1);
+        when(activityMapper.incrementParticipantIfAvailable(any())).thenReturn(1);
         when(waitlistMapper.updateById(any(ActivityWaitlist.class))).thenReturn(1);
 
         String message = service.cancelSignup(ACTIVITY_ID);
@@ -476,6 +521,34 @@ class StudentActivityServiceImplTest {
         assertEquals(3, waiting.getStatus());
         verify(waitlistMapper).updateById(waiting);
         verify(activityMapper, never()).decrementParticipant(any());
+    }
+
+    @Test
+    @DisplayName("取消报名：候补队首存在时间冲突时先取消再递补，绝不先占名额")
+    void cancel_shouldNotConsumeSeatWhenFirstWaiterHasTimeConflict() {
+        StudentActivity own = record(31L, STUDENT_ID, ACTIVITY_ID, 1);
+        when(studentActivityMapper.selectOne(any(), anyBoolean())).thenReturn(own);
+        when(studentActivityMapper.updateById(any(StudentActivity.class))).thenReturn(1);
+
+        Activity activity = activity(ACTIVITY_ID, 1, 0);
+        activity.setStartTime(LocalDateTime.now().plusDays(1).withHour(14));
+        activity.setEndTime(LocalDateTime.now().plusDays(1).withHour(16));
+        when(activityMapper.selectById(ACTIVITY_ID)).thenReturn(activity);
+
+        ActivityWaitlist first = waitlist(71L, 201L, ACTIVITY_ID, 1, 1);
+        when(waitlistMapper.selectOne(any())).thenReturn(first, (ActivityWaitlist) null);
+        Activity conflict = activity(88L, 1, 0);
+        conflict.setStartTime(LocalDateTime.now().plusDays(1).withHour(15));
+        conflict.setEndTime(LocalDateTime.now().plusDays(1).withHour(17));
+        when(studentActivityMapper.selectActiveEnrolledActivities(eq(201L), eq(ACTIVITY_ID)))
+                .thenReturn(List.of(conflict));
+
+        assertEquals("已取消报名", service.cancelSignup(ACTIVITY_ID));
+
+        assertEquals(3, first.getStatus(), "冲突候选人应被取消");
+        // 冲突校验必须在 reserveParticipant 之前，否则 participant_count 会白白 +1
+        verify(activityMapper, never()).incrementParticipantIfAvailable(any());
+        verify(studentActivityMapper, never()).insert(any(StudentActivity.class));
     }
 
     @Test
