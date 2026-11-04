@@ -1299,7 +1299,11 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
     }
 
     /** 清理秒杀失败标记（订单已成功落库或需要重新开始一次兑换意图时）。 */
-    private void clearSeckillFailure(Long studentId, String requestId) {
+    @Override
+    public void clearSeckillFailure(Long studentId, String requestId) {
+        if (studentId == null || !StringUtils.hasText(requestId)) {
+            return;
+        }
         try {
             redis.delete(seckillFailKey(studentId, requestId));
         } catch (Exception e) {

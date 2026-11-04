@@ -116,6 +116,15 @@ public interface StudentGiftService extends IService<StudentGift> {
     String getSeckillFailureReason(Long studentId, String requestId);
 
     /**
+     * 清理秒杀失败标记（订单已确认落库时）。
+     * 避免并发重复消费时漏写的失败标记残留。
+     *
+     * @param studentId 学生 ID
+     * @param requestId 秒杀请求的幂等标识
+     */
+    void clearSeckillFailure(Long studentId, String requestId);
+
+    /**
      * 判断指定学生的 requestId 是否已经落单。
      * 供 MQ 消费端在事务异常边界确认「订单是否其实已提交」，避免误回补库存。
      */

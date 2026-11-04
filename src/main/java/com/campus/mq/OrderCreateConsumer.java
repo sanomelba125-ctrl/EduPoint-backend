@@ -110,6 +110,8 @@ public class OrderCreateConsumer {
                     // 已确认不会落库：写入失败标记，让轮询接口返回明确的失败原因，
                     // 否则客户端会永久停留在「排队中」，用户既不知道结果也无法重试。
                     markSeckillFailedSafely(msg, "系统繁忙，本次兑换未完成，请稍后重试");
+                    recordConsumeLogSafely(msg, 2);
+                    markFailedSafely(msg.messageId(), "订单事务未提交");
                     nackSafely(channel, deliveryTag, msg.messageId());
                     return;
                 }
@@ -127,13 +129,33 @@ public class OrderCreateConsumer {
                 log.info("[MQ异步落库] 订单事务处理完毕并确认 ACK: messageId={}, requestId={}",
                         msg.messageId(), msg.requestId());
             } else {
-                // 业务拒绝 (如余额不足或账户冻结)：库存只回补一次，后续任何标记/ACK 异常都不得再次回补。
-                log.warn("[MQ业务拒绝] 异步落库因业务校验未通过，触发一次性库存回补: messageId={}",
-                        msg.messageId());
-                compensateOnce(msg, "业务校验未通过");
-                recordConsumeLogSafely(msg, 2);
-                markFailedSafely(msg.messageId(), "业务校验未通过");
-                ackSafely(channel, deliveryTag, msg.messageId());
+                boolean orderExists;
+                try {
+                    orderExists = studentGiftService.existsOrderByRequestId(msg.studentId(), msg.requestId());
+                } catch (Exception verifyException) {
+                    log.error("[MQ消费异常] 异步落库未成功且复核订单状态抛异常，转死信等待人工核查，不盲目补偿库存: "
+                                    + "messageId={}, requestId={}, cause={}",
+                            msg.messageId(), msg.requestId(), verifyException.getMessage());
+                    nackSafely(channel, deliveryTag, msg.messageId());
+                    return;
+                }
+
+                if (orderExists) {
+                    log.warn("[MQ并发重复] 异步落库返回 false 但检测到订单已实际落库，按成功收尾禁止补偿: messageId={}",
+                            msg.messageId());
+                    clearSeckillFailureSafely(msg);
+                    recordConsumeLogSafely(msg, 1);
+                    markConsumedSafely(msg.messageId());
+                    ackSafely(channel, deliveryTag, msg.messageId());
+                } else {
+                    // 业务拒绝 (如余额不足或账户冻结)：库存只回补一次，后续任何标记/ACK 异常都不得再次回补。
+                    log.warn("[MQ业务拒绝] 异步落库因业务校验未通过，触发一次性库存回补: messageId={}",
+                            msg.messageId());
+                    compensateOnce(msg, "业务校验未通过");
+                    recordConsumeLogSafely(msg, 2);
+                    markFailedSafely(msg.messageId(), "业务校验未通过");
+                    ackSafely(channel, deliveryTag, msg.messageId());
+                }
             }
         } catch (Exception e) {
             // 此处只处理无法判断业务是否落库的协调异常：不回补库存，转死信人工核查，
@@ -151,7 +173,7 @@ public class OrderCreateConsumer {
             mqConsumeLogMapper.insertConsumeLog(
                     msg.messageId(), CONSUMER_NAME, "GIFT_ORDER_CREATE", msg.requestId(), status);
         } catch (Exception ex) {
-            log.warn("[MQ幂等记录] 写入消费记录失败(不改变已提交的订单事实): messageId={}, status={}, err={}",
+            log.warn("[MQ幂等记录] 写入消费记录失败: messageId={}, status={}, err={}",
                     msg.messageId(), status, ex.getMessage());
         }
     }
@@ -185,6 +207,14 @@ public class OrderCreateConsumer {
         } catch (Exception e) {
             log.warn("[MQ秒杀结果] 写入失败标记异常，客户端将停留在处理中: messageId={}, err={}",
                     msg.messageId(), e.getMessage());
+        }
+    }
+
+    private void clearSeckillFailureSafely(OrderCreateMessage msg) {
+        try {
+            studentGiftService.clearSeckillFailure(msg.studentId(), msg.requestId());
+        } catch (Exception e) {
+            log.warn("[MQ秒杀结果] 清理失败标记异常: messageId={}, err={}", msg.messageId(), e.getMessage());
         }
     }
 
