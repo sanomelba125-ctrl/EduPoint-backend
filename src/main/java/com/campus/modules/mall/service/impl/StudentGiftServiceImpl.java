@@ -262,7 +262,8 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
             throw new BusinessException(ResultCode.GIFT_STOCK_EMPTY.getCode(), String.format("礼品可用库存不足！当前仅剩 %d 件", gift.getStock() != null ? gift.getStock() : 0));
         }
 
-        String stockMsgId = StringUtils.hasText(requestId) ? requestId : UUID.randomUUID().toString();
+        // 每次事务尝试生成独立 UUID，避免同 requestId 重试再次回滚时因去重键已存在而漏回补（F2 修复）
+        String stockMsgId = "exchange:" + UUID.randomUUID();
         if (giftStockRedisService != null) {
             boolean preDeductOk = giftStockRedisService.preDeductStock(gift.getId(), quantity);
             if (!preDeductOk) {

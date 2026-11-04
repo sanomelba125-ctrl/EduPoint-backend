@@ -24,8 +24,8 @@ if currentVal == nil then
 end
 
 local newStock = currentVal + delta
-if newStock < 0 then
-    newStock = 0
-end
+-- 注意：当 delta < 0 导致 newStock < 0 时，绝不能强行钳制为 0（F3 修复）！
+-- 否则并发在途单在 MySQL 扣减失败触发 compensateOnce 时，会在 0 基础上增加导致 Redis 库存虚增。
+-- 保留真实负值差额，当在途失败单回补时恰好抵消归零，且在此期间阻止新的秒杀请求预扣。
 redis.call('SET', stockKey, newStock)
 return newStock

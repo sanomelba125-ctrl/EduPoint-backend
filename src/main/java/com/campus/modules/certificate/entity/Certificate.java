@@ -1,8 +1,9 @@
 package com.campus.modules.certificate.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
-import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
@@ -38,6 +39,7 @@ public class Certificate {
     private LocalDateTime issueTime;
 
     /** 证书渲染生成的图片或PDF文件地址 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String fileUrl;
 
     /** 证书状态: 1-有效 2-已撤销 3-已过期 */

@@ -1,6 +1,8 @@
 package com.campus.modules.activity.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -34,6 +36,7 @@ public class ActivityWaitlist {
     private LocalDateTime waitTime;
 
     /** 递补成功转正时间 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private LocalDateTime promotedTime;
 
     /** 创建时间 */

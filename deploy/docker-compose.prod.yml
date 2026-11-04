@@ -164,6 +164,7 @@ services:
       MALL_PICKUP_SIGN_SECRET: ${MALL_PICKUP_SIGN_SECRET:?MALL_PICKUP_SIGN_SECRET must be set in .env.prod}
       CAMPUS_TRUST_FORWARDED_HEADERS: "true"
       SENSENOVA_API_KEY: ${SENSENOVA_API_KEY:-}
+      CAMPUS_CERTIFICATE_VERIFY_BASE_URL: ${CAMPUS_CERTIFICATE_VERIFY_BASE_URL:-http://localhost:5173/#/pages/certificate/verify}
       TZ: Asia/Shanghai
     volumes:
       - uploads_data:/app/uploads

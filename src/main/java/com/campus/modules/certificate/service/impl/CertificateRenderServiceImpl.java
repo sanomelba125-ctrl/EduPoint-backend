@@ -33,6 +33,7 @@ import java.nio.file.Paths;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * P2-12: 电子荣誉证书动态渲染与云存储上传落地引擎
@@ -41,6 +42,9 @@ import java.util.Map;
 @Slf4j
 @Service
 public class CertificateRenderServiceImpl implements CertificateRenderService {
+
+    /** 证书编号合法字符白名单正则（防路径穿越攻击）：仅允许数字、英文字母、短横线与下划线，长度 1-64 */
+    private static final Pattern CERT_NO_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{1,64}$");
 
     private final CertificateMapper certificateMapper;
     private final StudentMapper studentMapper;
@@ -91,10 +95,16 @@ public class CertificateRenderServiceImpl implements CertificateRenderService {
                 || (cert.getDeleted() != null && cert.getDeleted() == 1)) {
             log.warn("证书不存在或状态非有效，跳过渲染: id={}, status={}", certificateId, cert != null ? cert.getStatus() : null);
             if (cert != null && cert.getCertificateNo() != null && !cert.getCertificateNo().isBlank()) {
-                try {
-                    Path localPath = Paths.get("uploads", "certificates", cert.getCertificateNo().trim() + ".png");
-                    Files.deleteIfExists(localPath);
-                } catch (Exception ignored) {
+                String certNo = cert.getCertificateNo().trim();
+                if (CERT_NO_PATTERN.matcher(certNo).matches()) {
+                    try {
+                        Path baseDir = Paths.get("uploads", "certificates").toAbsolutePath().normalize();
+                        Path localPath = baseDir.resolve(certNo + ".png").normalize();
+                        if (localPath.startsWith(baseDir)) {
+                            Files.deleteIfExists(localPath);
+                        }
+                    } catch (Exception ignored) {
+                    }
                 }
             }
             return null;
@@ -140,12 +150,16 @@ public class CertificateRenderServiceImpl implements CertificateRenderService {
         // 2. 本地静态存储兜底（开发环境或云存储不可用时）
         if (fileUrl == null) {
             try {
-                Path dir = Paths.get("uploads", "certificates");
+                Path dir = Paths.get("uploads", "certificates").toAbsolutePath().normalize();
                 Files.createDirectories(dir);
-                Path targetPath = dir.resolve(cert.getCertificateNo() + ".png");
-                Files.write(targetPath, pngBytes);
-                fileUrl = "/api/certificate/file/" + cert.getCertificateNo() + ".png";
-                log.info("证书已保存至本地静态目录: path={}, url={}", targetPath.toAbsolutePath(), fileUrl);
+                String safeNo = (cert.getCertificateNo() != null && CERT_NO_PATTERN.matcher(cert.getCertificateNo().trim()).matches())
+                        ? cert.getCertificateNo().trim() : ("cert_" + cert.getId());
+                Path targetPath = dir.resolve(safeNo + ".png").normalize();
+                if (targetPath.startsWith(dir)) {
+                    Files.write(targetPath, pngBytes);
+                    fileUrl = "/api/certificate/file/" + safeNo + ".png";
+                    log.info("证书已保存至本地静态目录: path={}, url={}", targetPath.toAbsolutePath(), fileUrl);
+                }
             } catch (Exception e) {
                 log.error("本地证书图片保存失败: certificateNo={}, error={}", cert.getCertificateNo(), e.getMessage());
                 fileUrl = "/api/certificate/file/" + cert.getCertificateNo() + ".png";
@@ -164,22 +178,39 @@ public class CertificateRenderServiceImpl implements CertificateRenderService {
             return null;
         }
         String cleanNo = certificateNo.trim();
-        // 校验必须为有效证书 (CertificateStatus.VALID)，撤销或无效证书禁止提供图片下载
+        // 1. 证书编号白名单校验，直接阻断路径穿越字符 (../, \, 空格等)
+        if (!CERT_NO_PATTERN.matcher(cleanNo).matches()) {
+            log.warn("[证书渲染] 证书编号格式非法，直接拦截: certNo={}", cleanNo);
+            return null;
+        }
+
+        // 2. 目录边界检查
+        Path baseDir = Paths.get("uploads", "certificates").toAbsolutePath().normalize();
+        Path localPath = baseDir.resolve(cleanNo + ".png").normalize();
+        if (!localPath.startsWith(baseDir)) {
+            log.warn("[证书渲染] 目标路径越界，直接拦截: certNo={}, path={}", cleanNo, localPath);
+            return null;
+        }
+
+        // 3. 校验必须为数据库中真实存在的有效证书 (CertificateStatus.VALID)
         Certificate cert = certificateMapper.selectOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Certificate>()
                 .eq(Certificate::getCertificateNo, cleanNo));
-        if (cert == null || !Integer.valueOf(CertificateStatus.VALID.getCode()).equals(cert.getStatus())
+        // cert == null 时绝不删除任何磁盘文件，直接返回 null
+        if (cert == null) {
+            return null;
+        }
+
+        // 仅当证书记录真实存在但已被撤销或已逻辑删除时，才清理对应本地磁盘缓存，防止已被撤销的证书被公开访问
+        if (!Integer.valueOf(CertificateStatus.VALID.getCode()).equals(cert.getStatus())
                 || (cert.getDeleted() != null && cert.getDeleted() == 1)) {
-            // 清理可能残留的本地磁盘缓存，防止已被撤销的证书被公开访问
             try {
-                Path localPath = Paths.get("uploads", "certificates", cleanNo + ".png");
                 Files.deleteIfExists(localPath);
             } catch (Exception ignored) {
             }
             return null;
         }
 
-        // 1. 优先尝试从本地磁盘缓存读取
-        Path localPath = Paths.get("uploads", "certificates", cleanNo + ".png");
+        // 4. 优先尝试从本地磁盘缓存读取
         if (Files.exists(localPath)) {
             try {
                 return Files.readAllBytes(localPath);
@@ -188,7 +219,7 @@ public class CertificateRenderServiceImpl implements CertificateRenderService {
             }
         }
 
-        // 2. 磁盘不存在则即时动态渲染
+        // 5. 磁盘不存在则即时动态渲染
         Student student = studentMapper.selectById(cert.getStudentId());
         Activity activity = activityMapper.selectById(cert.getActivityId());
         byte[] pngBytes = drawCertificatePng(cert, student, activity);
@@ -196,8 +227,7 @@ public class CertificateRenderServiceImpl implements CertificateRenderService {
         // 写入本地供后续重复访问
         if (pngBytes != null && pngBytes.length > 0) {
             try {
-                Path dir = Paths.get("uploads", "certificates");
-                Files.createDirectories(dir);
+                Files.createDirectories(baseDir);
                 Files.write(localPath, pngBytes);
             } catch (Exception e) {
                 log.warn("[证书渲染] 写入本地磁盘证书缓存失败: certNo={}, err={}", cleanNo, e.getMessage());

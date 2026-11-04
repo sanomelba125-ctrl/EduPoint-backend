@@ -4,8 +4,6 @@ import cn.dev33.satoken.annotation.SaCheckRole;
 import cn.dev33.satoken.annotation.SaMode;
 import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.metadata.IPage;
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.common.annotation.RateLimit;
 import com.campus.common.constant.UserRole;
 import com.campus.modules.activity.dto.ActivityRecordVO;
@@ -63,6 +61,7 @@ public class ExportController {
             List<Activity> activities = activityService.lambdaQuery()
                     .eq(Activity::getDeleted, 0)
                     .orderByDesc(Activity::getStartTime)
+                    .last("LIMIT 5000")
                     .list();
 
             // 一次性查出全量活动打卡与报名聚合统计，避免在循环中产生 2N 次数据库往返
@@ -113,6 +112,7 @@ public class ExportController {
                     new LambdaQueryWrapper<StudentPointRecord>()
                             .eq(StudentPointRecord::getDeleted, 0)
                             .orderByDesc(StudentPointRecord::getCreateTime)
+                            .last("LIMIT 5000")
             );
 
             Set<Long> studentIds = records.stream()
@@ -122,7 +122,7 @@ public class ExportController {
 
             Map<Long, Student> studentMap = studentIds.isEmpty() ? Collections.emptyMap()
                     : studentMapper.selectBatchIds(studentIds).stream()
-                    .collect(Collectors.toMap(Student::getId, s -> s));
+                    .collect(Collectors.toMap(Student::getId, s -> s, (s1, s2) -> s1));
 
             List<PointRecordExportDTO> list = new ArrayList<>();
             for (StudentPointRecord r : records) {
@@ -167,17 +167,17 @@ public class ExportController {
         try {
             setExcelResponseProp(response, "学生活动打卡参与记录报表");
 
-            // 查询前 10000 条匹配记录用于报表生成
-            IPage<ActivityRecordVO> page = studentActivityMapper.selectAdminPage(
-                    new Page<>(1, 10000),
+            // 导出前 5000 条匹配记录用于报表生成（直接使用 List 查询带 LIMIT 5000，绕过 MyBatis-Plus 分页插件的 maxLimit(100) 截断）
+            List<ActivityRecordVO> records = studentActivityMapper.selectExportList(
                     StringUtils.hasText(studentName) ? studentName.trim() : null,
                     StringUtils.hasText(studentNo) ? studentNo.trim() : null,
                     StringUtils.hasText(activityTitle) ? activityTitle.trim() : null,
-                    status
+                    status,
+                    5000
             );
 
             List<ActivityRecordExportDTO> list = new ArrayList<>();
-            for (ActivityRecordVO r : page.getRecords()) {
+            for (ActivityRecordVO r : records) {
                 ActivityRecordExportDTO dto = new ActivityRecordExportDTO();
                 dto.setId(r.getId());
                 dto.setStudentNo(r.getStudentNo() != null ? r.getStudentNo() : "-");

@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import com.campus.common.util.TraceUtil;
 import java.util.List;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
@@ -57,7 +58,7 @@ public class AiChatServiceImpl implements AiChatService, DisposableBean {
                     return t;
                 }
             },
-            new ThreadPoolExecutor.CallerRunsPolicy()
+            new ThreadPoolExecutor.AbortPolicy()
     );
 
     @Override
@@ -94,7 +95,7 @@ public class AiChatServiceImpl implements AiChatService, DisposableBean {
         }
 
         try {
-            sseExecutor.submit(() -> {
+            sseExecutor.submit(TraceUtil.wrap(() -> {
                 try {
                     processChatStream(request, studentId, emitter);
                 } catch (Exception e) {
@@ -102,7 +103,7 @@ public class AiChatServiceImpl implements AiChatService, DisposableBean {
                     sendChunk(emitter, "\n\n【系统提示】AI 响应过程遇到异常，请稍后重试。", true, "ERROR", null);
                     sendDone(emitter);
                 }
-            });
+            }));
         } catch (RejectedExecutionException e) {
             log.warn("AI 对话流线程池已满或被拒绝: {}", e.getMessage());
             sendChunk(emitter, "\n\n【系统提示】AI 助手当前访问人数较多，请稍后重试。", true, "BUSY", null);

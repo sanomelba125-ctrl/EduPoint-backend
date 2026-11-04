@@ -23,6 +23,8 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -803,5 +805,75 @@ class StudentGiftExchangeTest {
 
         assertTrue(ex.getMessage().contains("兑换请求正在处理中，请勿重复提交"));
         verify(giftMapper, never()).deductStockIfEnough(anyLong(), anyInt());
+    }
+
+    @Test
+    @DisplayName("F2: 普通兑换回滚时通过事务同步器执行 Redis 库存补偿，且多次尝试使用独立 UUID 键")
+    void testExchangeGift_RollbackCompensation_WithTransactionSynchronization() {
+        Long studentId = 113L;
+        Long giftId = 12L;
+        String requestId = "REQ-ROLLBACK-F2-001";
+
+        Student student = new Student();
+        student.setId(studentId);
+        student.setCurrentPoints(200);
+        when(studentMapper.selectById(studentId)).thenReturn(student);
+
+        Gift gift = new Gift();
+        gift.setId(giftId);
+        gift.setName("限定文创");
+        gift.setPointsRequired(50);
+        gift.setStock(10);
+        gift.setStatus(1); // 上架
+        when(giftMapper.selectById(giftId)).thenReturn(gift);
+
+        // 模拟 MySQL 条件扣减库存并发失败（返回 0），触发 BusinessException 回滚
+        when(giftMapper.deductStockIfEnough(giftId, 1)).thenReturn(0);
+
+        GiftExchangeDTO dto = new GiftExchangeDTO();
+        dto.setGiftId(giftId);
+        dto.setRequestId(requestId);
+        dto.setQuantity(1);
+
+        // 显式开启 Spring 事务同步器（模拟真实 @Transactional 环境）
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            assertThrows(BusinessException.class, () -> studentGiftService.exchangeGift(dto, studentId));
+
+            // 模拟 Spring 事务回滚触发 afterCompletion(STATUS_ROLLED_BACK)
+            for (TransactionSynchronization sync : TransactionSynchronizationManager.getSynchronizations()) {
+                sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+            }
+
+            // 断言：必须调用了 compensateStockOnce，且 compensationMessageId 必须是以 "exchange:" 开头的独立 UUID
+            ArgumentCaptor<String> msgIdCaptor1 = ArgumentCaptor.forClass(String.class);
+            verify(giftStockRedisService, times(1)).compensateStockOnce(eq(giftId), eq(1), msgIdCaptor1.capture());
+            verify(giftIdempotentService, times(1)).releaseSlotOnRollback(eq(studentId), eq(requestId));
+            String firstCompensateId = msgIdCaptor1.getValue();
+            assertTrue(firstCompensateId.startsWith("exchange:"), "回滚补偿键必须以 exchange: 开头");
+            assertNotEquals(requestId, firstCompensateId, "回滚补偿键严禁直接复用 requestId");
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+
+        // 第二次尝试：同 requestId 重试再次失败回滚，验证生成全新的独立补偿 UUID
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            assertThrows(BusinessException.class, () -> studentGiftService.exchangeGift(dto, studentId));
+
+            for (TransactionSynchronization sync : TransactionSynchronizationManager.getSynchronizations()) {
+                sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+            }
+
+            ArgumentCaptor<String> msgIdCaptor2 = ArgumentCaptor.forClass(String.class);
+            verify(giftStockRedisService, times(2)).compensateStockOnce(eq(giftId), eq(1), msgIdCaptor2.capture());
+            verify(giftIdempotentService, times(2)).releaseSlotOnRollback(eq(studentId), eq(requestId));
+            String secondCompensateId = msgIdCaptor2.getAllValues().get(1);
+            assertTrue(secondCompensateId.startsWith("exchange:"));
+            // 验证两次生成的补偿 UUID 彼此不同，杜绝同 requestId 重试漏回补
+            assertNotEquals(msgIdCaptor2.getAllValues().get(0), secondCompensateId, "同 requestId 重试必须生成独立补偿键");
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 }

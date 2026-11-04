@@ -21,6 +21,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * Certificate 服务实现类
@@ -29,13 +30,17 @@ import java.util.List;
 @Slf4j
 @Service
 public class CertificateServiceImpl extends ServiceImpl<CertificateMapper, Certificate> implements CertificateService {
+
+    private static final Pattern CERT_NO_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{1,64}$");
     @Override
     public List<CertificateMyVO> getMyList() {
         Long studentId = requireStudentId();
         List<CertificateMyVO> list = baseMapper.selectMyList(studentId);
         if (list != null) {
             for (CertificateMyVO vo : list) {
-                if (vo.getFileUrl() == null || vo.getFileUrl().isBlank()) {
+                if (!Integer.valueOf(CertificateStatus.VALID.getCode()).equals(vo.getStatus())) {
+                    vo.setFileUrl(null);
+                } else if (vo.getFileUrl() == null || vo.getFileUrl().isBlank()) {
                     vo.setFileUrl("/api/certificate/file/" + vo.getCertificateNo() + ".png");
                 }
             }
@@ -84,7 +89,9 @@ public class CertificateServiceImpl extends ServiceImpl<CertificateMapper, Certi
                 trim(studentNo), trim(activityTitle), status);
         if (voPage != null && voPage.getRecords() != null) {
             for (CertificateAdminVO vo : voPage.getRecords()) {
-                if (vo.getFileUrl() == null || vo.getFileUrl().isBlank()) {
+                if (!Integer.valueOf(CertificateStatus.VALID.getCode()).equals(vo.getStatus())) {
+                    vo.setFileUrl(null);
+                } else if (vo.getFileUrl() == null || vo.getFileUrl().isBlank()) {
                     vo.setFileUrl("/api/certificate/file/" + vo.getCertificateNo() + ".png");
                 }
             }
@@ -112,11 +119,17 @@ public class CertificateServiceImpl extends ServiceImpl<CertificateMapper, Certi
 
         // 清理对应本地磁盘 PNG 缓存文件 (uploads/certificates/{certificateNo}.png)
         if (certificate.getCertificateNo() != null && !certificate.getCertificateNo().isBlank()) {
-            try {
-                Path localPath = Paths.get("uploads", "certificates", certificate.getCertificateNo().trim() + ".png");
-                Files.deleteIfExists(localPath);
-            } catch (Exception e) {
-                log.warn("[证书撤销] 清除本地证书缓存文件失败: certNo={}, err={}", certificate.getCertificateNo(), e.getMessage());
+            String certNo = certificate.getCertificateNo().trim();
+            if (CERT_NO_PATTERN.matcher(certNo).matches()) {
+                try {
+                    Path baseDir = Paths.get("uploads", "certificates").toAbsolutePath().normalize();
+                    Path localPath = baseDir.resolve(certNo + ".png").normalize();
+                    if (localPath.startsWith(baseDir)) {
+                        Files.deleteIfExists(localPath);
+                    }
+                } catch (Exception e) {
+                    log.warn("[证书撤销] 清除本地证书缓存文件失败: certNo={}, err={}", certificate.getCertificateNo(), e.getMessage());
+                }
             }
         }
     }

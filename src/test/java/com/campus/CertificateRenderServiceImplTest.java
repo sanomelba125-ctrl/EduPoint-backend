@@ -243,4 +243,44 @@ class CertificateRenderServiceImplTest {
         assertNotNull(bytes);
         assertEquals((byte) 0x89, bytes[0]);
     }
+
+    @Test
+    @DisplayName("F5 安全防御: 证书不存在时 (cert == null) 绝不删除任何磁盘文件")
+    void renderToPngBytesByNo_notFound_shouldNeverDeleteDiskFile() throws Exception {
+        String nonExistentNo = "CERT_NON_EXISTENT_999";
+        Path path = Paths.get("uploads", "certificates", nonExistentNo + ".png");
+        Files.createDirectories(path.getParent());
+        Files.write(path, new byte[]{1, 2, 3});
+        try {
+            assertTrue(Files.exists(path), "测试前置文件应存在");
+
+            when(certificateMapper.selectOne(any())).thenReturn(null);
+
+            byte[] bytes = renderService.renderToPngBytesByNo(nonExistentNo);
+            assertNull(bytes, "不存在的证书应返回 null");
+            assertTrue(Files.exists(path), "cert == null 时严禁删除本地磁盘文件！");
+        } finally {
+            Files.deleteIfExists(path);
+        }
+    }
+
+    @Test
+    @DisplayName("F5 安全防御: 路径穿越与非法字符直接被白名单正则拦截，不查库且不删文件")
+    void renderToPngBytesByNo_pathTraversalAttack_shouldBeBlocked() {
+        String[] attacks = {
+                "../../secret",
+                "..\\..\\windows\\system32",
+                "cert/../../etc/passwd",
+                "cert;rm -rf",
+                "cert 123",
+                "a".repeat(65) // 超长
+        };
+
+        for (String attack : attacks) {
+            byte[] bytes = renderService.renderToPngBytesByNo(attack);
+            assertNull(bytes, "路径穿越/非法编号必须被拦截: " + attack);
+        }
+
+        verify(certificateMapper, never()).selectOne(any());
+    }
 }

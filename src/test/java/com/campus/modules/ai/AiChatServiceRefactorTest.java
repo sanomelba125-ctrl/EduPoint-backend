@@ -190,11 +190,11 @@ class AiChatServiceRefactorTest {
         assertTrue(sseExecutor instanceof java.util.concurrent.ThreadPoolExecutor);
         java.util.concurrent.ThreadPoolExecutor executor = (java.util.concurrent.ThreadPoolExecutor) sseExecutor;
 
-        // 验证有界核心与最大线程数及拒绝策略
+        // 验证有界核心与最大线程数及拒绝策略 (F10: 改为 AbortPolicy，避免阻塞 Tomcat 线程)
         assertEquals(4, executor.getCorePoolSize());
         assertEquals(16, executor.getMaximumPoolSize());
         assertTrue(executor.getQueue().remainingCapacity() <= 100);
-        assertTrue(executor.getRejectedExecutionHandler() instanceof java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy);
+        assertTrue(executor.getRejectedExecutionHandler() instanceof java.util.concurrent.ThreadPoolExecutor.AbortPolicy);
 
         // 验证 destroy 优雅关闭
         assertDoesNotThrow(() -> chatService.destroy());
@@ -203,6 +203,54 @@ class AiChatServiceRefactorTest {
         // 验证关闭后发起对话请求能够优雅降级返回系统维护提示而非挂起
         AiChatRequest req = new AiChatRequest();
         req.setQuestion("测试关闭后提问");
+        SseEmitter emitter = assertDoesNotThrow(() -> chatService.streamChat(req, 100L));
+        assertNotNull(emitter);
+    }
+
+    @Test
+    @DisplayName("F10: streamChat 通过 TraceUtil.wrap 透传 MDC traceId，且在异步线程中有效保留")
+    void testStreamChat_TraceIdPropagationAndRejectionHandling() throws Exception {
+        java.util.concurrent.atomic.AtomicReference<String> asyncTraceId = new java.util.concurrent.atomic.AtomicReference<>();
+        when(toolRegistry.executeTool(any(), eq("query_my_points"), any(), any())).thenAnswer(inv -> {
+            asyncTraceId.set(org.slf4j.MDC.get("traceId"));
+            com.campus.modules.ai.agent.model.ToolExecutionRecord record = com.campus.modules.ai.agent.model.ToolExecutionRecord.builder()
+                    .toolCallId("call_1")
+                    .toolName("query_my_points")
+                    .description("查询学生积分账户")
+                    .status("SUCCESS")
+                    .argumentsJson("{}")
+                    .resultFactJson("{\"success\":true,\"currentAvailablePoints\":100,\"historicalTotalPoints\":200}")
+                    .executionTimeMs(10L)
+                    .build();
+            return record;
+        });
+
+        org.slf4j.MDC.put("traceId", "TRACE-AI-SSE-9999");
+        try {
+            AiChatRequest req = new AiChatRequest();
+            req.setQuestion("查我的积分");
+            SseEmitter emitter = chatService.streamChat(req, 100L);
+            assertNotNull(emitter);
+
+            // 验证异步线程中正确执行了本地意图工具且透传了 MDC traceId
+            verify(toolRegistry, timeout(3000)).executeTool(any(), eq("query_my_points"), any(), any());
+            assertEquals("TRACE-AI-SSE-9999", asyncTraceId.get(), "异步线程中必须通过 TraceUtil.wrap 正确透传 MDC traceId");
+        } finally {
+            org.slf4j.MDC.clear();
+        }
+    }
+
+    @Test
+    @DisplayName("F10: streamChat 当线程池抛出 RejectedExecutionException 时优雅降级推送 BUSY 提示")
+    void testStreamChat_WhenExecutorRejects_ShouldGracefullyDegradeWithBusyMessage() {
+        java.util.concurrent.ThreadPoolExecutor mockExecutor = mock(java.util.concurrent.ThreadPoolExecutor.class);
+        when(mockExecutor.isShutdown()).thenReturn(false);
+        when(mockExecutor.submit(any(Runnable.class))).thenThrow(new java.util.concurrent.RejectedExecutionException("ThreadPool queue is full"));
+
+        org.springframework.test.util.ReflectionTestUtils.setField(chatService, "sseExecutor", mockExecutor);
+
+        AiChatRequest req = new AiChatRequest();
+        req.setQuestion("查我的积分");
         SseEmitter emitter = assertDoesNotThrow(() -> chatService.streamChat(req, 100L));
         assertNotNull(emitter);
     }

@@ -23,6 +23,24 @@ public interface StudentActivityMapper extends BaseMapper<StudentActivity> {
                                               @Param("status") Integer status);
 
     /**
+     * 报表导出专用列表查询（带 LIMIT 封顶，不经过 IPage 分页插件，杜绝 maxLimit(100L) 静默截断）
+     */
+    @Select("<script>SELECT sa.*, s.name AS student_name, s.student_no AS student_no, a.title AS activity_title " +
+            "FROM student_activity sa JOIN student s ON s.id=sa.student_id JOIN activity a ON a.id=sa.activity_id " +
+            "WHERE sa.deleted=0 AND s.deleted=0 AND a.deleted=0 " +
+            "<if test='studentName != null and studentName != \"\"'>AND s.name LIKE CONCAT('%', #{studentName}, '%') </if>" +
+            "<if test='studentNo != null and studentNo != \"\"'>AND s.student_no LIKE CONCAT('%', #{studentNo}, '%') </if>" +
+            "<if test='activityTitle != null and activityTitle != \"\"'>AND a.title LIKE CONCAT('%', #{activityTitle}, '%') </if>" +
+            "<if test='status != null'>AND sa.status=#{status} </if> " +
+            "ORDER BY sa.signup_time DESC " +
+            "LIMIT #{limit}</script>")
+    java.util.List<ActivityRecordVO> selectExportList(@Param("studentName") String studentName,
+                                                     @Param("studentNo") String studentNo,
+                                                     @Param("activityTitle") String activityTitle,
+                                                     @Param("status") Integer status,
+                                                     @Param("limit") int limit);
+
+    /**
      * 单条 SQL 聚合所有活动的报名人数与打卡人数（避免导出报表时产生 2N 次循环查询）
      */
     @Select("SELECT activity_id AS activityId, " +

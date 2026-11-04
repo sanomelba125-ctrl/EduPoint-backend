@@ -27,6 +27,7 @@ import com.campus.common.tx.AfterCommitExecutor;
 import com.campus.modules.mall.service.GiftService;
 import com.campus.modules.mall.service.GiftStockRedisService;
 import com.campus.modules.mall.service.GiftCacheService;
+import com.campus.modules.mall.service.LocalMessageService;
 
 /**
  * 礼品管理业务实现
@@ -41,18 +42,27 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
     private final StudentGiftMapper studentGiftMapper;
     private final GiftStockRedisService giftStockRedisService;
     private final GiftCacheService giftCacheService;
+    private final LocalMessageService localMessageService;
 
     @Autowired
     public GiftServiceImpl(StudentGiftMapper studentGiftMapper,
                            GiftStockRedisService giftStockRedisService,
-                           GiftCacheService giftCacheService) {
+                           GiftCacheService giftCacheService,
+                           @Autowired(required = false) LocalMessageService localMessageService) {
         this.studentGiftMapper = studentGiftMapper;
         this.giftStockRedisService = giftStockRedisService;
         this.giftCacheService = giftCacheService;
+        this.localMessageService = localMessageService;
+    }
+
+    public GiftServiceImpl(StudentGiftMapper studentGiftMapper,
+                           GiftStockRedisService giftStockRedisService,
+                           GiftCacheService giftCacheService) {
+        this(studentGiftMapper, giftStockRedisService, giftCacheService, null);
     }
 
     public GiftServiceImpl(StudentGiftMapper studentGiftMapper) {
-        this(studentGiftMapper, null, null);
+        this(studentGiftMapper, null, null, null);
     }
 
     @Override
@@ -135,7 +145,8 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
         }
 
         if (giftStockRedisService != null) {
-            giftStockRedisService.evictGiftCacheWithDoubleDelete(updateDTO.getId());
+            final Long giftId = updateDTO.getId();
+            AfterCommitExecutor.run(() -> giftStockRedisService.evictGiftCacheWithDoubleDelete(giftId));
         }
 
         return resultVO;
@@ -178,13 +189,30 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
             log.info("礼品入库补货成功: giftId={}, 名称={}, 本次入库=+{}件, 变动前可用库存={}, 变动前入库总量={}, 操作管理员ID={}",
                     id, gift.getName(), quantity, beforeStock, beforeTotal, adminId);
         } else {
-            // 2. 盘亏核减（报损）：向加库存看齐采用条件 SQL 原子自减，WHERE stock >= #{quantity} 严格杜绝负库存
+            // 2. 盘亏核减（报损）：校准在途秒杀并发，严禁核减已被在途单预扣锁定的库存（F3 修复）
+            int inflight = 0;
+            if (localMessageService != null) {
+                inflight = localMessageService.countInflightOrderQtyByGift().getOrDefault(id, 0);
+            }
+            if (giftStockRedisService != null) {
+                Integer redisStock = giftStockRedisService.getStock(id);
+                if (redisStock != null) {
+                    inflight = Math.max(inflight, Math.max(0, beforeStock - redisStock));
+                }
+            }
+            if (inflight > 0 && absQuantity > (beforeStock - inflight)) {
+                int availableToDeduct = Math.max(0, beforeStock - inflight);
+                throw new BusinessException(String.format(
+                        "库存核减失败：当前秒杀在途占用 %d 件，可核减库存仅剩 %d 件（当前库存 %d 件），核减 %d 件将导致在途订单超卖！",
+                        inflight, availableToDeduct, beforeStock, absQuantity));
+            }
+
             rows = baseMapper.deductStock(id, absQuantity, adminId);
             if (rows == 0) {
                 throw new BusinessException("库存核减失败：当前可用库存（" + beforeStock + "件）不足以核减 " + absQuantity + " 件，或礼品已被删除！");
             }
-            log.info("礼品盘亏核减成功: giftId={}, 名称={}, 本次核减=-{}件, 变动前可用库存={}, 变动前入库总量={}, 操作管理员ID={}",
-                    id, gift.getName(), absQuantity, beforeStock, beforeTotal, adminId);
+            log.info("礼品盘亏核减成功: giftId={}, 名称={}, 本次核减=-{}件, 变动前可用库存={}, 在途占用={}, 变动前入库总量={}, 操作管理员ID={}",
+                    id, gift.getName(), absQuantity, beforeStock, inflight, beforeTotal, adminId);
         }
 
         Gift fresh = this.getById(id);
@@ -208,10 +236,6 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
             return "礼品不存在";
         }
 
-        if (giftStockRedisService != null) {
-            giftStockRedisService.evictGiftCacheWithDoubleDelete(id);
-        }
-
         // 检查是否已有学生兑换订单
         Long orderCount = studentGiftMapper.selectCount(
                 new LambdaQueryWrapper<StudentGift>().eq(StudentGift::getGiftId, id)
@@ -230,12 +254,20 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
                         .set(Gift::getStatus, GiftStatus.OFF_SHELF.getCode())
                         .eq(Gift::getId, id));
             }
+            if (giftStockRedisService != null) {
+                final Long giftId = id;
+                AfterCommitExecutor.run(() -> giftStockRedisService.evictGiftCacheWithDoubleDelete(giftId));
+            }
             log.warn("礼品存在历史兑换订单，不可物理删除，已自动降级为下架状态: giftId={}, orderCount={}", id, orderCount);
             return "该礼品已有学生兑换记录，为保证订单可溯不可删除，已自动转为下架状态！";
         }
 
         this.removeById(id);
         log.info("礼品无兑换记录，已成功物理删除: giftId={}", id);
+        if (giftStockRedisService != null) {
+            final Long giftId = id;
+            AfterCommitExecutor.run(() -> giftStockRedisService.evictGiftCacheWithDoubleDelete(giftId));
+        }
         return "删除成功";
     }
 
@@ -245,9 +277,6 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
         Gift gift = this.getById(id);
         if (gift == null) {
             throw new BusinessException("礼品不存在");
-        }
-        if (giftStockRedisService != null) {
-            giftStockRedisService.evictGiftCacheWithDoubleDelete(id);
         }
         gift.setStatus(status);
         if (gift.getVersion() == null) {
@@ -259,6 +288,10 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
             this.update(new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Gift>()
                     .set(Gift::getStatus, status)
                     .eq(Gift::getId, id));
+        }
+        if (giftStockRedisService != null) {
+            final Long giftId = id;
+            AfterCommitExecutor.run(() -> giftStockRedisService.evictGiftCacheWithDoubleDelete(giftId));
         }
     }
 
