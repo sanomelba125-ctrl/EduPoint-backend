@@ -35,7 +35,8 @@ public class RateLimitAspect {
 
     /**
      * 默认不信任客户端自报的 X-Forwarded-For，避免伪造 IP 绕过登录限流。
-     * 仅当应用部署在可信反向代理之后，或本地隔离压测时，才显式开启。
+     * 当应用部署在可信反向代理 (Nginx) 之后时显式开启，优先读取 Nginx 严格重写的 X-Real-IP，
+     * 杜绝客户端通过伪造 XFF 首段绕过限流桶 (P1-F8)。
      */
     @org.springframework.beans.factory.annotation.Value("${campus.security.trust-forwarded-headers:false}")
     private boolean trustForwardedHeaders;
@@ -105,21 +106,37 @@ public class RateLimitAspect {
             ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
             if (attributes != null) {
                 HttpServletRequest request = attributes.getRequest();
-                String ip = null;
-                if (trustForwardedHeaders) {
-                    ip = request.getHeader("X-Forwarded-For");
-                    if (ip != null && !ip.isBlank()) {
-                        ip = ip.split(",")[0].trim();
-                    } else {
-                        ip = request.getHeader("X-Real-IP");
-                    }
-                }
-                if (ip == null || ip.isBlank()) {
-                    ip = request.getRemoteAddr();
-                }
+                String ip = extractClientIp(request);
                 sb.append(":ip:").append(ip);
             }
         }
         return sb.toString();
+    }
+
+    private boolean isValidIp(String ip) {
+        return ip != null && !ip.isBlank() && !"unknown".equalsIgnoreCase(ip.trim());
+    }
+
+    private String extractClientIp(HttpServletRequest request) {
+        String ip = null;
+        if (trustForwardedHeaders) {
+            String realIp = request.getHeader("X-Real-IP");
+            if (isValidIp(realIp)) {
+                ip = realIp.split(",")[0].trim();
+            }
+            if (!isValidIp(ip)) {
+                String xff = request.getHeader("X-Forwarded-For");
+                if (isValidIp(xff)) {
+                    ip = xff.split(",")[0].trim();
+                }
+            }
+        }
+        if (!isValidIp(ip)) {
+            ip = request.getRemoteAddr();
+        }
+        if (!isValidIp(ip)) {
+            ip = "127.0.0.1";
+        }
+        return ip;
     }
 }

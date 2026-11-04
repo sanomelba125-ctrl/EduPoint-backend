@@ -94,6 +94,78 @@ public class RateLimitAspectTest {
     }
 
     @Test
+    @DisplayName("P1-F8 安全: 显式信任代理时，优先使用 X-Real-IP，杜绝客户端伪造 XFF 首段绕过")
+    void testRateLimit_PrefersXRealIpOverXForwardedForWhenTrusted() throws Throwable {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRemoteAddr("10.0.0.8");
+        request.addHeader("X-Real-IP", "198.51.100.1");
+        request.addHeader("X-Forwarded-For", "203.0.113.9, 10.0.0.1");
+        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+
+        Method method = this.getClass().getMethod("dummyIpTargetMethod");
+        when(joinPoint.getSignature()).thenReturn(methodSignature);
+        when(methodSignature.getMethod()).thenReturn(method);
+        when(redis.execute(any(DefaultRedisScript.class), anyList(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(1L);
+        ReflectionTestUtils.setField(rateLimitAspect, "trustForwardedHeaders", true);
+
+        rateLimitAspect.around(joinPoint);
+
+        org.mockito.ArgumentCaptor<List<String>> captor = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(redis).execute(any(DefaultRedisScript.class), captor.capture(), anyString(), anyString(), anyString(), anyString());
+        String key = captor.getValue().get(0);
+        assertTrue(key.contains(":ip:198.51.100.1"), "应优先使用 X-Real-IP 而非 X-Forwarded-For 伪造首段: " + key);
+    }
+
+    @Test
+    @DisplayName("P1-F8 安全: X-Real-IP 为 unknown 时，自动回退到合法的 X-Forwarded-For")
+    void testRateLimit_UnknownXRealIpFallsBackToXForwardedFor() throws Throwable {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRemoteAddr("10.0.0.8");
+        request.addHeader("X-Real-IP", "unknown");
+        request.addHeader("X-Forwarded-For", "203.0.113.15, 10.0.0.1");
+        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+
+        Method method = this.getClass().getMethod("dummyIpTargetMethod");
+        when(joinPoint.getSignature()).thenReturn(methodSignature);
+        when(methodSignature.getMethod()).thenReturn(method);
+        when(redis.execute(any(DefaultRedisScript.class), anyList(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(1L);
+        ReflectionTestUtils.setField(rateLimitAspect, "trustForwardedHeaders", true);
+
+        rateLimitAspect.around(joinPoint);
+
+        org.mockito.ArgumentCaptor<List<String>> captor = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(redis).execute(any(DefaultRedisScript.class), captor.capture(), anyString(), anyString(), anyString(), anyString());
+        String key = captor.getValue().get(0);
+        assertTrue(key.contains(":ip:203.0.113.15"), "当 X-Real-IP 为 unknown 时应回退到 XFF 首段: " + key);
+    }
+
+    @Test
+    @DisplayName("P1-F8 安全: 代理头全部为 unknown 时，自动回退到 request.getRemoteAddr()")
+    void testRateLimit_AllUnknownHeadersFallBackToRemoteAddr() throws Throwable {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRemoteAddr("10.0.0.99");
+        request.addHeader("X-Real-IP", "unknown");
+        request.addHeader("X-Forwarded-For", "unknown");
+        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+
+        Method method = this.getClass().getMethod("dummyIpTargetMethod");
+        when(joinPoint.getSignature()).thenReturn(methodSignature);
+        when(methodSignature.getMethod()).thenReturn(method);
+        when(redis.execute(any(DefaultRedisScript.class), anyList(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(1L);
+        ReflectionTestUtils.setField(rateLimitAspect, "trustForwardedHeaders", true);
+
+        rateLimitAspect.around(joinPoint);
+
+        org.mockito.ArgumentCaptor<List<String>> captor = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(redis).execute(any(DefaultRedisScript.class), captor.capture(), anyString(), anyString(), anyString(), anyString());
+        String key = captor.getValue().get(0);
+        assertTrue(key.contains(":ip:10.0.0.99"), "全部代理头无效时应回退到 RemoteAddr: " + key);
+    }
+
+    @Test
     @DisplayName("P1-6: 滑动窗口限流 - 窗口内未超限 (Lua返回1) -> 成功放行")
     void testRateLimit_Allowed() throws Throwable {
         Method method = this.getClass().getMethod("dummyTargetMethod");

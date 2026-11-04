@@ -5,6 +5,7 @@ import com.campus.modules.mall.dto.GiftVO;
 import com.campus.modules.mall.entity.Gift;
 import com.campus.modules.mall.mapper.GiftMapper;
 import com.campus.modules.mall.mapper.StudentGiftMapper;
+import com.campus.modules.mall.service.GiftStockRedisService;
 import com.campus.modules.mall.service.impl.GiftServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -109,5 +110,34 @@ class GiftStockAdjustmentTest {
 
         assertTrue(ex.getMessage().contains("可用库存（3件）不足"));
         verify(giftMapper, times(1)).deductStock(10L, 5, 100L);
+    }
+
+    @Test
+    @DisplayName("F3: 管理端补货使用增量 delta 调整 Redis，绝不使用 MySQL 绝对库存覆盖以保护在途预扣")
+    void testAdjustStock_SyncRedisWithDelta() {
+        GiftStockRedisService redisService = mock(GiftStockRedisService.class);
+        ReflectionTestUtils.setField(giftService, "giftStockRedisService", redisService);
+
+        Gift gift = new Gift();
+        gift.setId(10L);
+        gift.setName("定制纪念徽章");
+        gift.setStock(20);
+        gift.setTotalStock(50);
+
+        Gift fresh = new Gift();
+        fresh.setId(10L);
+        fresh.setName("定制纪念徽章");
+        fresh.setStock(35);
+        fresh.setTotalStock(65);
+
+        when(giftMapper.selectById(10L)).thenReturn(gift).thenReturn(fresh);
+        when(giftMapper.restock(eq(10L), eq(15), eq(100L))).thenReturn(1);
+
+        GiftVO vo = giftService.adjustStock(10L, 15, 100L);
+
+        assertNotNull(vo);
+        verify(redisService, times(1)).adjustStockDelta(10L, 15, 35);
+        verify(redisService, never()).warmupStock(anyLong(), anyInt());
+        verify(redisService, times(1)).evictGiftCacheWithDoubleDelete(10L);
     }
 }

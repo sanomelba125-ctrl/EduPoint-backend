@@ -166,4 +166,81 @@ class CertificateRenderServiceImplTest {
         assertNull(renderService.renderAndUpload(9999L));
         verify(certificateMapper, never()).updateById(any(Certificate.class));
     }
+
+    @Test
+    @DisplayName("F5: renderToPngBytesByNo 遇到撤销/无效证书时应拒绝返回图片并清理磁盘缓存")
+    void renderToPngBytesByNo_revoked_shouldReturnNullAndEvictCache() throws Exception {
+        Certificate cert = new Certificate();
+        cert.setId(1003L);
+        cert.setCertificateNo(TEST_CERT_NO);
+        cert.setStatus(2); // 2-已作废撤销
+
+        // 创建假的旧缓存文件
+        Path path = Paths.get("uploads", "certificates", TEST_CERT_NO + ".png");
+        Files.createDirectories(path.getParent());
+        Files.write(path, new byte[]{1, 2, 3});
+        assertTrue(Files.exists(path));
+
+        when(certificateMapper.selectOne(any())).thenReturn(cert);
+
+        byte[] bytes = renderService.renderToPngBytesByNo(TEST_CERT_NO);
+        assertNull(bytes, "已撤销证书不得再提供图片二进制流");
+        assertFalse(Files.exists(path), "已撤销证书旧缓存文件必须已被清理");
+    }
+
+    @Test
+    @DisplayName("F5: renderAndUpload 遇到撤销/无效证书时应拒绝渲染并清理磁盘缓存")
+    void renderAndUpload_revoked_shouldReturnNullAndEvictCache() throws Exception {
+        Certificate cert = new Certificate();
+        cert.setId(1005L);
+        cert.setCertificateNo(TEST_CERT_NO);
+        cert.setStatus(2); // 2-已作废撤销
+
+        // 创建假的旧缓存文件
+        Path path = Paths.get("uploads", "certificates", TEST_CERT_NO + ".png");
+        Files.createDirectories(path.getParent());
+        Files.write(path, new byte[]{1, 2, 3});
+        assertTrue(Files.exists(path));
+
+        when(certificateMapper.selectById(1005L)).thenReturn(cert);
+
+        String fileUrl = renderService.renderAndUpload(1005L);
+        assertNull(fileUrl, "已撤销证书不得执行渲染上传并回写");
+        assertFalse(Files.exists(path), "已撤销证书旧缓存文件必须已被清理");
+        verify(certificateMapper, never()).updateById(any(Certificate.class));
+    }
+
+    @Test
+    @DisplayName("F5: renderToPngBytesByNo 遇到逻辑删除证书时应拒绝返回图片")
+    void renderToPngBytesByNo_deleted_shouldReturnNull() {
+        Certificate cert = new Certificate();
+        cert.setId(1006L);
+        cert.setCertificateNo(TEST_CERT_NO);
+        cert.setStatus(1);
+        cert.setDeleted(1); // 已逻辑删除
+
+        when(certificateMapper.selectOne(any())).thenReturn(cert);
+
+        byte[] bytes = renderService.renderToPngBytesByNo(TEST_CERT_NO);
+        assertNull(bytes, "已删除证书不得返回图片");
+    }
+
+    @Test
+    @DisplayName("F6: setVerifyBaseUrl 自定义验真基地址可正常渲染二维码")
+    void renderToPngBytesByNo_customVerifyBaseUrl_shouldSucceed() {
+        renderService.setVerifyBaseUrl("https://verify.campus.edu.cn/#/verify");
+
+        Certificate cert = new Certificate();
+        cert.setId(1004L);
+        cert.setCertificateNo(TEST_CERT_NO);
+        cert.setStatus(1);
+        cert.setIssueTime(LocalDateTime.now());
+        cert.setTitle("优秀共青团员");
+
+        when(certificateMapper.selectOne(any())).thenReturn(cert);
+
+        byte[] bytes = renderService.renderToPngBytesByNo(TEST_CERT_NO);
+        assertNotNull(bytes);
+        assertEquals((byte) 0x89, bytes[0]);
+    }
 }

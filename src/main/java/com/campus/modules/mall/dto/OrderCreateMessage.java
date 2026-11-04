@@ -18,7 +18,8 @@ public record OrderCreateMessage(
         String receiverAddress,
         long timestamp,
         String traceId,
-        String orderNo
+        String orderNo,
+        Integer unitPoints
 ) implements Serializable {
 
     public OrderCreateMessage(
@@ -35,7 +36,25 @@ public record OrderCreateMessage(
             String traceId
     ) {
         this(messageId, studentId, giftId, quantity, requestId, exchangeToken,
-                receiverName, receiverPhone, receiverAddress, timestamp, traceId, null);
+                receiverName, receiverPhone, receiverAddress, timestamp, traceId, null, null);
+    }
+
+    public OrderCreateMessage(
+            String messageId,
+            Long studentId,
+            Long giftId,
+            Integer quantity,
+            String requestId,
+            String exchangeToken,
+            String receiverName,
+            String receiverPhone,
+            String receiverAddress,
+            long timestamp,
+            String traceId,
+            String orderNo
+    ) {
+        this(messageId, studentId, giftId, quantity, requestId, exchangeToken,
+                receiverName, receiverPhone, receiverAddress, timestamp, traceId, orderNo, null);
     }
 
     public OrderCreateMessage {

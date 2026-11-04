@@ -5,6 +5,7 @@ import com.campus.modules.system.service.SysNoticeService;
 import com.campus.modules.mall.dto.GiftExchangeDTO;
 import com.campus.modules.mall.dto.GiftExchangeVO;
 import com.campus.modules.mall.dto.OrderCancelDTO;
+import com.campus.modules.mall.dto.OrderCreateMessage;
 import com.campus.modules.mall.entity.Gift;
 import com.campus.modules.mall.entity.StudentGift;
 import com.campus.modules.mall.mapper.GiftMapper;
@@ -16,6 +17,7 @@ import com.campus.modules.student.mapper.StudentMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -69,6 +71,7 @@ class StudentGiftExchangeTest {
         when(valueOperations.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(true);
         when(giftIdempotentService.tryAcquireSlot(anyLong(), anyString())).thenReturn(true);
         when(giftIdempotentService.verifyAndConsumeToken(anyLong(), anyLong(), anyString())).thenReturn(true);
+        when(giftStockRedisService.preDeductStock(anyLong(), anyInt())).thenReturn(true);
 
         studentGiftService = new StudentGiftServiceImpl(
                 giftMapper,
@@ -269,12 +272,163 @@ class StudentGiftExchangeTest {
         assertTrue(result.getPickupCode().startsWith("PK"), "提货码必须以 PK 开头");
 
         // 验证关键原子操作均被正确调用
+        verify(giftStockRedisService, times(1)).preDeductStock(eq(giftId), eq(1));
         verify(giftMapper, times(1)).deductStockIfEnough(eq(giftId), eq(1));
         verify(studentMapper, times(1)).deductCurrentPoints(eq(studentId), eq(80));
         verify(studentGiftMapper, times(1)).insert(any(StudentGift.class));
         verify(pointLedger, times(1)).record(
                 eq(studentId), eq(2), eq(-80), eq(20), anyString(), anyString(), eq(8888L), isNull()
         );
+    }
+
+    @Test
+    @DisplayName("F2: 普通兑换在 Redis 预扣失败时应立即拦截，抛出“库存已被抢光”且不扣 MySQL")
+    void testExchangeGift_RedisPreDeductFails_ShouldThrowStockEmpty() {
+        Long studentId = 106L;
+        Long giftId = 6L;
+
+        Student student = new Student();
+        student.setId(studentId);
+        student.setCurrentPoints(200);
+        student.setStatus(1);
+        when(studentMapper.selectById(studentId)).thenReturn(student);
+
+        Gift gift = new Gift();
+        gift.setId(giftId);
+        gift.setName("智能台灯");
+        gift.setPointsRequired(50);
+        gift.setStock(10);
+        gift.setStatus(1);
+        gift.setDeleted(0);
+        when(giftMapper.selectById(giftId)).thenReturn(gift);
+
+        when(giftStockRedisService.preDeductStock(eq(giftId), eq(1))).thenReturn(false);
+
+        GiftExchangeDTO dto = new GiftExchangeDTO();
+        dto.setGiftId(giftId);
+        dto.setQuantity(1);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> {
+            studentGiftService.exchangeGift(dto, studentId);
+        });
+
+        assertTrue(ex.getMessage().contains("抢光") || ex.getMessage().contains("不足"));
+        verify(giftMapper, never()).deductStockIfEnough(anyLong(), anyInt());
+        verify(studentMapper, never()).deductCurrentPoints(anyLong(), anyInt());
+    }
+
+    @Test
+    @DisplayName("F4: 秒杀异步落库按消息中的价格快照执行扣减与校验，管理员改价不影响已下单价格")
+    void testProcessAsyncOrder_UsesSnapshottedPrice() {
+        Long studentId = 201L;
+        Long giftId = 11L;
+
+        Student student = new Student();
+        student.setId(studentId);
+        student.setCurrentPoints(150);
+        student.setStatus(1);
+        when(studentMapper.selectById(studentId)).thenReturn(student);
+
+        // 管理员在下单后把礼品价格改为了 100 积分（原价快照为 40 积分）
+        Gift gift = new Gift();
+        gift.setId(giftId);
+        gift.setName("限定保温杯");
+        gift.setPointsRequired(100);
+        gift.setStock(10);
+        gift.setStatus(1);
+        gift.setDeleted(0);
+        when(giftMapper.selectById(giftId)).thenReturn(gift);
+
+        when(giftMapper.deductStockIfEnough(eq(giftId), eq(2))).thenReturn(1);
+        // 按快照单价 40 * 数量 2 = 80 积分扣减（如果按最新价 100*2=200，学生 150 积分就会被误判不足）
+        when(studentMapper.deductCurrentPoints(eq(studentId), eq(80))).thenReturn(1);
+        when(studentMapper.selectCurrentPoints(eq(studentId))).thenReturn(70);
+
+        doAnswer(invocation -> {
+            StudentGift entity = invocation.getArgument(0);
+            entity.setId(9999L);
+            return 1;
+        }).when(studentGiftMapper).insert(any(StudentGift.class));
+
+        OrderCreateMessage msg = new OrderCreateMessage(
+                "msg-f4-001",
+                studentId,
+                giftId,
+                2,
+                "req-f4-001",
+                null,
+                "王同学",
+                "13800002222",
+                "宿舍楼",
+                System.currentTimeMillis(),
+                "trace-f4",
+                "ORD-F4-001",
+                40 // 下单快照单价 40
+        );
+
+        boolean success = studentGiftService.processAsyncOrder(msg);
+
+        assertTrue(success, "落库应按快照单价成功执行");
+        verify(studentMapper).deductCurrentPoints(eq(studentId), eq(80));
+        ArgumentCaptor<StudentGift> orderCaptor = ArgumentCaptor.forClass(StudentGift.class);
+        verify(studentGiftMapper).insert(orderCaptor.capture());
+        assertEquals(80, orderCaptor.getValue().getPointsCost());
+    }
+
+    @Test
+    @DisplayName("F4: 秒杀异步落库在历史在途消息无价格快照(unitPoints为null)时向后兼容回退至礼品当前价格")
+    void testProcessAsyncOrder_BackwardCompatibility_NullUnitPoints_UsesGiftPoints() {
+        Long studentId = 202L;
+        Long giftId = 12L;
+
+        Student student = new Student();
+        student.setId(studentId);
+        student.setCurrentPoints(200);
+        student.setStatus(1);
+        when(studentMapper.selectById(studentId)).thenReturn(student);
+
+        Gift gift = new Gift();
+        gift.setId(giftId);
+        gift.setName("限定马克杯");
+        gift.setPointsRequired(50);
+        gift.setStock(10);
+        gift.setStatus(1);
+        gift.setDeleted(0);
+        when(giftMapper.selectById(giftId)).thenReturn(gift);
+
+        when(giftMapper.deductStockIfEnough(eq(giftId), eq(1))).thenReturn(1);
+        when(studentMapper.deductCurrentPoints(eq(studentId), eq(50))).thenReturn(1);
+        when(studentMapper.selectCurrentPoints(eq(studentId))).thenReturn(150);
+
+        doAnswer(invocation -> {
+            StudentGift entity = invocation.getArgument(0);
+            entity.setId(9998L);
+            return 1;
+        }).when(studentGiftMapper).insert(any(StudentGift.class));
+
+        // 历史旧构造器 (12 参数，unitPoints 为 null)
+        OrderCreateMessage msg = new OrderCreateMessage(
+                "msg-f4-old-001",
+                studentId,
+                giftId,
+                1,
+                "req-f4-old-001",
+                null,
+                "李同学",
+                "13800003333",
+                "教学楼",
+                System.currentTimeMillis(),
+                "trace-f4-old",
+                "ORD-F4-OLD-001"
+        );
+
+        boolean success = studentGiftService.processAsyncOrder(msg);
+
+        assertTrue(success, "旧消息落库应向后兼容成功");
+        verify(studentMapper).deductCurrentPoints(eq(studentId), eq(50));
+        ArgumentCaptor<StudentGift> orderCaptor = ArgumentCaptor.forClass(StudentGift.class);
+        verify(studentGiftMapper).insert(orderCaptor.capture());
+        assertEquals(50, orderCaptor.getValue().getPointsCost());
     }
 
     @Test

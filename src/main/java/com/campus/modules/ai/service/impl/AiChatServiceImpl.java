@@ -12,13 +12,19 @@ import com.campus.modules.ai.vo.AiChatMessageVO;
 import com.campus.modules.system.entity.QaKnowledge;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import jakarta.annotation.PreDestroy;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * AI 客服流式对话业务协调器实现
@@ -27,19 +33,47 @@ import java.util.concurrent.Executors;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class AiChatServiceImpl implements AiChatService {
+public class AiChatServiceImpl implements AiChatService, DisposableBean {
 
     private final QaKnowledgeService qaKnowledgeService;
     private final AiConfig aiConfig;
     private final AiMessageService aiMessageService;
     private final LlmAgentService llmAgentService;
 
-    /** 用于流式推送的轻量守护线程池 */
-    private final ExecutorService sseExecutor = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "ai-chat-sse");
-        t.setDaemon(true);
-        return t;
-    });
+    /** 用于流式推送的有界守护线程池，防止突发流量耗尽系统线程与内存 (F10 加固) */
+    private final ThreadPoolExecutor sseExecutor = new ThreadPoolExecutor(
+            4,
+            16,
+            60L,
+            TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(100),
+            new ThreadFactory() {
+                private final AtomicInteger threadNumber = new AtomicInteger(1);
+
+                @Override
+                public Thread newThread(Runnable r) {
+                    Thread t = new Thread(r, "ai-chat-sse-" + threadNumber.getAndIncrement());
+                    t.setDaemon(true);
+                    return t;
+                }
+            },
+            new ThreadPoolExecutor.CallerRunsPolicy()
+    );
+
+    @Override
+    @PreDestroy
+    public void destroy() {
+        log.info("正在优雅关闭 AI 对话流线程池...");
+        sseExecutor.shutdown();
+        try {
+            if (!sseExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                sseExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            sseExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
 
     @Override
     public SseEmitter streamChat(AiChatRequest request, Long studentId) {
@@ -52,15 +86,28 @@ public class AiChatServiceImpl implements AiChatService {
         });
         emitter.onError(e -> log.error("SSE 对话发生异常: {}", e.getMessage()));
 
-        sseExecutor.submit(() -> {
-            try {
-                processChatStream(request, studentId, emitter);
-            } catch (Exception e) {
-                log.error("处理 AI 问答流时发生未捕获异常", e);
-                sendChunk(emitter, "\n\n【系统提示】AI 响应过程遇到异常，请稍后重试。", true, "ERROR", null);
-                sendDone(emitter);
-            }
-        });
+        if (sseExecutor.isShutdown()) {
+            log.warn("AI 对话流线程池已关闭，拒绝新的对话请求");
+            sendChunk(emitter, "\n\n【系统提示】AI 助手服务正在维护，请稍后重试。", true, "SYSTEM", null);
+            sendDone(emitter);
+            return emitter;
+        }
+
+        try {
+            sseExecutor.submit(() -> {
+                try {
+                    processChatStream(request, studentId, emitter);
+                } catch (Exception e) {
+                    log.error("处理 AI 问答流时发生未捕获异常", e);
+                    sendChunk(emitter, "\n\n【系统提示】AI 响应过程遇到异常，请稍后重试。", true, "ERROR", null);
+                    sendDone(emitter);
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            log.warn("AI 对话流线程池已满或被拒绝: {}", e.getMessage());
+            sendChunk(emitter, "\n\n【系统提示】AI 助手当前访问人数较多，请稍后重试。", true, "BUSY", null);
+            sendDone(emitter);
+        }
 
         return emitter;
     }

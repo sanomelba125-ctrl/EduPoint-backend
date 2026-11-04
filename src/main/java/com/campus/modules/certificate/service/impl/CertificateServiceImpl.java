@@ -13,8 +13,12 @@ import com.campus.modules.certificate.entity.Certificate;
 import com.campus.modules.certificate.enums.CertificateStatus;
 import com.campus.modules.certificate.mapper.CertificateMapper;
 import com.campus.modules.certificate.service.CertificateService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -22,6 +26,7 @@ import java.util.List;
  * Certificate 服务实现类
  * 负责具体业务逻辑实现
  */
+@Slf4j
 @Service
 public class CertificateServiceImpl extends ServiceImpl<CertificateMapper, Certificate> implements CertificateService {
     @Override
@@ -104,6 +109,16 @@ public class CertificateServiceImpl extends ServiceImpl<CertificateMapper, Certi
         certificate.setRevokedTime(LocalDateTime.now());
         certificate.setFileUrl(null);
         updateById(certificate);
+
+        // 清理对应本地磁盘 PNG 缓存文件 (uploads/certificates/{certificateNo}.png)
+        if (certificate.getCertificateNo() != null && !certificate.getCertificateNo().isBlank()) {
+            try {
+                Path localPath = Paths.get("uploads", "certificates", certificate.getCertificateNo().trim() + ".png");
+                Files.deleteIfExists(localPath);
+            } catch (Exception e) {
+                log.warn("[证书撤销] 清除本地证书缓存文件失败: certNo={}, err={}", certificate.getCertificateNo(), e.getMessage());
+            }
+        }
     }
 
     @Override

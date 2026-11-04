@@ -43,6 +43,7 @@ public class GiftStockRedisService {
     private static final DefaultRedisScript<Long> INCR_SCRIPT;
     private static final DefaultRedisScript<Long> RECONCILE_SCRIPT;
     private static final DefaultRedisScript<Long> COMPENSATE_ONCE_SCRIPT;
+    private static final DefaultRedisScript<Long> DELTA_SCRIPT;
     private static final ScheduledExecutorService DOUBLE_DELETE_EXECUTOR =
             Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "double-delete-thread");
@@ -66,6 +67,39 @@ public class GiftStockRedisService {
         COMPENSATE_ONCE_SCRIPT = new DefaultRedisScript<>();
         COMPENSATE_ONCE_SCRIPT.setLocation(new ClassPathResource("lua/gift_stock_compensate_once.lua"));
         COMPENSATE_ONCE_SCRIPT.setResultType(Long.class);
+
+        DELTA_SCRIPT = new DefaultRedisScript<>();
+        DELTA_SCRIPT.setLocation(new ClassPathResource("lua/gift_stock_delta.lua"));
+        DELTA_SCRIPT.setResultType(Long.class);
+    }
+
+    /**
+     * 按增量 delta 同步 Redis 库存（避免抹掉在途预扣，F3 修复）。
+     *
+     * <p>当 Redis key 已存在时，在 Redis 当前值基础上累加/扣减 delta，
+     * 绝不以 MySQL 绝对库存全量覆盖（否则在途秒杀订单的预扣会被直接抹掉导致超卖）；
+     * 当 Redis key 不存在时，直接以数据库当前已提交库存写入（初始化预热）。</p>
+     *
+     * @param giftId  礼品ID
+     * @param delta   变动量（正数为盘盈/补货，负数为盘亏/核减）
+     * @param dbStock 数据库最新库存（仅在 key 不存在时作为兜底初始值）
+     * @return 调整后的 Redis 库存数值
+     */
+    public Long adjustStockDelta(Long giftId, int delta, int dbStock) {
+        if (giftId == null) {
+            return null;
+        }
+        String key = GiftRedisKeys.stock(giftId);
+        try {
+            Long result = redis.execute(DELTA_SCRIPT, Collections.singletonList(key),
+                    String.valueOf(delta), String.valueOf(Math.max(0, dbStock)));
+            log.info("[库存增量调整] giftId={}, delta={}, dbStock={}, adjustedStock={}",
+                    giftId, delta, dbStock, result);
+            return result;
+        } catch (Exception e) {
+            log.error("[库存增量调整] Redis 异常: giftId={}, delta={}, err={}", giftId, delta, e.getMessage());
+            return null;
+        }
     }
 
     /**

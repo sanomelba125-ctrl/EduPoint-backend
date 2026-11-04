@@ -162,7 +162,11 @@ services:
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS:?RABBITMQ_PASS must be set in .env.prod}
       ACTIVITY_QR_SIGN_SECRET: ${ACTIVITY_QR_SIGN_SECRET:?ACTIVITY_QR_SIGN_SECRET must be set in .env.prod}
       MALL_PICKUP_SIGN_SECRET: ${MALL_PICKUP_SIGN_SECRET:?MALL_PICKUP_SIGN_SECRET must be set in .env.prod}
+      CAMPUS_TRUST_FORWARDED_HEADERS: "true"
+      SENSENOVA_API_KEY: ${SENSENOVA_API_KEY:-}
       TZ: Asia/Shanghai
+    volumes:
+      - uploads_data:/app/uploads
     depends_on:
       mysql:
         condition: service_healthy
@@ -261,3 +265,4 @@ volumes:
   mysql_prod_data:
   redis_prod_data:
   rabbitmq_prod_data:
+  uploads_data:

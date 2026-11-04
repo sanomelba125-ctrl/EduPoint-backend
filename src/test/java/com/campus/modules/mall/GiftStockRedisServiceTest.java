@@ -256,4 +256,16 @@ class GiftStockRedisServiceTest {
 
         verify(valueOperations, never()).set(anyString(), anyString());
     }
+
+    @Test
+    @DisplayName("F3: adjustStockDelta 执行增量 Lua 脚本调整 Redis 库存")
+    @SuppressWarnings("unchecked")
+    void testAdjustStockDelta_Success() {
+        when(redis.execute(any(RedisScript.class), anyList(), any(), any())).thenReturn(15L);
+
+        Long result = giftStockRedisService.adjustStockDelta(6L, 5, 20);
+
+        assertEquals(15L, result);
+        verify(redis).execute(any(RedisScript.class), eq(List.of("gift:stock:6")), eq("5"), eq("20"));
+    }
 }

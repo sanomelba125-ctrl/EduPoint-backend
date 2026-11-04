@@ -140,7 +140,8 @@ public class StudentScoreServiceImpl implements StudentScoreService {
     @Override
     public StudentRankResultVO getLeaderboard(Integer page, Integer size, String college, Long currentStudentId) {
         int pageNum = page != null && page > 0 ? page : 1;
-        int pageSize = size != null && size > 0 ? size : 20;
+        // 分页插件单页上限 100 条 (MybatisPlusConfig.setMaxLimit)，此处严格对齐截断，避免超出 100 时序号计算失真
+        int pageSize = size != null && size > 0 ? Math.min(size, 100) : 20;
 
         Page<Student> queryPage = new Page<>(pageNum, pageSize);
 
@@ -154,7 +155,10 @@ public class StudentScoreServiceImpl implements StudentScoreService {
         List<Student> records = studentPage.getRecords();
 
         List<RankStudentVO> voList = new ArrayList<>();
-        int startIndex = (pageNum - 1) * pageSize;
+        // 基于分页插件及拦截截断后的真实 current 与 size 计算起始位次 (F10 加固)
+        long current = studentPage.getCurrent() > 0 ? studentPage.getCurrent() : pageNum;
+        long actualSize = studentPage.getSize() > 0 ? studentPage.getSize() : pageSize;
+        int startIndex = (int) Math.max(0L, (current - 1) * actualSize);
 
         for (int i = 0; i < records.size(); i++) {
             Student s = records.get(i);

@@ -5,7 +5,9 @@ import com.campus.modules.mall.entity.StudentPointRecord;
 import com.campus.modules.mall.mapper.StudentPointRecordMapper;
 import com.campus.modules.mall.service.PointLedger;
 import com.campus.modules.mall.service.impl.PointLedgerImpl;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.modules.student.dto.PointAdjustDTO;
+import com.campus.modules.student.dto.StudentRankResultVO;
 import com.campus.modules.student.entity.Student;
 import com.campus.modules.student.mapper.StudentMapper;
 import com.campus.modules.student.service.impl.StudentScoreServiceImpl;
@@ -234,5 +236,80 @@ class StudentScoreAdjustTest {
         verify(studentMapper, never()).addCurrentPoints(anyLong(), anyInt());
         verify(studentMapper, never()).deductCurrentPoints(anyLong(), anyInt());
         verify(pointRecordMapper, never()).insert(any(StudentPointRecord.class));
+    }
+
+    @Test
+    @DisplayName("F10 核验：排行榜分页正常位次计算 (Page=2, Size=20 时起始位次为 21)")
+    void testLeaderboard_NormalPaginationRank() {
+        Student s1 = new Student();
+        s1.setId(101L);
+        s1.setStudentNo("20240001");
+        s1.setName("张三");
+        s1.setTotalPoints(300);
+        s1.setCurrentPoints(100);
+
+        Student s2 = new Student();
+        s2.setId(102L);
+        s2.setStudentNo("20240002");
+        s2.setName("李四");
+        s2.setTotalPoints(290);
+        s2.setCurrentPoints(90);
+
+        Page<Student> pageResult = new Page<>(2, 20);
+        pageResult.setRecords(List.of(s1, s2));
+        pageResult.setTotal(42);
+
+        when(studentMapper.selectPage(any(Page.class), any())).thenReturn(pageResult);
+
+        StudentRankResultVO result = studentScoreService.getLeaderboard(2, 20, null, null);
+        assertNotNull(result);
+        assertEquals(2, result.getRecords().size());
+        // 起始位次 = (2 - 1) * 20 = 20，因此第 1 条排名为 21，第 2 条为 22
+        assertEquals(21, result.getRecords().get(0).getRank());
+        assertEquals(22, result.getRecords().get(1).getRank());
+    }
+
+    @Test
+    @DisplayName("F10 核验：排行榜分页超限截断对齐 (请求 Size=500 被截断为 100 时，Page=2 起始位次为 101)")
+    void testLeaderboard_TruncatedPageSizeRank() {
+        Student s1 = new Student();
+        s1.setId(201L);
+        s1.setStudentNo("20240101");
+        s1.setName("王五");
+        s1.setTotalPoints(500);
+
+        Page<Student> pageResult = new Page<>(2, 100);
+        pageResult.setRecords(List.of(s1));
+        pageResult.setTotal(250);
+
+        when(studentMapper.selectPage(any(Page.class), any())).thenReturn(pageResult);
+
+        // 请求 500 条被截断为 100 条
+        StudentRankResultVO result = studentScoreService.getLeaderboard(2, 500, null, null);
+        assertNotNull(result);
+        assertEquals(1, result.getRecords().size());
+        // 起始位次 = (2 - 1) * 100 = 100，排名为 101
+        assertEquals(101, result.getRecords().get(0).getRank());
+    }
+
+    @Test
+    @DisplayName("F10 核验：排行榜分页容错防御 (入参负数或为 null 时，自动回退第 1 页并按默认 20 条分页)")
+    void testLeaderboard_NegativeOrNullPageSizeFallback() {
+        Student s1 = new Student();
+        s1.setId(301L);
+        s1.setStudentNo("20240999");
+        s1.setName("赵六");
+        s1.setTotalPoints(120);
+
+        Page<Student> pageResult = new Page<>(1, 20);
+        pageResult.setRecords(List.of(s1));
+        pageResult.setTotal(1);
+
+        when(studentMapper.selectPage(any(Page.class), any())).thenReturn(pageResult);
+
+        StudentRankResultVO result = studentScoreService.getLeaderboard(-5, -20, null, null);
+        assertNotNull(result);
+        assertEquals(1, result.getRecords().size());
+        assertEquals(1, result.getRecords().get(0).getRank());
     }
 }

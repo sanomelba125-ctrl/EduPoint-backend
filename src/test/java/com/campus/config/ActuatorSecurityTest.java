@@ -38,6 +38,53 @@ class ActuatorSecurityTest {
         List<String> includePatterns = (List<String>) ReflectionTestUtils.getField(actuatorReg, "includePatterns");
         assertNotNull(includePatterns);
         assertTrue(includePatterns.contains("/actuator/prometheus"), "必须对 /actuator/prometheus 强制鉴权");
+        assertTrue(includePatterns.contains("/actuator/prometheus/**"), "必须对 /actuator/prometheus/** 强制鉴权");
         assertTrue(includePatterns.contains("/actuator/metrics"), "必须对 /actuator/metrics 强制鉴权");
+        assertTrue(includePatterns.contains("/actuator/metrics/**"), "必须对 /actuator/metrics/** 强制鉴权");
+    }
+
+    @Test
+    @DisplayName("F10 核验：Actuator 拦截器必须要求管理员身份，阻断未登录与学生端访问，放行管理员")
+    @SuppressWarnings("unchecked")
+    void actuatorInterceptor_mustRequireAdminRole() {
+        SaTokenConfig config = new SaTokenConfig();
+        InterceptorRegistry registry = new InterceptorRegistry();
+        config.addInterceptors(registry);
+
+        List<InterceptorRegistration> registrations = (List<InterceptorRegistration>)
+                ReflectionTestUtils.getField(registry, "registrations");
+        assertNotNull(registrations);
+        InterceptorRegistration actuatorReg = registrations.get(1);
+        SaInterceptor saInterceptor = (SaInterceptor) ReflectionTestUtils.getField(actuatorReg, "interceptor");
+        assertNotNull(saInterceptor);
+        cn.dev33.satoken.fun.SaParamFunction<Object> auth =
+                (cn.dev33.satoken.fun.SaParamFunction<Object>) ReflectionTestUtils.getField(saInterceptor, "auth");
+        assertNotNull(auth, "Actuator 拦截器必须配置专属鉴权函数");
+
+        // 初始化 SaToken 上下文及 Spring 请求上下文
+        cn.dev33.satoken.SaManager.setSaTokenContext(new cn.dev33.satoken.spring.SaTokenContextForSpringInJakartaServlet());
+        org.springframework.mock.web.MockHttpServletRequest request = new org.springframework.mock.web.MockHttpServletRequest();
+        org.springframework.mock.web.MockHttpServletResponse response = new org.springframework.mock.web.MockHttpServletResponse();
+        org.springframework.web.context.request.RequestContextHolder.setRequestAttributes(
+                new org.springframework.web.context.request.ServletRequestAttributes(request, response));
+
+        try {
+            // 1. 未登录时必须拦截并抛出未登录异常
+            assertThrows(cn.dev33.satoken.exception.NotLoginException.class, () -> auth.run(null));
+
+            // 2. 学生端账号登录时必须拦截并抛出 403 Forbidden 业务异常
+            cn.dev33.satoken.stp.StpUtil.login("student:1001");
+            com.campus.common.exception.BusinessException ex =
+                    assertThrows(com.campus.common.exception.BusinessException.class, () -> auth.run(null));
+            assertEquals(com.campus.common.result.ResultCode.FORBIDDEN.getCode(), ex.getCode());
+
+            // 3. 管理端账号登录时必须成功放行
+            cn.dev33.satoken.stp.StpUtil.logout();
+            cn.dev33.satoken.stp.StpUtil.login("admin:1");
+            assertDoesNotThrow(() -> auth.run(null));
+        } finally {
+            cn.dev33.satoken.stp.StpUtil.logout();
+            org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes();
+        }
     }
 }

@@ -17,8 +17,10 @@ import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
 import com.qiniu.http.Response;
 import com.qiniu.storage.UploadManager;
 import com.qiniu.util.Auth;
+import com.campus.modules.certificate.enums.CertificateStatus;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
@@ -46,6 +48,13 @@ public class CertificateRenderServiceImpl implements CertificateRenderService {
     private final QiniuProperties qiniuProperties;
     private final UploadManager uploadManager;
     private final Auth qiniuAuth;
+
+    @Value("${campus.certificate.verify-base-url:http://localhost:5173/#/pages/certificate/verify}")
+    private String verifyBaseUrl = "http://localhost:5173/#/pages/certificate/verify";
+
+    public void setVerifyBaseUrl(String verifyBaseUrl) {
+        this.verifyBaseUrl = verifyBaseUrl;
+    }
 
     private static final int CANVAS_WIDTH = 1200;
     private static final int CANVAS_HEIGHT = 840;
@@ -78,8 +87,16 @@ public class CertificateRenderServiceImpl implements CertificateRenderService {
             return null;
         }
         Certificate cert = certificateMapper.selectById(certificateId);
-        if (cert == null) {
-            log.warn("证书不存在，跳过渲染: id={}", certificateId);
+        if (cert == null || !Integer.valueOf(CertificateStatus.VALID.getCode()).equals(cert.getStatus())
+                || (cert.getDeleted() != null && cert.getDeleted() == 1)) {
+            log.warn("证书不存在或状态非有效，跳过渲染: id={}, status={}", certificateId, cert != null ? cert.getStatus() : null);
+            if (cert != null && cert.getCertificateNo() != null && !cert.getCertificateNo().isBlank()) {
+                try {
+                    Path localPath = Paths.get("uploads", "certificates", cert.getCertificateNo().trim() + ".png");
+                    Files.deleteIfExists(localPath);
+                } catch (Exception ignored) {
+                }
+            }
             return null;
         }
 
@@ -146,22 +163,32 @@ public class CertificateRenderServiceImpl implements CertificateRenderService {
         if (certificateNo == null || certificateNo.isBlank()) {
             return null;
         }
+        String cleanNo = certificateNo.trim();
+        // 校验必须为有效证书 (CertificateStatus.VALID)，撤销或无效证书禁止提供图片下载
+        Certificate cert = certificateMapper.selectOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Certificate>()
+                .eq(Certificate::getCertificateNo, cleanNo));
+        if (cert == null || !Integer.valueOf(CertificateStatus.VALID.getCode()).equals(cert.getStatus())
+                || (cert.getDeleted() != null && cert.getDeleted() == 1)) {
+            // 清理可能残留的本地磁盘缓存，防止已被撤销的证书被公开访问
+            try {
+                Path localPath = Paths.get("uploads", "certificates", cleanNo + ".png");
+                Files.deleteIfExists(localPath);
+            } catch (Exception ignored) {
+            }
+            return null;
+        }
+
         // 1. 优先尝试从本地磁盘缓存读取
-        Path localPath = Paths.get("uploads", "certificates", certificateNo.trim() + ".png");
+        Path localPath = Paths.get("uploads", "certificates", cleanNo + ".png");
         if (Files.exists(localPath)) {
             try {
                 return Files.readAllBytes(localPath);
             } catch (Exception e) {
-                log.warn("[证书渲染] 读取本地磁盘证书缓存失败: certNo={}, err={}", certificateNo, e.getMessage());
+                log.warn("[证书渲染] 读取本地磁盘证书缓存失败: certNo={}, err={}", cleanNo, e.getMessage());
             }
         }
 
         // 2. 磁盘不存在则即时动态渲染
-        Certificate cert = certificateMapper.selectOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Certificate>()
-                .eq(Certificate::getCertificateNo, certificateNo.trim()));
-        if (cert == null) {
-            return null;
-        }
         Student student = studentMapper.selectById(cert.getStudentId());
         Activity activity = activityMapper.selectById(cert.getActivityId());
         byte[] pngBytes = drawCertificatePng(cert, student, activity);
@@ -173,7 +200,7 @@ public class CertificateRenderServiceImpl implements CertificateRenderService {
                 Files.createDirectories(dir);
                 Files.write(localPath, pngBytes);
             } catch (Exception e) {
-                log.warn("[证书渲染] 写入本地磁盘证书缓存失败: certNo={}, err={}", certificateNo, e.getMessage());
+                log.warn("[证书渲染] 写入本地磁盘证书缓存失败: certNo={}, err={}", cleanNo, e.getMessage());
             }
         }
         return pngBytes;
@@ -333,6 +360,20 @@ public class CertificateRenderServiceImpl implements CertificateRenderService {
         g2.dispose();
     }
 
+    private String buildVerifyUrl(String certificateNo) {
+        String base = (verifyBaseUrl != null && !verifyBaseUrl.isBlank())
+                ? verifyBaseUrl.trim()
+                : "http://localhost:5173/#/pages/certificate/verify";
+        String cleanNo = certificateNo != null ? certificateNo.trim() : "";
+        if (base.endsWith("=") || base.endsWith("/")) {
+            return base + cleanNo;
+        }
+        if (base.contains("?")) {
+            return base + "&no=" + cleanNo;
+        }
+        return base + "?no=" + cleanNo;
+    }
+
     /**
      * 绘制 ZXing 二维码
      */
@@ -344,7 +385,7 @@ public class CertificateRenderServiceImpl implements CertificateRenderService {
             hints.put(EncodeHintType.MARGIN, 1);
             hints.put(EncodeHintType.ERROR_CORRECTION, ErrorCorrectionLevel.M);
 
-            String verifyContent = "https://campus.edu.cn/verify/" + certificateNo;
+            String verifyContent = buildVerifyUrl(certificateNo);
             BitMatrix bitMatrix = qrCodeWriter.encode(verifyContent, BarcodeFormat.QR_CODE, size, size, hints);
             BufferedImage qrImage = MatrixToImageWriter.toBufferedImage(bitMatrix);
 

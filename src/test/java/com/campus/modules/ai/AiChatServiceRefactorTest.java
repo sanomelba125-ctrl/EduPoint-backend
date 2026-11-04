@@ -181,4 +181,29 @@ class AiChatServiceRefactorTest {
         messageService.clearChatHistory(100L, "conv_test");
         verify(messageMapper, times(1)).delete(any(LambdaQueryWrapper.class));
     }
+
+    @Test
+    @DisplayName("F10 核验：AiChatServiceImpl 使用有界线程池且容器销毁时支持优雅关闭")
+    void testBoundedThreadPoolAndDestroy() {
+        Object sseExecutor = org.springframework.test.util.ReflectionTestUtils.getField(chatService, "sseExecutor");
+        assertNotNull(sseExecutor);
+        assertTrue(sseExecutor instanceof java.util.concurrent.ThreadPoolExecutor);
+        java.util.concurrent.ThreadPoolExecutor executor = (java.util.concurrent.ThreadPoolExecutor) sseExecutor;
+
+        // 验证有界核心与最大线程数及拒绝策略
+        assertEquals(4, executor.getCorePoolSize());
+        assertEquals(16, executor.getMaximumPoolSize());
+        assertTrue(executor.getQueue().remainingCapacity() <= 100);
+        assertTrue(executor.getRejectedExecutionHandler() instanceof java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy);
+
+        // 验证 destroy 优雅关闭
+        assertDoesNotThrow(() -> chatService.destroy());
+        assertTrue(executor.isShutdown());
+
+        // 验证关闭后发起对话请求能够优雅降级返回系统维护提示而非挂起
+        AiChatRequest req = new AiChatRequest();
+        req.setQuestion("测试关闭后提问");
+        SseEmitter emitter = assertDoesNotThrow(() -> chatService.streamChat(req, 100L));
+        assertNotNull(emitter);
+    }
 }

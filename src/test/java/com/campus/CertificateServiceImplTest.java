@@ -20,14 +20,19 @@ import org.mockito.MockedStatic;
 import org.mockito.MockitoAnnotations;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -371,6 +376,25 @@ class CertificateServiceImplTest {
         assertNotNull(effective.getRevokedTime());
         assertNull(effective.getFileUrl(), "撤销后证书文件不可再下载");
         verify(certificateMapper).updateById(effective);
+    }
+
+    @Test
+    @DisplayName("F5: 撤销证书时清理本地磁盘缓存文件")
+    void revoke_shouldDeleteLocalDiskCacheFile() throws Exception {
+        stpUtil.when(StpUtil::getLoginIdAsString).thenReturn("admin:" + ADMIN_ID);
+        Certificate effective = certificate(2L, 1, "https://oss/cert.png");
+        effective.setCertificateNo("CERT-REVOKE-TEST-002");
+        when(certificateMapper.selectById(2L)).thenReturn(effective);
+        when(certificateMapper.updateById(any(Certificate.class))).thenReturn(1);
+
+        Path localPath = Paths.get("uploads", "certificates", "CERT-REVOKE-TEST-002.png");
+        Files.createDirectories(localPath.getParent());
+        Files.write(localPath, new byte[]{1, 2, 3});
+        assertTrue(Files.exists(localPath));
+
+        service.revoke(2L, "违纪撤销");
+
+        assertFalse(Files.exists(localPath), "撤销时本地磁盘缓存文件必须被删除");
     }
 
     // ────────────────────────── 测试辅助 ──────────────────────────

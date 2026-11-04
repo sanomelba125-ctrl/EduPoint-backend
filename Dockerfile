@@ -35,8 +35,9 @@ RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 # 从 Stage 1 拷贝构建产物
 COPY --from=builder /build/target/campus-activity-platform-1.0.0-SNAPSHOT.jar /app/app.jar
 
-# 赋予运行账号权限并切换非 root 用户
-RUN chown -R appuser:appgroup /app
+# 创建上传持久化目录结构并赋予运行账号权限，然后切换非 root 用户
+RUN mkdir -p /app/uploads/images /app/uploads/certificates && \
+    chown -R appuser:appgroup /app
 USER appuser
 
 EXPOSE 8080

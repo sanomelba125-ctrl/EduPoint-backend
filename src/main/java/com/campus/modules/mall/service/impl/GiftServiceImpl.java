@@ -23,6 +23,7 @@ import org.springframework.util.StringUtils;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import com.campus.common.tx.AfterCommitExecutor;
 import com.campus.modules.mall.service.GiftService;
 import com.campus.modules.mall.service.GiftStockRedisService;
 import com.campus.modules.mall.service.GiftCacheService;
@@ -95,12 +96,14 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
 
         this.save(gift);
 
-        if (giftStockRedisService != null) {
-            giftStockRedisService.warmupStock(gift.getId(), gift.getStock() != null ? gift.getStock() : 0);
-        }
-        if (giftCacheService != null) {
-            giftCacheService.addGiftToBloom(gift.getId());
-        }
+        AfterCommitExecutor.run(() -> {
+            if (giftStockRedisService != null) {
+                giftStockRedisService.warmupStock(gift.getId(), gift.getStock() != null ? gift.getStock() : 0);
+            }
+            if (giftCacheService != null) {
+                giftCacheService.addGiftToBloom(gift.getId());
+            }
+        });
 
         return convertToVO(gift);
     }
@@ -186,8 +189,12 @@ public class GiftServiceImpl extends ServiceImpl<GiftMapper, Gift> implements Gi
 
         Gift fresh = this.getById(id);
         if (giftStockRedisService != null && fresh != null) {
-            giftStockRedisService.evictGiftCacheWithDoubleDelete(id);
-            giftStockRedisService.warmupStock(id, fresh.getStock() != null ? fresh.getStock() : 0);
+            final int currentDbStock = fresh.getStock() != null ? fresh.getStock() : 0;
+            final int changeDelta = quantity;
+            AfterCommitExecutor.run(() -> {
+                giftStockRedisService.evictGiftCacheWithDoubleDelete(id);
+                giftStockRedisService.adjustStockDelta(id, changeDelta, currentDbStock);
+            });
         }
 
         return convertToVO(fresh != null ? fresh : gift);

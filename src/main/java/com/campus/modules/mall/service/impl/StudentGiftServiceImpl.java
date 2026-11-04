@@ -27,7 +27,6 @@ import com.campus.modules.mall.service.StudentGiftService;
 import com.campus.modules.student.entity.Student;
 import com.campus.modules.student.mapper.StudentMapper;
 import com.campus.modules.system.service.SysNoticeService;
-import com.alibaba.fastjson2.JSON;
 import org.slf4j.MDC;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,7 +38,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import com.campus.common.tx.AfterCommitExecutor;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
@@ -256,16 +254,30 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
             throw new BusinessException(ResultCode.POINTS_NOT_ENOUGH.getCode(), String.format("可用积分不足！当前余额: %d 积分，本次兑换需要: %d 积分", currentBalance, totalPointsCost));
         }
 
-        // 6. 条件原子扣减库存。
-        //    不再用 version 做 CAS 重试：本方法在 REPEATABLE READ 事务内，
-        //    冲突后重新 selectById 读到的仍是事务快照里的旧 version，重试永远失败，
-        //    会把「并发写」误报成「库存不足/冲突」。stock >= quantity 与 UPDATE 同行执行，
-        //    由 InnoDB 行锁串行化，等价且不会误判。
+        // 6. 校验礼品可用库存，并在 Redis 与 MySQL 同步原子扣减库存（保持与秒杀链路一致的库存一致性，F2 修复）
         if (gift.getStock() == null || gift.getStock() < quantity) {
             if (gift.getStock() != null && gift.getStock() <= 0) {
                 throw new BusinessException(ResultCode.GIFT_STOCK_EMPTY.getCode(), "礼品库存已被抢光！");
             }
             throw new BusinessException(ResultCode.GIFT_STOCK_EMPTY.getCode(), String.format("礼品可用库存不足！当前仅剩 %d 件", gift.getStock() != null ? gift.getStock() : 0));
+        }
+
+        String stockMsgId = StringUtils.hasText(requestId) ? requestId : UUID.randomUUID().toString();
+        if (giftStockRedisService != null) {
+            boolean preDeductOk = giftStockRedisService.preDeductStock(gift.getId(), quantity);
+            if (!preDeductOk) {
+                if (campusMetricsCollector != null) {
+                    campusMetricsCollector.recordExchange(false, System.currentTimeMillis() - startTime);
+                }
+                throw new BusinessException(ResultCode.GIFT_STOCK_EMPTY.getCode(), "礼品库存已被抢光！");
+            }
+
+            final Long preDeductGiftId = gift.getId();
+            final int preDeductQuantity = quantity;
+            final String compensationMessageId = stockMsgId;
+            AfterCommitExecutor.compensateOnRollback(
+                    () -> giftStockRedisService.compensateStockOnce(
+                            preDeductGiftId, preDeductQuantity, compensationMessageId));
         }
 
         int updatedStock = giftMapper.deductStockIfEnough(gift.getId(), quantity);
@@ -345,6 +357,9 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
 
         AfterCommitExecutor.run(() -> {
             giftIdempotentService.markSlotDone(studentId, requestId, orderId);
+            if (giftStockRedisService != null) {
+                giftStockRedisService.evictGiftCacheWithDoubleDelete(gift.getId());
+            }
 
             // 投递延时死信关单消息 (超时未提货由死信队列自动关单并原路返还积分与库存)
 
@@ -1033,7 +1048,8 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
                 receiver.address(),
                 System.currentTimeMillis(),
                 MDC.get("traceId"),
-                orderNo
+                orderNo,
+                gift.getPointsRequired()
         );
         // 发件箱落库失败必须让事务回滚（不再静默跳过）：否则 Redis 已预扣却无任何补偿凭据。
         // localMessageService 在生产环境恒非空（Spring 必注册），判空分支仅为短构造器单测保留；
@@ -1099,7 +1115,10 @@ public class StudentGiftServiceImpl extends ServiceImpl<StudentGiftMapper, Stude
             return false;
         }
 
-        int totalPointsCost = gift.getPointsRequired() * msg.quantity();
+        int effectiveUnitPoints = (msg.unitPoints() != null && msg.unitPoints() >= 0)
+                ? msg.unitPoints()
+                : (gift.getPointsRequired() != null ? gift.getPointsRequired() : 0);
+        int totalPointsCost = effectiveUnitPoints * msg.quantity();
         int currentBalance = student.getCurrentPoints() != null ? student.getCurrentPoints() : 0;
         if (currentBalance < totalPointsCost) {
             log.warn("[异步落库] 可用积分不足: currentBalance={}, cost={}", currentBalance, totalPointsCost);
